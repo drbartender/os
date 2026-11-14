@@ -22,7 +22,8 @@ const REPLY = {
 function itemOf(key, name, hours, o = {}) {
   return {
     person: { person_key: key, name, kind: 'client' }, waiting: true, waiting_since: hoursAgo(hours),
-    status: 'waiting', need: `Question from ${name}`, state: { type: null }, legal_hold: false, closed: null, snooze: null,
+    status: 'waiting', need: `Question from ${name}`, state: { type: null, tasks_only: false, has_task: false },
+    legal_hold: false, closed: null, snooze: null,
     context: {
       kind: 'client', status_chip: 'Booked', event_type_label: 'Wedding', guests: 120,
       when_text: 'Sat Oct 24', where_text: 'Example Hall', proposal: { id: 4, status_label: 'Signed', chip: 'Signed' },
@@ -38,8 +39,12 @@ const rowOf = (it, o = {}) => ({
   waiting_since: it.waiting_since, hot: false, channels: ['text_888'], state: it.state, ...o,
 });
 const OLD = itemOf('c-1', 'Avery Example', 46);
-const NEW = itemOf('c-2', 'Jo Test', 2, { state: { type: 'unseen' } });
+const NEW = itemOf('c-2', 'Jo Test', 2, { state: { type: 'unseen', tasks_only: false, has_task: false } });
 const LIST = { generated_at: hoursAgo(0), ai: { status: 'on' }, waiting: [rowOf(NEW), rowOf(OLD)], snoozed: [], handled: [], feeds: [] };
+// The item as the server reads it back once a Done has closed it: the Done
+// toast says "moved to Handled" only when the read-back's own status says so.
+// A handled item never carries has_task (payload.js sets it only while open).
+const handledOf = (it) => ({ ...it, status: 'handled', waiting: false, state: { ...it.state, has_task: false, tasks_only: false } });
 
 let mockItems;
 let mockList;
@@ -180,12 +185,27 @@ describe('desktop', () => {
     await screen.findByText('Hello from Avery Example');
     await waitFor(() => expect(seenPosts()).toEqual(['/admin/inbox/c-1/seen']));
     mockList = { ...LIST, waiting: [rowOf(NEW)] };
+    mockItems = { ...mockItems, 'c-1': handledOf(OLD) };
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(await screen.findByText('Hello from Jo Test')).toBeInTheDocument();
     expect(where()).toBe('/inbox');
     expect(api.post).toHaveBeenCalledWith('/admin/inbox/c-1/actions', { action: 'done' });
-    expect(screen.getByText('Done. Moved to Handled.')).toBeInTheDocument();
+    expect(screen.getByText('Done. Avery Example moved to Handled.')).toBeInTheDocument();
     expect(seenPosts()).toEqual(['/admin/inbox/c-1/seen']);
+  });
+
+  // The toast says only what the read-back shows: a person still waiting
+  // after the Done (a new message landed first) gets a plain "Done.".
+  test('a Done whose read-back still shows the person waiting toasts a plain Done', async () => {
+    serve();
+    mount('/inbox/c-1');
+    await screen.findByText('Hello from Avery Example');
+    mockList = { ...LIST, waiting: [rowOf(NEW)] };
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(await screen.findByText('Hello from Jo Test')).toBeInTheDocument();
+    expect(await screen.findByText('Done.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+    expect(screen.queryByText(/moved to Handled\.$/)).toBeNull();
   });
 
   test('a draft survives the refetch that brings in their reply', async () => {
@@ -237,6 +257,7 @@ describe('desktop', () => {
     const held = holdActions();
     mount('/inbox/c-1');
     await screen.findByText('Hello from Avery Example');
+    mockItems = { ...mockItems, 'c-1': handledOf(OLD) };
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     // While the Done is on its way, open Jo.
     fireEvent.click(screen.getByText('Jo Test', { selector: '.ib-drow-name' }));
@@ -248,7 +269,7 @@ describe('desktop', () => {
     await act(async () => { held.release(); await new Promise((r) => setTimeout(r, 0)); });
     expect(where()).toBe('/inbox/c-2');
     expect(screen.getByText('Hello from Jo Test')).toBeInTheDocument();
-    expect(screen.getByText('Done. Moved to Handled.')).toBeInTheDocument();
+    expect(screen.getByText('Done. Avery Example moved to Handled.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
     expect(listGets()).toBeGreaterThan(listReads);
     await waitFor(() => expect(screen.queryByText('Avery Example', { selector: '.ib-drow-name' })).toBeNull());
@@ -421,13 +442,14 @@ describe('phone', () => {
     const held = holdActions();
     mountShell(['/inbox/c-1']);
     await screen.findByText('Hello from Avery Example');
+    mockItems = { ...mockItems, 'c-1': handledOf(OLD) };
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     // While the Done is on its way, leave for Events: the Inbox unmounts.
     fireEvent.click(screen.getByRole('button', { name: 'Go to Events' }));
     expect(where()).toBe('/events');
     await act(async () => { held.release(); await new Promise((r) => setTimeout(r, 0)); });
     expect(where()).toBe('/events');
-    expect(screen.getByText('Done. Moved to Handled.')).toBeInTheDocument();
+    expect(screen.getByText('Done. Avery Example moved to Handled.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
   });
 

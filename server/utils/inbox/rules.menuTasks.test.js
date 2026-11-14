@@ -3,8 +3,10 @@
 // conversation. It is never counted, never a reply and never read by the AI;
 // a reply never closes it and it never closes the client's text; Done never
 // clears it; a row held only by tasks hides Done; a task opened during a
-// snooze ends the snooze. Review Focus 3 is the second test. Pure: invented
-// fixtures from rules.testkit.js, no database.
+// snooze ends the snooze, and a snooze on a row held only by tasks ends on
+// their newer text (for good), a newer task, a Wake or a Reopen, never on a
+// text, a reply or a Done of ours. Review Focus 3 is the second test.
+// Pure: invented fixtures from rules.testkit.js, no database.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -104,6 +106,85 @@ test('snooze hides a task; a task opened during the snooze ends it, an older one
   assert.equal(stateOf(run({ events: [ask, k.menuTask(text, ago(6 * HOUR))], actions: [snoozed] }), text).status, 'snoozed',
     'a task already open when the snooze was made stays hidden');
   assert.equal(stateOf(run({ events: [ask, k.menuTask(text, ago(2 * HOUR))], actions: [snoozed] }), text).status, 'waiting');
+});
+
+// Lane menu-inbox-followups, item 2: a snooze on a row held only by tasks
+// ends on their newer text, a newer task, a Wake or a Reopen. Our own closers
+// (a text the admin sends, a Done) say nothing about a task, so none of them
+// ends that snooze early.
+test('a tasks-only row snoozed and then texted by the admin stays snoozed; a Done does not end it either', () => {
+  const key = 'c-920';
+  const task = k.menuTask(key, ago(5 * HOUR), 'menu_changes', { proposalId: 920 });
+  const snooze = k.act(key, 'snooze', ago(3 * HOUR), { until: plus(NOW, DAY) });
+  const text = k.smsOut(key, ago(1 * HOUR), 'Quick question about your timeline', { sender: DALLAS });
+  const texted = stateOf(run({ events: [task, text], actions: [snooze] }), key);
+  assert.deepEqual([texted.status, texted.tasksOnly], ['snoozed', true]);
+  assert.equal(texted.snooze.until.toISOString(), plus(NOW, DAY).toISOString());
+  const done = k.act(key, 'done', ago(30 * 60 * 1000));
+  assert.equal(stateOf(run({ events: [task, text], actions: [snooze, done] }), key).status, 'snoozed', 'a Done is not one of its closers');
+});
+
+test('a tasks-only snooze ends on a newer task, a Wake or a Reopen', () => {
+  const key = 'c-921';
+  const task = k.menuTask(key, ago(5 * HOUR), 'menu_changes', { proposalId: 921 });
+  const snooze = k.act(key, 'snooze', ago(3 * HOUR), { until: plus(NOW, DAY) });
+  const text = k.smsOut(key, ago(2 * HOUR), 'Checking in', { sender: DALLAS });
+  const newer = k.menuTask(key, ago(1 * HOUR), 'menu_no_answer', { proposalId: 922 });
+  const byTask = stateOf(run({ events: [task, text, newer], actions: [snooze] }), key);
+  assert.deepEqual([byTask.status, byTask.snooze, byTask.need], ['waiting', null, NO_ANSWER]);
+  const wake = k.act(key, 'wake', ago(1 * HOUR));
+  const byWake = stateOf(run({ events: [task, text], actions: [snooze, wake] }), key);
+  assert.deepEqual([byWake.status, byWake.snooze, byWake.tasksOnly], ['waiting', null, true]);
+  const reopen = k.act(key, 'reopen', ago(1 * HOUR));
+  const byReopen = stateOf(run({ events: [task, text], actions: [snooze, reopen] }), key);
+  assert.deepEqual([byReopen.status, byReopen.snooze], ['waiting', null]);
+});
+
+// Their newer text ends a tasks-only snooze for good: the row comes back to
+// Waiting while the text waits, and once we answer it (a reply or a Done) the
+// task alone holds the row again, still waiting, and the old snooze never
+// comes back to hide it.
+test('a client text during a tasks-only snooze ends the snooze for good: after our reply or a Done the task row waits, unsnoozed', () => {
+  const key = 'c-923';
+  const task = k.menuTask(key, ago(6 * HOUR), 'menu_changes', { proposalId: 923 });
+  const snooze = k.act(key, 'snooze', ago(5 * HOUR), { until: plus(NOW, DAY) });
+  const ask = k.smsIn(key, ago(3 * HOUR), 'Can we add ten guests?');
+  const back = stateOf(run({ events: [task, ask], actions: [snooze] }), key);
+  assert.deepEqual([back.status, back.tasksOnly, back.snooze], ['waiting', false, null], 'their newer text ends it, as today');
+  const reply = k.smsOut(key, ago(2 * HOUR), 'Yes, we can', { sender: DALLAS });
+  const answered = stateOf(run({ events: [task, ask, reply], actions: [snooze] }), key);
+  assert.deepEqual([answered.status, answered.tasksOnly, answered.snooze], ['waiting', true, null],
+    'our reply never brings the old snooze back');
+  const done = k.act(key, 'done', ago(2 * HOUR));
+  const closed = stateOf(run({ events: [task, ask], actions: [snooze, done] }), key);
+  assert.deepEqual([closed.status, closed.tasksOnly, closed.snooze], ['waiting', true, null],
+    'nor does a Done of ours');
+});
+
+test('a row with a waiting conversation keeps today\'s snooze rules: their newer text ends it, an older task does not', () => {
+  const key = 'c-924';
+  const ask = k.smsIn(key, ago(6 * HOUR), 'Let us decide next week');
+  const task = k.menuTask(key, ago(7 * HOUR), 'menu_changes', { proposalId: 924 });
+  const snooze = k.act(key, 'snooze', ago(5 * HOUR), { until: plus(NOW, DAY) });
+  const held = stateOf(run({ events: [ask, task], actions: [snooze] }), key);
+  assert.deepEqual([held.status, held.tasksOnly], ['snoozed', false]);
+  const again = k.smsIn(key, ago(1 * HOUR), 'Actually, one more thing');
+  const woke = stateOf(run({ events: [ask, task, again], actions: [snooze] }), key);
+  assert.deepEqual([woke.status, woke.snooze, woke.tasksOnly], ['waiting', null, false]);
+  const fresh = k.menuTask(key, ago(1 * HOUR), 'menu_no_answer', { proposalId: 925 });
+  assert.equal(stateOf(run({ events: [ask, task, fresh], actions: [snooze] }), key).status, 'waiting', 'a newer task ends it');
+});
+
+// A snooze made while their text waited covers the whole row, the task
+// included: answering the text leaves the task alone on the row, still snoozed.
+test('a snoozed row with a text and a task: a reply of ours answers the text, and the task stays snoozed', () => {
+  const key = 'c-926';
+  const ask = k.smsIn(key, ago(6 * HOUR), 'Let us decide next week');
+  const task = k.menuTask(key, ago(7 * HOUR), 'menu_changes', { proposalId: 926 });
+  const snooze = k.act(key, 'snooze', ago(5 * HOUR), { until: plus(NOW, DAY) });
+  const reply = k.smsOut(key, ago(2 * HOUR), 'We will hold the date', { sender: DALLAS });
+  const s = stateOf(run({ events: [ask, task, reply], actions: [snooze] }), key);
+  assert.deepEqual([s.status, s.tasksOnly, s.internals.U], ['snoozed', true, []]);
 });
 
 test('the AI cover never closes a task: a no-reply read closes the text and the task still waits', () => {

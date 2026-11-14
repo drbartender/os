@@ -14,9 +14,14 @@
 // task closes only when the reader stops emitting it, so a reply, a Done, the
 // AI's read or an event that happened never clears one. A row held only by
 // tasks (tasksOnly) hides Done. A task whose at is after a snooze's created_at
-// ends that snooze. The need line and its link are the newest reason's: the
-// task's text and event link when a task is newer than the conversation's
-// newest reason; a row held only by tasks carries no channel tag. The AI's
+// ends that snooze. A snooze on a row held only by tasks ends on their newer
+// text (for good: answering it never brings the snooze back), a newer task, a
+// Wake or a Reopen; a text, a reply or a Done of ours closes the
+// conversation and leaves that snooze in place, while a row whose
+// conversation waits keeps the conversation's snooze rules. The need line and
+// its link are the newest reason's: the task's text and event link when a
+// task is newer than the conversation's newest reason; a row held only by
+// tasks carries no channel tag. The AI's
 // subjects are built from the conversation's own verdict, so a task never
 // brings a person to the AI. The legal-hold person has no tasks (the reader
 // emits none; the rules drop any as well).
@@ -86,6 +91,11 @@ function eventHappenedDate(personKey, ctx, refMs) {
 // Wake (or a Reopen, which also brings it back to Waiting).
 // A menu task that opened after the snooze was made ends it (spec 2026-10-19
 // section 13.2), so a task raised while Dallas snoozed the client surfaces.
+// A row held only by tasks is judged without our side of the conversation:
+// its caller passes their newest inbound and no anchor, so their newer text
+// ends that snooze for good (once we answer it the snooze stays ended), as do
+// a newer task, a Wake or a Reopen, and a text, a reply or a Done of ours
+// never does.
 function activeSnooze(acts, newestInbound, anchorMs, ctx, tasks = []) {
   const s = last(acts.filter((a) => a.action === 'snooze'));
   if (!s || !s.until_at || ms(s.until_at) <= ctx.nowMs) return null;
@@ -268,14 +278,18 @@ function computePersonState(personKey, events, ctx) {
 
   // Menu tasks (spec 2026-10-19 section 13.2): the conversation's verdict
   // stands as the conversation's; an open task makes a person the
-  // conversation does not hold wait, unless a snooze (which a newer task
-  // ends) hides them. `closed` keeps describing the conversation's last close
-  // (the thread's "Was closed" line); the payload reads it only when handled.
+  // conversation does not hold wait, unless a snooze hides them. That snooze
+  // is judged with their newest inbound and no anchor: it ends on their newer
+  // text (for good, so answering that text never brings it back), a newer
+  // task, a Wake or a Reopen, while a text, a reply or a Done of ours closes
+  // the conversation, not the snooze on a task.
+  // `closed` keeps describing the conversation's last close (the thread's
+  // "Was closed" line); the payload reads it only when handled.
   const convStatus = status;
   const convOpen = status === 'waiting' || status === 'snoozed';
   const tasksOnly = tasks.length > 0 && !convOpen;
   if (tasksOnly) {
-    snooze = activeSnooze(acts, newestInbound, anchorMs, ctx, tasks);
+    snooze = activeSnooze(acts, newestInbound, -Infinity, ctx, tasks);
     status = snooze ? 'snoozed' : 'waiting';
   }
   if (tasks.length) {

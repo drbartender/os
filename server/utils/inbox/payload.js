@@ -10,9 +10,10 @@
 // there: Done never clears a task). The item carries `tasks_only` too, and
 // both carry it inside `state` as well, the object the item's actions read
 // (ItemActions.js draws no Done while it is true), beside `has_task`: an open
-// menu task holds this person, alone or beside a text (useInboxActions.js
-// then says Done leaves them waiting on the menu). The client's change note
-// is never on the list; it rides only on its thread row.
+// menu task holds this person, alone or beside a text, waiting or snoozed
+// (useInboxActions.js says Done leaves them waiting on the menu only when
+// the status it reads back is waiting too). The client's change note is
+// never on the list; it rides only on its thread row.
 
 const { buildThread } = require('./thread');
 

@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import api from '../../utils/api';
 import { ToastProvider } from '../../context/ToastContext';
 import useInboxActions from './useInboxActions';
@@ -18,18 +18,26 @@ function mount(refresh = jest.fn()) {
   return refresh;
 }
 
-test('Done toasts "Done. Moved to Handled." with Undo, and Undo marks the action undone', async () => {
+// The item read back after a Done, as GET /admin/inbox/:personKey answers:
+// its status, and state.has_task, which the server sets for a snoozed person
+// a task holds as well as a waiting one (payload.js).
+const handledItem = { status: 200, data: { status: 'handled', waiting: false, state: { has_task: false, tasks_only: false } } };
+const taskItem = { status: 200, data: { status: 'waiting', waiting: true, state: { has_task: true, tasks_only: true } } };
+const waitingItem = { status: 200, data: { status: 'waiting', waiting: true, state: { has_task: false, tasks_only: false } } };
+const snoozedTaskItem = { status: 200, data: { status: 'snoozed', waiting: false, state: { has_task: true, tasks_only: true } } };
+
+test('Done toasts "Done. <Name> moved to Handled." with Undo, and Undo marks the action undone', async () => {
   api.post.mockResolvedValue({ data: { id: 314 } });
   api.delete.mockResolvedValue({ status: 204 });
-  api.get.mockResolvedValue({ status: 200, data: { waiting: false, state: { has_task: false, tasks_only: false } } });
+  api.get.mockResolvedValue(handledItem);
   const refresh = mount();
   await act(async () => { await actions.act('c-1', 'done', { name: 'Avery Example' }); });
   expect(api.post).toHaveBeenCalledWith('/admin/inbox/c-1/actions', { action: 'done' });
-  expect(await screen.findByText('Done. Moved to Handled.')).toBeInTheDocument();
+  expect(await screen.findByText('Done. Avery Example moved to Handled.')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
   await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/admin/inbox/actions/314'));
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText('Done. Moved to Handled.')).toBeNull();
+  expect(screen.queryByText('Done. Avery Example moved to Handled.')).toBeNull();
 });
 
 test('Snooze sends until and toasts the Chicago time with Undo; Wake and Reopen say who is back', async () => {
@@ -98,29 +106,101 @@ test('markSeen posts seen and refreshes the list, not the item', async () => {
 });
 
 // Spec 2026-10-19 section 13.2: Done closes the conversation and never a menu
-// task, so when an open task still holds the person (the item's
-// state.has_task, read back after the Done lands) the toast says so, with the
-// same Undo. With no task it is unchanged; when the read fails the toast is a
-// plain "Done.", which is true either way.
+// task, so when an open task still holds the person waiting (the item read
+// back after the Done lands has status waiting and state.has_task) the toast
+// says so, with the same Undo. Each line names its person, so two Dones in a row never read
+// alike; "moved to Handled" is said only when the read-back's own status is
+// handled, and a read that fails says a plain "Done.", which is true either way.
 test('Done on a person an open menu task still holds says so, with the same Undo; with no task it is unchanged; a failed read says only Done', async () => {
   api.post.mockResolvedValue({ data: { id: 41 } });
   api.delete.mockResolvedValue({ status: 204 });
-  api.get.mockResolvedValueOnce({ status: 200, data: { waiting: true, state: { has_task: true, tasks_only: true } } });
+  api.get.mockResolvedValueOnce(taskItem);
   mount();
   await act(async () => { await actions.act('c-1', 'done', { name: 'Avery Example' }); });
   expect(api.get).toHaveBeenLastCalledWith('/admin/inbox/c-1', expect.any(Object));
-  expect(await screen.findByText('Done. Still waiting on the menu.')).toBeInTheDocument();
-  expect(screen.queryByText('Done. Moved to Handled.')).toBeNull();
+  expect(await screen.findByText('Done. Avery Example is still waiting on the menu.')).toBeInTheDocument();
+  expect(screen.queryByText(/moved to Handled\.$/)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
   await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/admin/inbox/actions/41'));
-  api.get.mockResolvedValueOnce({ status: 200, data: { waiting: false, state: { has_task: false, tasks_only: false } } });
+  api.get.mockResolvedValueOnce(handledItem);
   await act(async () => { await actions.act('c-2', 'done', { name: 'Jo Test' }); });
-  expect(await screen.findByText('Done. Moved to Handled.')).toBeInTheDocument();
+  expect(await screen.findByText('Done. Jo Test moved to Handled.')).toBeInTheDocument();
   api.get.mockRejectedValueOnce({ status: 500, message: 'down' });
   await act(async () => { await actions.act('c-3', 'done', { name: 'Kim Test' }); });
   expect(await screen.findByText('Done.')).toBeInTheDocument();
-  expect(screen.getAllByText('Done. Moved to Handled.')).toHaveLength(1);
-  expect(screen.queryAllByText('Done. Still waiting on the menu.')).toHaveLength(0);
+  expect(screen.getAllByText(/moved to Handled\.$/)).toHaveLength(1);
+  expect(screen.queryAllByText(/still waiting on the menu\.$/)).toHaveLength(0);
+});
+
+// Two Dones in a row (lane menu-inbox-followups, item 3): each toast names the
+// person it closed, so the second never reads as the first, and each toast's
+// Undo undoes its own Done.
+test('two Dones in a row each name their person, and each Undo undoes its own Done', async () => {
+  api.post.mockResolvedValueOnce({ data: { id: 51 } }).mockResolvedValueOnce({ data: { id: 52 } });
+  api.delete.mockResolvedValue({ status: 204 });
+  api.get.mockReset();
+  api.get.mockResolvedValueOnce(taskItem).mockResolvedValueOnce(handledItem);
+  mount();
+  await act(async () => { await actions.act('c-1', 'done', { name: 'Avery Example' }); });
+  await act(async () => { await actions.act('c-2', 'done', { name: 'Jo Test' }); });
+  const first = (await screen.findByText('Done. Avery Example is still waiting on the menu.')).closest('.toast');
+  const second = (await screen.findByText('Done. Jo Test moved to Handled.')).closest('.toast');
+  expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(2);
+  fireEvent.click(within(second).getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(api.delete).toHaveBeenCalledTimes(1));
+  expect(api.delete).toHaveBeenLastCalledWith('/admin/inbox/actions/52');
+  fireEvent.click(within(first).getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(api.delete).toHaveBeenCalledTimes(2));
+  expect(api.delete).toHaveBeenLastCalledWith('/admin/inbox/actions/51');
+});
+
+// has_task alone is not "still waiting": the server sets it for a snoozed
+// person a task holds too, so a Done whose read-back shows them snoozed says
+// a plain "Done.", with its Undo.
+test('a Done whose read-back shows the person snoozed under a task says a plain Done, with its Undo', async () => {
+  api.post.mockResolvedValue({ data: { id: 81 } });
+  api.delete.mockResolvedValue({ status: 204 });
+  api.get.mockResolvedValueOnce(snoozedTaskItem);
+  mount();
+  await act(async () => { await actions.act('c-1', 'done', { name: 'Avery Example' }); });
+  expect(await screen.findByText('Done.')).toBeInTheDocument();
+  expect(screen.queryAllByText(/waiting on the menu\.$/)).toHaveLength(0);
+  expect(screen.queryAllByText(/moved to Handled\.$/i)).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/admin/inbox/actions/81'));
+});
+
+// "Moved to Handled" only when the read-back says handled: a person waiting
+// again (a new message landed between the Done and the read), a quiet one and
+// a key that answers 404 each get the plain "Done.", never a guess.
+test('a read-back that shows the person waiting again, quiet, or a 404 says a plain Done', async () => {
+  api.post.mockResolvedValue({ data: { id: 61 } });
+  api.get.mockReset();
+  api.get
+    .mockResolvedValueOnce(waitingItem)
+    .mockResolvedValueOnce({ status: 200, data: { status: 'quiet', waiting: false, state: { has_task: false, tasks_only: false } } })
+    .mockResolvedValueOnce({ status: 404, data: { code: 'INBOX_MOVED', moved_to: 'c-9' } });
+  mount();
+  await act(async () => { await actions.act('c-1', 'done', { name: 'Avery Example' }); });
+  await act(async () => { await actions.act('c-2', 'done', { name: 'Jo Test' }); });
+  await act(async () => { await actions.act('c-3', 'done', { name: 'Kim Test' }); });
+  await waitFor(() => expect(screen.getAllByText('Done.')).toHaveLength(3));
+  expect(screen.queryAllByText(/moved to Handled\.$/i)).toHaveLength(0);
+  expect(screen.queryAllByText(/waiting on the menu\.$/)).toHaveLength(0);
+});
+
+// With no name passed the lines say only what is known, unnamed.
+test('with no name the Done lines read unnamed: still waiting on the menu, moved to Handled, or a plain Done', async () => {
+  api.post.mockResolvedValue({ data: { id: 71 } });
+  api.get.mockReset();
+  api.get.mockResolvedValueOnce(taskItem).mockResolvedValueOnce(handledItem).mockResolvedValueOnce(waitingItem);
+  mount();
+  await act(async () => { await actions.act('c-1', 'done', {}); });
+  await act(async () => { await actions.act('c-2', 'done', { name: '' }); });
+  await act(async () => { await actions.act('c-3', 'done'); });
+  expect(await screen.findByText('Done. Still waiting on the menu.')).toBeInTheDocument();
+  expect(await screen.findByText('Done. Moved to Handled.')).toBeInTheDocument();
+  expect(await screen.findByText('Done.')).toBeInTheDocument();
 });
 
 // The read-back runs a full Inbox load on the server, so nothing waits on it:

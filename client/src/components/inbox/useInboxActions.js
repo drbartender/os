@@ -21,30 +21,42 @@ import { stampLabel, UNDO_TOAST_MS } from './inboxFormat';
 // refetch every time.
 //
 // Done closes the conversation and never a menu task (spec 2026-10-19
-// section 13.2). The page's Done hands this hook only the person's key, so
-// after the Done lands it reads the item back once: when an open task still
-// holds the person (state.has_task) the toast reads "Done. Still waiting on
-// the menu." with the same Undo; with no task it is unchanged. Nothing waits
+// section 13.2). The page's Done hands this hook the person's key and name,
+// so after the Done lands it reads the item back once and the toast says only
+// what that read shows, named for the person so two Dones in a row never read
+// alike: the item's status is waiting and an open task holds them
+// (state.has_task) "Done. <Name> is still waiting on the menu."; the item's
+// own status is handled "Done. <Name> moved to Handled."; anything else (the
+// read fails, times out, answers 404, or shows them snoozed, waiting with no
+// task, or quiet) a plain "Done.", which is true either way. has_task alone
+// is not enough: the server sets it for a snoozed person a task holds too.
+// With no name the first two read "Done. Still waiting on the menu." and
+// "Done. Moved to Handled.". Every line carries the same Undo. Nothing waits
 // on that read (it is a full Inbox load on the server): the action resolves
 // and the page refreshes as soon as the Done lands, and the toast follows
-// when the read answers. A read that fails, or has not answered within
-// READ_BACK_MS, toasts a plain "Done.", which is true either way.
-const DONE_TEXT = 'Done. Moved to Handled.';
-const DONE_TASK_TEXT = 'Done. Still waiting on the menu.';
+// when the read answers or after READ_BACK_MS.
 const DONE_PLAIN_TEXT = 'Done.';
 const READ_BACK_MS = 4000;
 
+function doneLines(name) {
+  const who = typeof name === 'string' ? name.trim() : '';
+  if (!who) return { task: 'Done. Still waiting on the menu.', handled: 'Done. Moved to Handled.' };
+  return { task: `Done. ${who} is still waiting on the menu.`, handled: `Done. ${who} moved to Handled.` };
+}
+
 // The Done line that is true for this person. Never rejects, and never
 // settles later than READ_BACK_MS.
-function doneText(personKey) {
+function doneText(personKey, name) {
+  const lines = doneLines(name);
   let timer;
   const limit = new Promise((resolve) => { timer = setTimeout(() => resolve(DONE_PLAIN_TEXT), READ_BACK_MS); });
   const read = Promise.resolve()
     .then(() => getItem(personKey))
     .then((res) => {
-      if (!res || (res.status !== 200 && res.status !== 404)) return DONE_PLAIN_TEXT;
-      const state = res.status === 200 && res.data ? res.data.state : null;
-      return state && state.has_task === true ? DONE_TASK_TEXT : DONE_TEXT;
+      const item = res && res.status === 200 && res.data ? res.data : null;
+      if (!item) return DONE_PLAIN_TEXT;
+      if (item.status === 'waiting' && item.state && item.state.has_task === true) return lines.task;
+      return item.status === 'handled' ? lines.handled : DONE_PLAIN_TEXT;
     })
     .catch(() => DONE_PLAIN_TEXT);
   return Promise.race([read, limit]).finally(() => clearTimeout(timer));
@@ -75,7 +87,7 @@ export default function useInboxActions({ refresh, openKey }) {
     const withUndo = id === null || id === undefined
       ? undefined
       : { action: { label: 'Undo', onClick: () => undo(id) }, duration: UNDO_TOAST_MS };
-    if (action === 'done') doneText(personKey).then((text) => toast.success(text, withUndo));
+    if (action === 'done') doneText(personKey, name).then((text) => toast.success(text, withUndo));
     else if (action === 'snooze') toast.info(`Snoozed until ${stampLabel(until, Date.now())}.`, withUndo);
     else if (action === 'wake' || action === 'reopen') toast.info(`${name || 'They'} ${name ? 'is' : 'are'} back in Waiting.`, withUndo);
     else if (action === 'claim') toast.success(takeoverFrom ? `Taken over from ${takeoverFrom}.` : "You're on it.");
