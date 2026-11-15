@@ -1348,6 +1348,20 @@ lanes:
       parsed in three places that agree today (menuPrint.js, menuDraftApprove.js, menuDraftRelease.js): one
       shared parser in menuProofs.js would keep them together; the no-menu mark set from a card loaded before
       the client asked for changes goes through, and the Inbox hides that task while the mark stands.
+      Built in this lane (2026-11-15): the planner's Skip the Menu mark withdrawing an open proof, and the
+      reader's deliberate read of content.words_finished_at. Every other item above still stands.
+      From this lane's own review (2026-11-15), for a later touch of these files, none blocking: the stale
+      words sentence says "Open the menu to finish it." where the card's only action is Generate again; the
+      refusal write (FAILED_SQL) is not guarded on a missing run, so a start whose commit landed while its
+      reply was lost keeps a run and an error and raises no task; a deadlock inside the start is stored as the
+      first-draft refusal and so is not reported; the ready line's picture count covers every piece row, not
+      only the layout's; menu_ready's time moves with any later re-roll's finish, which ends an earlier
+      snooze; after the planner's mark withdrew a sent proof and the client resubmits Custom or Standard, no
+      Inbox task returns (the withdrawn proof still counts as a proof); a failed clear of the planner's mark
+      leaves the event reading as handled; the header of menuDraftGenerate.js still says the guard row is
+      written after the start returns; the mount paragraph in ARCHITECTURE.md still says Generate needs the
+      OpenAI key; menuDraftRead.js (defaultImageModel, which now picks the provider of an unwatched billed
+      run) is not on the sensitive list.
     scope: >
       Spec section 8 (decisions 8 and 9). The Generate route's body is extracted to startGeneration({ proposalId,
       inputs, file }) in server/routes/proposals/menuDraftGenerate.js and the route calls it. The
@@ -1360,6 +1374,13 @@ lanes:
       10-minute dead start for a row with no run_id; the kinds are already classified by menu-inbox-tasks). The
       card's "Drafted automatically when the client submitted their plan." sub line and the read model's
       auto_started.
+      As built 2026-11-15 (Claude's calls, spec 8.6): built, reviewed (one finding, fixed) and walked on dev
+      with a made-up client; HELD UNMERGED in its worktree until the owner confirms the Anthropic and Gemini
+      keys in Render, since a merged squash rides the next push of main. Added to the spec's design: a test
+      process never auto-starts; firstDraft, so a manual Generate that lands meanwhile stands; the guard
+      row's run written inside the draft's own transaction (the onStarted hook); a failed mark step no
+      longer skips the auto-start; and the reader's rule for a run a restart interrupted (ready with those
+      pictures failed, or stopped partway while the words were writing).
     footprint:
       - server/db/schema.sql  (menu_auto_starts, idempotent)
       - server/db/schema.menuArt.test.js  (the table and its keys)
