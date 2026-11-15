@@ -363,6 +363,48 @@ test('menu_drafts: the four release columns, one idempotent ADD COLUMN each, rel
   assert.ok(ddl.indexOf(RELEASE_ADDS[0]) > ddl.indexOf('CREATE TABLE IF NOT EXISTS menu_proofs ('));
 });
 
+// ── The menu auto-starts block (spec 2026-10-19 section 8.4; lane menu-auto-start) ──
+// The run-once guard: one row per proposal for its whole life, so a proposal
+// is auto-started at most once. Its own block after the menu proofs one.
+const AUTO_START = '-- ─── Menu auto-starts (spec 2026-10-19 section 8.4) ───';
+const AUTO_END = '-- ─── end Menu auto-starts ───';
+
+function autoStartDdl() {
+  const a = schemaSql.indexOf(AUTO_START);
+  const b = schemaSql.indexOf(AUTO_END);
+  assert.ok(a !== -1 && b > a, 'the menu auto-starts block sits between its two markers in schema.sql');
+  return schemaSql.slice(a, b);
+}
+
+// Exactly the columns of spec 8.4.
+const AUTO_COLUMNS = {
+  proposal_id: 'INTEGER PRIMARY KEY REFERENCES proposals(id) ON DELETE CASCADE',
+  plan_id: 'INTEGER REFERENCES drink_plans(id) ON DELETE SET NULL',
+  attempted_at: 'TIMESTAMPTZ NOT NULL DEFAULT NOW()',
+  draft_id: 'INTEGER REFERENCES menu_drafts(id) ON DELETE SET NULL',
+  run_id: 'UUID',
+  error_code: 'TEXT',
+  error_sentence: 'TEXT',
+};
+
+test('menu auto-starts: its own block, after the menu proofs block, one idempotent CREATE TABLE and nothing else', () => {
+  const at = schemaSql.indexOf(AUTO_START);
+  assert.ok(at > schemaSql.indexOf(PROOF_END), 'after the end of the menu proofs block');
+  assert.equal(schemaSql.indexOf(AUTO_START, at + 1), -1, 'once');
+  const ddl = autoStartDdl().replace(/--[^\n]*/g, '');
+  assert.equal((ddl.match(/CREATE TABLE/g) || []).length, 1);
+  assert.equal((ddl.match(/CREATE TABLE IF NOT EXISTS menu_auto_starts \(/g) || []).length, 1);
+  assert.doesNotMatch(ddl, /\b(ALTER|DROP|INDEX|TRIGGER)\b/, 'the primary key is the only index it needs');
+  assert.doesNotMatch(ddl, /\b(INSERT INTO|UPDATE \w+ SET|DELETE FROM)\b/, 'no data backfill runs from schema.sql');
+  assert.ok(!autoStartDdl().includes(String.fromCharCode(0x2014)), 'no em dash in the block');
+});
+
+test('menu_auto_starts: exactly the columns of spec 8.4, the proposal its primary key', () => {
+  const { columns, constraints } = parseBody(tableBody(autoStartDdl(), 'menu_auto_starts'));
+  assert.deepEqual(columns, AUTO_COLUMNS);
+  assert.deepEqual(constraints, []);
+});
+
 // ── Live: the block applied twice to the dev DB ─────────────────────────────
 // Skips when DATABASE_URL is unset. The three tables are net-new, so applying
 // the block is safe on the shared dev DB; every probe row below is written
@@ -383,6 +425,13 @@ before(async () => {
   const proofs = menuProofDdl();
   await pool.query(proofs);
   await pool.query(proofs);
+  // The auto-starts block is one net-new table, applied twice the same way.
+  // Without the block the pure tests above say so and the live ones fail on
+  // the missing table, rather than every test failing in this hook.
+  if (schemaSql.includes(AUTO_START)) {
+    await pool.query(autoStartDdl());
+    await pool.query(autoStartDdl());
+  }
 });
 
 after(async () => { if (pool) await pool.end(); });
@@ -795,6 +844,67 @@ dbTest('live: a database holding the plain approved_by FK and the older trigger 
     await client.query(APPROVED_BY_SET_NULL);
     await client.query(RELEASE_TRIGGER);
     assert.deepEqual(await state(), once, 'a replay leaves both as they are');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+// ── Live: the auto-starts block (lane menu-auto-start) ──────────────────────
+
+dbTest('live: menu_auto_starts has exactly its columns, types, nullability and defaults', async () => {
+  const { rows } = await pool.query(
+    `SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'menu_auto_starts'`);
+  const byName = new Map(rows.map((r) => [r.column_name, r]));
+  assert.deepEqual([...byName.keys()].sort(), Object.keys(AUTO_COLUMNS).sort(), 'menu_auto_starts column set');
+  for (const [col, def] of Object.entries(AUTO_COLUMNS)) {
+    const r = byName.get(col);
+    const dflt = (def.match(/DEFAULT (\S+)/) || [])[1];
+    assert.equal(r.data_type, PG_TYPE.get(def.split(' ')[0]), `${col} type`);
+    assert.equal(r.is_nullable, /NOT NULL|PRIMARY KEY/.test(def) ? 'NO' : 'YES', `${col} nullability`);
+    assert.equal(r.column_default, dflt ? dflt.toLowerCase() : null, `${col} default`);
+  }
+});
+
+dbTest('live: menu_auto_starts keys: the proposal is the primary key, and each foreign key with its delete rule', async () => {
+  const defs = Object.values(await constraintDefs('menu_auto_starts')).sort();
+  assert.deepEqual(defs, [
+    'FOREIGN KEY (draft_id) REFERENCES menu_drafts(id) ON DELETE SET NULL',
+    'FOREIGN KEY (plan_id) REFERENCES drink_plans(id) ON DELETE SET NULL',
+    'FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE',
+    'PRIMARY KEY (proposal_id)',
+  ]);
+});
+
+// The guard as the auto-start writes it (spec 8.2 step 4): a second insert for
+// the same proposal is a no-op, a deleted draft leaves the row, and the row
+// goes with its proposal. All rolled back.
+dbTest('live: the guard insert lands once per proposal; a deleted draft or plan leaves the row; it goes with its proposal (rolled back)', async () => {
+  const client = await pool.connect();
+  const GUARD = 'INSERT INTO menu_auto_starts (proposal_id, plan_id) VALUES ($1, $2) ON CONFLICT (proposal_id) DO NOTHING';
+  try {
+    await client.query('BEGIN');
+    const { rows: [p] } = await client.query(
+      "INSERT INTO proposals (status, event_type) VALUES ('confirmed', 'corporate') RETURNING id");
+    const { rows: [plan] } = await client.query(
+      "INSERT INTO drink_plans (proposal_id, status, selections) VALUES ($1, 'submitted', '{}') RETURNING id", [p.id]);
+    assert.equal((await client.query(GUARD, [p.id, plan.id])).rowCount, 1, 'the first insert lands');
+    assert.equal((await client.query(GUARD, [p.id, plan.id])).rowCount, 0, 'a second one is a no-op');
+    const { rows: [row] } = await client.query('SELECT * FROM menu_auto_starts WHERE proposal_id = $1', [p.id]);
+    assert.ok(row.attempted_at instanceof Date, 'attempted_at fills');
+    assert.deepEqual([row.draft_id, row.run_id, row.error_code, row.error_sentence], [null, null, null, null]);
+    const { rows: [d] } = await client.query(
+      `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint)
+       VALUES ($1, '00000000-0000-4000-8000-000000000005', '{}', '{}', '{}') RETURNING id, run_id`, [p.id]);
+    await client.query('UPDATE menu_auto_starts SET draft_id = $2, run_id = $3 WHERE proposal_id = $1', [p.id, d.id, d.run_id]);
+    await client.query('DELETE FROM menu_drafts WHERE id = $1', [d.id]);
+    await client.query('DELETE FROM drink_plans WHERE id = $1', [plan.id]);
+    const { rows: [left] } = await client.query('SELECT draft_id, plan_id, run_id FROM menu_auto_starts WHERE proposal_id = $1', [p.id]);
+    assert.deepEqual([left.draft_id, left.plan_id, left.run_id], [null, null, d.run_id], 'the row stays, its run id kept');
+    await client.query('DELETE FROM proposals WHERE id = $1', [p.id]);
+    const { rows: [gone] } = await client.query('SELECT COUNT(*)::int AS n FROM menu_auto_starts WHERE proposal_id = $1', [p.id]);
+    assert.equal(gone.n, 0, 'the row goes with its proposal');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();

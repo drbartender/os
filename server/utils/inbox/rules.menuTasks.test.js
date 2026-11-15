@@ -241,3 +241,62 @@ test('a row held only by tasks carries no channel tag, even with the text the AI
   const s = stateOf(run({ events: [ask, k.menuTask(key, ago(3 * HOUR))], reads: [read] }), key);
   assert.deepEqual([s.status, s.tasksOnly, s.internals.U.length, s.channels], ['waiting', true, 1, []]);
 });
+
+// Lane menu-auto-start: the two run kinds, built by the reader's own mapper
+// from auto-start rows (spec 2026-10-19 section 13.1), wait and close like the
+// proof kinds: alone they hold the row with their line and link, a reply or a
+// Done never clears them, a task opened during a snooze ends it, and a run
+// the reader no longer emits (an approval, a manual Generate) holds nothing.
+const { mapMenuTaskRows } = require('./readMenuTasks');
+
+// An auto-start row as the query returns it, under client c-<id>.
+function runRow(id, over = {}) {
+  const runId = `aaaaaaaa-bbbb-4000-8000-${String(id).padStart(12, '0')}`;
+  return {
+    task_row: 'run', id, draft_id: id, proposal_id: id, client_id: id, event_date: '2026-12-05',
+    run_id: runId, current_run_id: runId, attempted_at: ago(2 * HOUR), error_code: null, error_sentence: null,
+    words_status: 'done', words_heartbeat_at: ago(2 * HOUR).toISOString(), words_error: null,
+    words_finished_at: ago(90 * 60 * 1000).toISOString(), pieces_open: 0, open_oldest_beat: null, pieces_failed: 0,
+    pieces_finished_at: ago(HOUR), has_proof: false, dead_start: false, db_now: NOW, ...over,
+  };
+}
+const tasksFrom = (rows) => mapMenuTaskRows(rows, { now: NOW });
+const READY = 'Menu ready to review';
+const NOT_STARTED = "Menu couldn't be generated: The menu couldn't be started. Generate it from the event page.";
+
+test('run kinds: a ready or failed auto run alone holds the client with its line and link; a reply and a Done never clear it', () => {
+  const [ready] = tasksFrom([runRow(941)]);
+  assert.equal(ready.kind, 'menu_ready');
+  const s = stateOf(run({ events: [ready] }), 'c-941');
+  assert.deepEqual([s.status, s.need, s.link, s.tasksOnly, s.waitingSince.toISOString()],
+    ['waiting', READY, '/events/941?menu=1', true, ago(HOUR).toISOString()]);
+  const [failed] = tasksFrom([runRow(942, { run_id: null, current_run_id: null, draft_id: null, dead_start: true })]);
+  const f = stateOf(run({ events: [failed] }), 'c-942');
+  assert.deepEqual([f.status, f.need, f.link, f.tasksOnly], ['waiting', NOT_STARTED, '/events/942?menu=1', true]);
+  for (const task of [ready, failed]) {
+    assert.equal(C.isCountedInbound(task), false);
+    assert.equal(C.countsAsReply(task), false);
+    const key = task.personKey;
+    const ask = k.smsIn(key, ago(3 * HOUR), 'Can we add a mocktail?');
+    const reply = k.smsOut(key, ago(30 * 60 * 1000), 'Yes, we can', { sender: DALLAS });
+    const after = stateOf(run({ events: [ask, task, reply] }), key);
+    assert.deepEqual([after.status, after.tasksOnly, after.need], ['waiting', true, task.text], `${task.kind}: the reply answered the text only`);
+    const done = stateOf(run({ events: [task], actions: [k.act(key, 'done', ago(10 * 60 * 1000))] }), key);
+    assert.deepEqual([done.status, done.tasksOnly], ['waiting', true], `${task.kind}: Done does not clear it`);
+  }
+});
+
+test('run kinds: a ready task opened during a snooze ends it; one the reader stops emitting holds nothing', () => {
+  const key = 'c-943';
+  const snooze = k.act(key, 'snooze', ago(3 * HOUR), { until: plus(NOW, DAY) });
+  const [ready] = tasksFrom([runRow(943)]);
+  const woke = stateOf(run({ events: [ready], actions: [snooze] }), key);
+  assert.deepEqual([woke.status, woke.snooze, woke.need], ['waiting', null, READY]);
+  // Approved since (a proof), or Start over by hand (a later run): the reader emits nothing, so nothing waits.
+  for (const over of [{ has_proof: true }, { current_run_id: '00000000-0000-4000-8000-000000009999' }]) {
+    const none = tasksFrom([runRow(943, over)]);
+    assert.deepEqual(none, []);
+    const s = stateOf(run({ events: none }), key);
+    assert.ok(!s || s.status !== 'waiting', 'nothing holds the client');
+  }
+});

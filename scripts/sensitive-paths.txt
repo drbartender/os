@@ -656,6 +656,9 @@ server/utils/menuImageProvider.js
 server/utils/menuArtCap.js
 # The admin routes that reserve and start paid generation, and serve stored R2 keys behind their prefix guards.
 server/routes/proposals/menuDrafts.js
+# startGeneration, Generate's body (spec 2026-10-19 section 8.3; lane menu-auto-start): the reserving transaction
+# both a manual Generate and the drink plan submit's auto-start run, the latter with nobody watching.
+server/routes/proposals/menuDraftGenerate.js
 # Its siblings: Update draft reserves paid words and image calls; the image GETs serve R2 keys behind their prefixes;
 # the shared helpers hold the reserving transaction (lockCalls first, then the draft row) and the 503 key checks.
 server/routes/proposals/menuDraftSync.js

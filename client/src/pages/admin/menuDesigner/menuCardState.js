@@ -85,6 +85,9 @@ export const BAR_LINE = 'The bar picks changed since this draft.';
 const NOTES_LINE = 'Client edited their menu notes.';
 // A planner mark's sub line (spec 2026-10-19 section 15).
 const SKIP_MENU = 'The client chose Skip the Menu.';
+// Draft ready's sub while the Inbox's menu_ready task is open (spec 14): the
+// auto-start's run is current (draft.auto_started) and no proof has gone out.
+const AUTO_STARTED = 'Drafted automatically when the client submitted their plan.';
 // The client review's lines (spec 2026-10-19 section 14). The skipped email
 // (notifications off, or an address sendEmail skips) reads as one that did not go out.
 const EMAIL_TAIL = { no_address: ' · no email on file', failed: ' · email failed', suppressed: ' · email blocked', skipped: ' · email not sent' };
@@ -475,7 +478,8 @@ function pickState(f, L) {
   if (f.draft) {
     // This visit's last save, else the draft's own last write.
     const ago = savedAgo(L.savedAt || f.draft.updated_at, L.now);
-    return S('draft', 'warn', 'Draft', 'Ready to review.', L.saving ? 'Saving...' : ago ? `Saved ${ago}` : 'Saved', ed('view', 'View'));
+    const auto = f.draft.auto_started === true && !f.proof;
+    return S('draft', 'warn', 'Draft', 'Ready to review.', L.saving ? 'Saving...' : auto ? AUTO_STARTED : ago ? `Saved ${ago}` : 'Saved', ed('view', 'View'));
   }
   if (!setUp(f)) return S('not-set-up', 'neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet.");
   if (!f.plan) return S('no-plan', 'neutral', 'No plan', 'No drink plan yet.', 'Menus are built from the drink plan.');

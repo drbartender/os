@@ -51,6 +51,9 @@
 // never recorded unseen. Neither bumps the version nor moves updated_at, so an
 // approved draft stays approved.
 //
+// Generate's body is startGeneration (menuDraftGenerate.js; spec 2026-10-19
+// section 8.3, lane menu-auto-start), the one path the drink plan submit's
+// auto-start shares; the route parses the id, answers 202 and queues the job.
 // Generate releases every reserved row of the proposal (the old run's, and any
 // re-roll or sync row stranded by a restart) BEFORE it reserves its own, and
 // upserts the draft in place (version, art_version and the approved_* stamps
@@ -84,59 +87,28 @@ const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { AppError, ValidationError, NotFoundError } = require('../../utils/errors');
-const { uploadFile } = require('../../utils/storage');
-const { isValidUpload, safeUploadExtension } = require('../../utils/fileValidation');
-const {
-  reserveImages, reserveText, releaseReserved, releaseProposalReserved, releasePieceReserved,
-} = require('../../utils/menuArtCap');
+const { reserveImages, releasePieceReserved } = require('../../utils/menuArtCap');
 const job = require('../../utils/menuArtJob');
 const { readDraftPayload, stuck, dismissalHash, reviewOf } = require('../../utils/menuDraftRead');
-const {
-  validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, LIMITS,
-} = require('../../utils/menuDraftValidation');
-const { touchSetFor } = require('../../utils/menuEventTouches');
+const { validatePatch, validateRerollNote, validateImageModel } = require('../../utils/menuDraftValidation');
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, foldReviewed,
 } = require('../../utils/menuDrinkSource');
-const { draftFingerprint } = require('../../utils/menuHouseSections');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
   LIST_CAP, isObject, capList, parseId, parseVersion, parsePlanHash, parsePieceKey, requireProposal, noDraft, draftChanged,
-  noPlan, requireWords, requireSamePlan, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inTx,
+  noPlan, requireWords, requireSamePlan, upsertPendingPieces, requireImageModel, imageModelId, inTx,
   inLockedTx, queue, layoutPieceKeys,
 } = require('./menuDraftShared');
+const { startGeneration } = require('./menuDraftGenerate');
 
 const router = express.Router();
 
-const REFERENCE_EXTS = new Set(['.jpg', '.png', '.webp']);
 const OPEN = new Set(['pending', 'working']);
 // Spec 6 has under twenty content keys and five inputs keys.
 const PATCH_KEYS_MAX = 40;
-const noDrinks = () => new AppError('The drink plan has no drinks to put on a menu.', 422, 'MENU_NO_DRINKS');
 
 const HOUSE_ONLY_TEXT = 'The house card lists drink names only.';
-// The event the touches follow; the date as text (spec 8.2).
-const EVENT_SQL = 'SELECT event_type, event_type_custom, event_date::text AS event_date FROM proposals WHERE id = $1';
-
-// $6 is the content seed: look, touch_key and house_bottom_corners (spec 9.1).
-const UPSERT_DRAFT_SQL = `
-  INSERT INTO menu_drafts (proposal_id, drink_plan_id, run_id, inputs, content, plan_fingerprint)
-  VALUES ($1, $2, $3::uuid, $4::jsonb,
-          jsonb_build_object('words_status', 'pending', 'words_heartbeat_at', NOW()) || $6::jsonb, $5::jsonb)
-  ON CONFLICT (proposal_id) DO UPDATE
-     SET drink_plan_id = EXCLUDED.drink_plan_id, run_id = EXCLUDED.run_id, inputs = EXCLUDED.inputs,
-         content = EXCLUDED.content, plan_fingerprint = EXCLUDED.plan_fingerprint,
-         dismissed_plan_hash = NULL, version = menu_drafts.version + 1
-  RETURNING id, version`;
-
-// The attached reference, checked by its bytes (spec 7, Upload checks), or null.
-function referenceFile(files) {
-  const file = files && files.reference;
-  if (!file) return null;
-  const ext = !Array.isArray(file) && isValidUpload(file) ? safeUploadExtension(file) : '';
-  if (!REFERENCE_EXTS.has(ext)) throw new ValidationError({ reference: 'The reference must be one JPG, PNG or WebP image.' });
-  return { data: file.data, ext };
-}
 
 // The body's lists and key sets are bounded before validatePatch walks them.
 // No stored draft holds more than LIST_CAP drinks or lines, and a PATCH can
@@ -158,76 +130,14 @@ router.get('/:id/menu-draft', auth, requireAdminOrManager, menuDraftReadLimiter,
   res.json(await readDraftPayload(parseId(req.params.id)));
 }));
 
-// What the look decision reads from the plan (validateGenerateInputs).
-const planFacts = (plan, normalized) => ({
-  menuStyle: plan && isObject(plan.selections) ? plan.selections.menuStyle : null,
-  brief: normalized ? normalized.brief : null,
-});
-
+// Start over and the first Generate: startGeneration (menuDraftGenerate.js) is
+// the body, the one path the auto-start shares (spec 2026-10-19 section 8.3);
+// the route answers 202 and queues the job once it returns.
 router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
-  assertNotLegalHold(id);
-  await requireProposal(id);
-  const stored = (await pool.query('SELECT inputs FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
-  const storedKey = stored && isObject(stored.inputs) ? stored.inputs.reference_key : null;
-  const file = referenceFile(req.files);
-  const { plan, normalized } = await job.freshPlan(id);
-  const inputs = validateGenerateInputs(req.body, {
-    hasFile: Boolean(file), storedInputs: stored ? stored.inputs : null, plan: planFacts(plan, normalized),
-  });
-  const touches = touchSetFor((await pool.query(EVENT_SQL, [id])).rows[0]);
-  const house = inputs.look === 'house';
-  // The keys of the providers this run calls, before any work (header).
-  if (!house) requireWordsProvider();
-  if (!house || !touches.plain) requireImageModel(inputs.image_model);
-  if (!normalized || !normalized.drinks.length) throw noDrinks();
-  if (inputs.reference_source === 'planner' && !normalized.plannerImageKey) {
-    throw new ValidationError({ reference_source: 'The drink plan has no client image to use as the reference.' });
-  }
-
-  // R2 first, with no transaction open (spec 5.5). A rollback below orphans
-  // the object, the menu-print precedent.
-  let uploaded = null;
-  if (file) {
-    uploaded = `menu-art/${id}/ref-${crypto.randomUUID()}${file.ext}`;
-    await uploadFile(file.data, uploaded);
-  }
-
-  const provider = inputs.image_model;
-  const model = imageModelId(provider);
-  const seed = { look: inputs.look, touch_key: touches.key, house_bottom_corners: touches.bottomCorners };
-  // A house card's background alone (none when plain); a custom one's background and first 8 drinks.
-  const pieceKeys = house ? layoutPieceKeys(seed) : ['background', ...normalized.drinks.slice(0, LIMITS.art_drinks).map((d) => d.key)];
-  const runId = crypto.randomUUID();
-  const draft = await inLockedTx(async (client) => {
-    const cur = (await client.query('SELECT id, run_id, inputs FROM menu_drafts WHERE proposal_id = $1 FOR UPDATE', [id])).rows[0];
-    // Start over keeps the stored upload when no file came and the source is
-    // still upload. The locked row must still hold the key validated above,
-    // so a Generate that replaced or dropped it in between is a conflict, not
-    // a silent swap.
-    let referenceKey = uploaded;
-    if (!referenceKey && inputs.reference_source === 'upload') {
-      const was = cur && isObject(cur.inputs) ? cur.inputs : {};
-      if (was.reference_source !== 'upload' || !was.reference_key || was.reference_key !== storedKey) throw draftChanged();
-      referenceKey = was.reference_key;
-    }
-    // Both releases come BEFORE this run reserves (releasing after would free
-    // the new run's rows too). Only reserved rows move; a sent row is billed
-    // and its job settles it.
-    if (cur) await releaseReserved(client, { proposalId: id, runId: cur.run_id });
-    await releaseProposalReserved(client, { proposalId: id });
-    const { rows } = await client.query(UPSERT_DRAFT_SQL,
-      [id, plan.id, runId, { ...inputs, reference_key: referenceKey }, draftFingerprint(seed, plan, normalized), seed]);
-    await client.query('DELETE FROM menu_draft_pieces WHERE draft_id = $1', [rows[0].id]);
-    await upsertPendingPieces(client, { draftId: rows[0].id, runId, pieceKeys, provider, model });
-    // The text row first: the job adopts the run's first text reservation. A
-    // house run writes no words, so it reserves none.
-    if (!house) await reserveText(client, { proposalId: id, runId, model: job.textModelId() });
-    await reserveImages(client, { proposalId: id, runId, pieceKeys, provider, model });
-    return rows[0];
-  });
-  res.status(202).json({ draft_id: draft.id, version: draft.version });
-  queue('generate', () => job.runGeneration({ draftId: draft.id, runId, proposalId: id }));
+  const started = await startGeneration({ proposalId: id, inputs: req.body, file: req.files ? req.files.reference : null });
+  res.status(202).json({ draft_id: started.draftId, version: started.version });
+  queue('generate', () => job.runGeneration({ draftId: started.draftId, runId: started.runId, proposalId: id }));
 }));
 
 router.patch('/:id/menu-draft', auth, requireAdminOrManager, menuDraftEditLimiter, asyncHandler(async (req, res) => {

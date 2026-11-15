@@ -219,6 +219,7 @@ before(async () => {
 
   await seedMail();
   await seedMenuTasks();
+  await seedRunTasks();
   const index = await loadPeopleIndex(pool);
   mailRows = (await pool.query(MAIL_HEADERS_SQL, [INBOX_HISTORY_START])).rows.filter((r) => r.gmail_id.startsWith(`${GM}-`));
   for (const e of mapGmailHeaders(mailRows, index)) gmByRef.set(e.ref, e);
@@ -836,7 +837,7 @@ const { legalHoldPersonKeys } = require('./engine');
 const M = {};
 let menuToday;
 
-async function menuEvent(label, { offset = 20, status = 'confirmed', noDate = false, mark = false, clientId, noClient = false } = {}) {
+async function menuEvent(label, { offset = 20, status = 'confirmed', noDate = false, mark = false, clientId, noClient = false, draft = true } = {}) {
   let client = clientId || null;
   if (!client && !noClient) {
     client = (await pool.query('INSERT INTO clients (name) VALUES ($1) RETURNING id', [`Menu ${label} ${TAG}`])).rows[0].id;
@@ -848,11 +849,11 @@ async function menuEvent(label, { offset = 20, status = 'confirmed', noDate = fa
     [client, status, noDate, menuToday, offset, mark, TAG]
   )).rows[0].id;
   ids.proposals.push(p);
-  const d = (await pool.query(
+  const d = draft ? (await pool.query(
     `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, version, art_version)
      VALUES ($1, gen_random_uuid(), '{}', '{}', '{}', 4, 2) RETURNING id`,
     [p]
-  )).rows[0].id;
+  )).rows[0].id : null;
   return { clientId: client, proposalId: p, draftId: d, personKey: client ? `c-${client}` : null };
 }
 
@@ -1198,4 +1199,332 @@ test('menu tasks: a malformed legal-hold id still fails closed, before any row i
   for (const bad of [[600.5], ['6_00'], [0], [-1]]) {
     assert.throws(() => menuTaskParams({ floor: INBOX_HISTORY_START, now: new Date(), legalHoldIds: bad }), /legal-hold/);
   }
+});
+
+// ─── The run tasks: menu_ready and menu_failed (spec 2026-10-19 sections 8.3 and 13.1; lane menu-auto-start) ───
+// Each case is a menu_auto_starts row as the auto-start leaves it (its run on
+// the draft, or its refusal), with the draft's words and pieces set by hand.
+// Its proposal's delete cascades the guard row, the draft and the pieces.
+
+const { SENTENCES: JOB_SENTENCES } = require('../menuArtJobErrors');
+const { upsertPendingPieces } = require('../../routes/proposals/menuDraftShared');
+const { AUTO_START_SENTENCES } = require('./readMenuTasks');
+
+const R = {};
+const FAILED = (sentence) => `Menu couldn't be generated: ${sentence}`;
+
+// The guard row for ev: its run is the draft's current run unless runId says otherwise.
+async function guardRow(ev, { run = 'current', ago = '5 minutes', code = null, sentence = null } = {}) {
+  const runId = run === 'current'
+    ? (await pool.query('SELECT run_id FROM menu_drafts WHERE id = $1', [ev.draftId])).rows[0].run_id
+    : run;
+  await pool.query(
+    `INSERT INTO menu_auto_starts (proposal_id, draft_id, run_id, attempted_at, error_code, error_sentence)
+     VALUES ($1, $2, $3::uuid, NOW() - $4::interval, $5, $6)`,
+    [ev.proposalId, runId ? ev.draftId : null, runId, ago, code, sentence]);
+  return (await pool.query('SELECT * FROM menu_auto_starts WHERE proposal_id = $1', [ev.proposalId])).rows[0];
+}
+
+// The draft's words as the job leaves them; finishedAgo stamps words_finished_at
+// the way the job does (a JSON ISO string with microseconds and an offset).
+async function words(ev, status, { error = null, beatAgo = '10 seconds', finishedAgo = null } = {}) {
+  await pool.query(
+    `UPDATE menu_drafts SET content = content || jsonb_build_object('words_status', $2::text, 'words_error', $3::text,
+            'words_heartbeat_at', NOW() - $4::interval)
+            || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('words_finished_at', NOW() - $5::interval) END
+      WHERE id = $1`,
+    [ev.draftId, status, error, beatAgo, finishedAgo]);
+}
+
+async function piece(ev, key, status, { finishedAgo = null, beatAgo = '10 seconds' } = {}) {
+  await pool.query(
+    `INSERT INTO menu_draft_pieces (draft_id, piece_key, run_id, status, provider, model, heartbeat_at, finished_at)
+     SELECT id, $2, run_id, $3, 'gemini', 'test-model', NOW() - $4::interval,
+            CASE WHEN $5::text IS NULL THEN NULL ELSE NOW() - $5::interval END
+       FROM menu_drafts WHERE id = $1`,
+    [ev.draftId, key, status, beatAgo, finishedAgo]);
+}
+
+async function seedRunTasks() {
+  // Ready: the words landed, both pictures drawn; the finish is the latest of the three.
+  R.ready = await menuEvent('RunReady');
+  R.readyGuard = await guardRow(R.ready);
+  await words(R.ready, 'done', { finishedAgo: '4 minutes' });
+  await piece(R.ready, 'background', 'done', { finishedAgo: '3 minutes' });
+  await piece(R.ready, 'custom:x', 'done', { finishedAgo: '2 minutes' });
+  // Ready with pictures failed (spec 28: " · <n> picture(s) failed").
+  R.readyOneFailed = await menuEvent('RunReadyOneFailed');
+  await guardRow(R.readyOneFailed);
+  await words(R.readyOneFailed, 'done', { finishedAgo: '4 minutes' });
+  await piece(R.readyOneFailed, 'background', 'failed', { finishedAgo: '3 minutes' });
+  R.readyTwoFailed = await menuEvent('RunReadyTwoFailed');
+  await guardRow(R.readyTwoFailed);
+  await words(R.readyTwoFailed, 'done', { finishedAgo: '4 minutes' });
+  await piece(R.readyTwoFailed, 'background', 'failed', { finishedAgo: '3 minutes' });
+  await piece(R.readyTwoFailed, 'custom:y', 'failed', { finishedAgo: '3 minutes' });
+  // A plain house card: no pieces, the finish is the words' own.
+  R.readyPlain = await menuEvent('RunReadyPlain');
+  await guardRow(R.readyPlain);
+  await words(R.readyPlain, 'done', { finishedAgo: '1 minute' });
+  // Still running, fresh: nothing yet.
+  R.writing = await menuEvent('RunWriting');
+  await guardRow(R.writing);
+  await words(R.writing, 'pending');
+  R.painting = await menuEvent('RunPainting');
+  await guardRow(R.painting);
+  await words(R.painting, 'done', { finishedAgo: '1 minute' });
+  await piece(R.painting, 'background', 'working');
+  // Failed: the words, a stale run (the words, or a picture), an error row, a dead start.
+  R.wordsFailed = await menuEvent('RunWordsFailed');
+  await guardRow(R.wordsFailed);
+  await words(R.wordsFailed, 'failed', { error: JOB_SENTENCES.anthropicWordsOutOfCredit });
+  R.wordsOdd = await menuEvent('RunWordsOdd');
+  await guardRow(R.wordsOdd);
+  await words(R.wordsOdd, 'failed', { error: 'raw provider text, never shown' });
+  R.staleWords = await menuEvent('RunStaleWords');
+  await guardRow(R.staleWords);
+  await words(R.staleWords, 'working', { beatAgo: '2 hours' });
+  // A picture left open by a restart: the menu started, its words are on the
+  // draft, so it is ready to review with that picture counted as failed.
+  R.stalePiece = await menuEvent('RunStalePiece');
+  await guardRow(R.stalePiece);
+  await words(R.stalePiece, 'done', { finishedAgo: '3 hours' });
+  await piece(R.stalePiece, 'background', 'working', { beatAgo: '2 hours' });
+  // One failed picture and two left open by a restart: three failed.
+  R.staleCount = await menuEvent('RunStaleCount');
+  await guardRow(R.staleCount);
+  await words(R.staleCount, 'done', { finishedAgo: '3 hours' });
+  await piece(R.staleCount, 'background', 'failed', { finishedAgo: '170 minutes' });
+  await piece(R.staleCount, 'custom:a', 'pending', { beatAgo: '2 hours' });
+  await piece(R.staleCount, 'custom:b', 'working', { beatAgo: '2 hours' });
+  // A picture left open after the proof went out: the menu is with the client, no task.
+  R.staleAfterProof = await menuEvent('RunStaleAfterProof');
+  await guardRow(R.staleAfterProof);
+  await words(R.staleAfterProof, 'done', { finishedAgo: '3 hours' });
+  await piece(R.staleAfterProof, 'custom:c', 'working', { beatAgo: '2 hours' });
+  await menuProof(R.staleAfterProof, { sentAgo: '1 hour' });
+  // Words just landed, the pictures just created by the job's own path
+  // (upsertPendingPieces stamps heartbeat_at NOW()): in flight, not stale.
+  R.justPending = await menuEvent('RunJustPending');
+  await guardRow(R.justPending);
+  await words(R.justPending, 'done', { finishedAgo: '1 second' });
+  const runOf = (await pool.query('SELECT run_id FROM menu_drafts WHERE id = $1', [R.justPending.draftId])).rows[0].run_id;
+  await upsertPendingPieces(pool, { draftId: R.justPending.draftId, runId: runOf, pieceKeys: ['background', 'custom:d'], provider: 'gemini', model: 'test-model' });
+  R.errorRow = await menuEvent('RunError', { draft: false });
+  R.errorGuard = await guardRow(R.errorRow, { run: null, code: 'MENU_ART_NOT_CONFIGURED', sentence: JOB_SENTENCES.notSetUp });
+  R.dead = await menuEvent('RunDead', { draft: false });
+  R.deadGuard = await guardRow(R.dead, { run: null, ago: '11 minutes' });
+  R.young = await menuEvent('RunYoung', { draft: false });
+  await guardRow(R.young, { run: null, ago: '2 minutes' });
+  // Closed: a manual Generate since (a later run), over a run and over an error;
+  // a deleted draft; an approval (a proof); a print file; the mark; the event over; archived.
+  R.manualLater = await menuEvent('RunManualLater');
+  await guardRow(R.manualLater, { run: crypto.randomUUID() });
+  await words(R.manualLater, 'done', { finishedAgo: '1 minute' });
+  R.errorThenManual = await menuEvent('RunErrorThenManual');
+  await guardRow(R.errorThenManual, { run: null, code: 'MENU_ART_CAP_REACHED', sentence: AUTO_START_SENTENCES.capped });
+  R.draftGone = await menuEvent('RunDraftGone', { draft: false });
+  await pool.query(
+    'INSERT INTO menu_auto_starts (proposal_id, draft_id, run_id, attempted_at) VALUES ($1, NULL, $2::uuid, NOW() - INTERVAL \'1 hour\')',
+    [R.draftGone.proposalId, crypto.randomUUID()]);
+  R.approved = await menuEvent('RunApproved');
+  await guardRow(R.approved);
+  await words(R.approved, 'done', { finishedAgo: '1 hour' });
+  await menuProof(R.approved, { sentAgo: '30 minutes' });
+  R.printed = await menuEvent('RunPrinted');
+  await guardRow(R.printed);
+  await words(R.printed, 'done', { finishedAgo: '1 minute' });
+  await setPrintKey(R.printed, `menu-print/${R.printed.proposalId}/${crypto.randomUUID()}.pdf`);
+  R.errorPrinted = await menuEvent('RunErrorPrinted', { draft: false });
+  await guardRow(R.errorPrinted, { run: null, code: 'MENU_NO_DRINKS', sentence: JOB_SENTENCES.noDrinks });
+  await setPrintKey(R.errorPrinted, `menu-print/${R.errorPrinted.proposalId}/${crypto.randomUUID()}.pdf`);
+  R.marked = await menuEvent('RunMarked', { mark: true });
+  await guardRow(R.marked);
+  await words(R.marked, 'done', { finishedAgo: '1 minute' });
+  R.errorMarked = await menuEvent('RunErrorMarked', { draft: false, mark: true });
+  await guardRow(R.errorMarked, { run: null, code: 'MENU_NO_DRINKS', sentence: JOB_SENTENCES.noDrinks });
+  R.past = await menuEvent('RunPast', { offset: -1 });
+  await guardRow(R.past);
+  await words(R.past, 'done', { finishedAgo: '1 minute' });
+  R.archived = await menuEvent('RunArchived', { status: 'archived', draft: false });
+  await guardRow(R.archived, { run: null, code: 'MENU_NO_DRINKS', sentence: JOB_SENTENCES.noDrinks });
+  R.noClient = await menuEvent('RunNoClient', { noClient: true, draft: false });
+  await guardRow(R.noClient, { run: null, code: 'MENU_NO_DRINKS', sentence: JOB_SENTENCES.noDrinks });
+  // The held client: a ready run on the held proposal, an error on another of theirs.
+  R.held = await menuEvent('RunHeld');
+  await guardRow(R.held);
+  await words(R.held, 'done', { finishedAgo: '1 minute' });
+  R.heldOther = await menuEvent('RunHeldOther', { clientId: R.held.clientId, draft: false });
+  await guardRow(R.heldOther, { run: null, code: 'MENU_NO_DRINKS', sentence: JOB_SENTENCES.noDrinks });
+}
+
+const runTasksOf = (events, ev) => tasksOf(events, ev).filter((e) => e.kind === 'menu_ready' || e.kind === 'menu_failed');
+
+test('run tasks: a finished auto run is "Menu ready to review" under the client, at its finish, with the event link', async () => {
+  const events = await readMenuTasksNow();
+  const [task, ...rest] = runTasksOf(events, R.ready);
+  assert.deepEqual(rest, []);
+  assert.deepEqual(
+    [task.ref, task.personKey, task.channel, task.line, task.direction, task.author, task.kind, task.text],
+    [`mt:menu_ready:${R.ready.proposalId}`, R.ready.personKey, null, null, 'system', null, 'menu_ready', 'Menu ready to review']);
+  assert.deepEqual(task.meta, { source: 'menu_task', id: R.ready.proposalId, proposalId: R.ready.proposalId, link: `/events/${R.ready.proposalId}?menu=1` });
+  const latest = (await pool.query('SELECT MAX(finished_at) AS at FROM menu_draft_pieces WHERE draft_id = $1', [R.ready.draftId])).rows[0].at;
+  assert.equal(task.at.toISOString(), latest.toISOString(), 'the latest of the words and the pieces');
+  const plainAt = (await pool.query("SELECT (content->>'words_finished_at')::timestamptz AS at FROM menu_drafts WHERE id = $1", [R.readyPlain.draftId])).rows[0].at;
+  const [plain] = runTasksOf(events, R.readyPlain);
+  assert.deepEqual([plain.kind, plain.at.toISOString()], ['menu_ready', plainAt.toISOString()], 'no pieces: the words\' own finish');
+});
+
+test('run tasks: failed pictures ride on the ready line', async () => {
+  const events = await readMenuTasksNow();
+  assert.deepEqual(runTasksOf(events, R.readyOneFailed).map((e) => [e.kind, e.text]), [['menu_ready', 'Menu ready to review · 1 picture failed']]);
+  assert.deepEqual(runTasksOf(events, R.readyTwoFailed).map((e) => [e.kind, e.text]), [['menu_ready', 'Menu ready to review · 2 pictures failed']]);
+});
+
+test('run tasks: a run still under way raises nothing yet, a picture just created by the job included', async () => {
+  const events = await readMenuTasksNow();
+  for (const label of ['writing', 'painting', 'young', 'justPending']) assert.deepEqual(runTasksOf(events, R[label]), [], label); // eslint-disable-line security/detect-object-injection -- a literal fixture label
+});
+
+// Review fix 1: a restart while pictures were drawing leaves the menu started,
+// its words and finished pictures on the draft. It is ready to review, the
+// stale open pictures counted as failed, never "couldn't be started" (whose
+// Generate is Start over); and with a proof out, it raises nothing.
+test('run tasks: pictures left open by a restart read ready with those pictures failed; with a proof out, nothing', async () => {
+  const events = await readMenuTasksNow();
+  const one = (ev) => runTasksOf(events, ev).map((e) => [e.kind, e.text]);
+  assert.deepEqual(one(R.stalePiece), [['menu_ready', 'Menu ready to review · 1 picture failed']]);
+  const wordsAt = (await pool.query("SELECT (content->>'words_finished_at')::timestamptz AS at FROM menu_drafts WHERE id = $1", [R.stalePiece.draftId])).rows[0].at;
+  assert.equal(runTasksOf(events, R.stalePiece)[0].at.toISOString(), wordsAt.toISOString(), 'its time as today: the latest finish stamp');
+  assert.deepEqual(one(R.staleCount), [['menu_ready', 'Menu ready to review · 3 pictures failed']], 'one failed and two left open');
+  assert.deepEqual(one(R.staleAfterProof), [], 'a proof is out: the menu is with the client');
+});
+
+test('run tasks: "Menu couldn\'t be generated" for an error row, failed words, stale words and a dead start older than 10 minutes', async () => {
+  const events = await readMenuTasksNow();
+  const one = (ev) => runTasksOf(events, ev).map((e) => [e.kind, e.text]);
+  assert.deepEqual(one(R.errorRow), [['menu_failed', FAILED('Menu art is not set up.')]]);
+  assert.equal(runTasksOf(events, R.errorRow)[0].at.toISOString(), R.errorGuard.attempted_at.toISOString(), 'at the attempt');
+  assert.deepEqual(one(R.wordsFailed), [['menu_failed', FAILED(JOB_SENTENCES.anthropicWordsOutOfCredit)]], 'the job\'s own sentence');
+  assert.deepEqual(one(R.wordsOdd), [['menu_failed', FAILED(AUTO_START_SENTENCES.notStarted)]], 'never a text that is not a fixed sentence');
+  assert.deepEqual(one(R.staleWords), [['menu_failed', FAILED('The menu run stopped partway. Open the menu to finish it.')]],
+    'the words went stale: the run started and stopped');
+  assert.equal(AUTO_START_SENTENCES.interrupted, 'The menu run stopped partway. Open the menu to finish it.');
+  assert.deepEqual(one(R.dead), [['menu_failed', FAILED(AUTO_START_SENTENCES.notStarted)]], 'a start that died');
+  assert.equal(runTasksOf(events, R.dead)[0].ref, `mt:menu_failed:${R.dead.proposalId}`);
+});
+
+test('run tasks: closed by a manual Generate since, an approval, a print file or the mark; a deleted draft raises nothing', async () => {
+  const events = await readMenuTasksNow();
+  for (const label of ['manualLater', 'errorThenManual', 'draftGone', 'approved', 'printed', 'errorPrinted', 'marked', 'errorMarked']) {
+    assert.deepEqual(runTasksOf(events, R[label]), [], label); // eslint-disable-line security/detect-object-injection -- a literal fixture label
+  }
+});
+
+test('run tasks: none after the event day, for an archived proposal or one with no client, nor for any proposal of the held client', async () => {
+  const unheld = await readMenuTasksNow();
+  for (const label of ['past', 'archived', 'noClient']) assert.deepEqual(runTasksOf(unheld, R[label]), [], label); // eslint-disable-line security/detect-object-injection -- a literal fixture label
+  assert.equal(runTasksOf(unheld, R.held).length + runTasksOf(unheld, R.heldOther).length, 2, 'the fixture raises two unheld');
+  const heldKeys = await legalHoldPersonKeys(pool, [R.held.proposalId]);
+  for (const events of [await readMenuTasksNow({ held: [R.held.proposalId], heldKeys }), await readMenuTasksNow({ held: [R.held.proposalId] }),
+    await readMenuTasksNow({ heldKeys })]) {
+    assert.deepEqual([...runTasksOf(events, R.held), ...runTasksOf(events, R.heldOther)], []);
+    assert.equal(runTasksOf(events, R.ready).length, 1, 'everyone else keeps theirs');
+  }
+});
+
+test('run tasks: pass 2 keeps the fixed text and loads no note', async () => {
+  const events = await readMenuTasksNow();
+  const wanted = [...runTasksOf(events, R.ready), ...runTasksOf(events, R.errorRow)];
+  const merged = mergeDetails(wanted, await loadDetails(wanted, pool));
+  assert.deepEqual(merged.map((e) => [e.text, e.meta.note]), [['Menu ready to review', undefined], [FAILED('Menu art is not set up.'), undefined]]);
+});
+
+// Carried from the menu-house-card review (lane menu-auto-start):
+// content.words_finished_at is a JSON string holding an ISO time with
+// microseconds and an offset, as Postgres writes a timestamptz. The ready
+// task's time reads it deliberately; a row whose stamp the mapper cannot read
+// is skipped and reported once per process by its proposal id, exactly as an
+// unreadable proof row is by its proof id, and every other task still shows.
+test('run tasks: words_finished_at with microseconds and an offset is read exactly; an unreadable stamp skips its row and is reported once, by id', () => {
+  const now = new Date();
+  const inThreeDays = new Date(Date.parse(`${chicagoTodayYmd()}T12:00:00Z`) + 3 * 86400000).toISOString().slice(0, 10);
+  const row = (id, stamp) => {
+    const runId = `aaaaaaaa-bbbb-4000-8000-${String(id).padStart(12, '0')}`;
+    return {
+      task_row: 'run', id, draft_id: id, proposal_id: id, client_id: id, event_date: inThreeDays, run_id: runId, current_run_id: runId,
+      attempted_at: new Date(now.getTime() - 3600000), error_code: null, error_sentence: null, words_status: 'done',
+      words_heartbeat_at: null, words_error: null, words_finished_at: stamp, pieces_open: 0, open_oldest_beat: null,
+      pieces_failed: 0, pieces_finished_at: null, has_proof: false, dead_start: false, db_now: now,
+    };
+  };
+  const reports = [];
+  const warn = console.warn;
+  __setMenuTaskDeps({ sentry: { captureMessage: (...args) => reports.push(args) } });
+  console.warn = () => {};
+  try {
+    const [chicago, utc] = mapMenuTaskRows([row(92001, '2026-11-14T12:34:56.123456-06:00'), row(92002, '2026-11-14T18:34:56.5+00:00')], { now });
+    assert.deepEqual([chicago.kind, chicago.at.toISOString()], ['menu_ready', '2026-11-14T18:34:56.123Z'], 'the offset applied, the microseconds cut');
+    assert.equal(utc.at.toISOString(), '2026-11-14T18:34:56.500Z');
+    const out = mapMenuTaskRows([row(92003, 'not a time'), row(92004, '2026-13-45T00:00:00Z'), row(92005, '2026-11-14 12:34:56'),
+      row(92006, '2026-11-14T12:00:00.000000Z')], { now });
+    assert.deepEqual(out.map((e) => [e.kind, e.meta.id]), [['menu_ready', 92006]], 'only the readable row shows');
+    assert.deepEqual(reports.map((r) => r[1].extra), [{ proposal_id: 92003 }, { proposal_id: 92004 }, { proposal_id: 92005 }]);
+    assert.ok(reports.every((r) => r[1].level === 'warning' && r[1].tags.issue === 'menu_task_row'));
+    mapMenuTaskRows([row(92003, 'not a time')], { now });
+    assert.equal(reports.length, 3, 'the same row is reported once per process');
+  } finally {
+    console.warn = warn;
+    __resetMenuTaskDeps();
+  }
+});
+
+// Review fix 1, pure: the run rule for a guard row whose run is the draft's
+// current run, case by case, over rows as the query returns them.
+test('run tasks, the rule: open words in flight or stopped; failed words; a proof first; pictures in flight, stopped, or done', () => {
+  const now = new Date();
+  const ago = (ms) => new Date(now.getTime() - ms);
+  const HOUR = 3600000;
+  const inThreeDays = new Date(Date.parse(`${chicagoTodayYmd()}T12:00:00Z`) + 3 * 86400000).toISOString().slice(0, 10);
+  const row = (id, over = {}) => {
+    const runId = `aaaaaaaa-cccc-4000-8000-${String(id).padStart(12, '0')}`;
+    return {
+      task_row: 'run', id, draft_id: id, proposal_id: id, client_id: id, event_date: inThreeDays, run_id: runId, current_run_id: runId,
+      attempted_at: ago(3 * HOUR), error_code: null, error_sentence: null, words_status: 'done',
+      words_heartbeat_at: ago(3 * HOUR).toISOString(), words_error: null, words_finished_at: ago(2 * HOUR).toISOString(),
+      pieces_open: 0, open_oldest_beat: null, open_newest_beat: null, pieces_failed: 0, pieces_finished_at: ago(HOUR),
+      has_proof: false, dead_start: false, db_now: now, ...over,
+    };
+  };
+  const stale = ago(2 * HOUR);
+  const fresh = ago(1000);
+  const out = (r) => mapMenuTaskRows([r], { now }).map((e) => [e.kind, e.text]);
+  const READY = 'Menu ready to review';
+  // a. Words open: in flight (no task), or stopped (the new sentence).
+  assert.deepEqual(out(row(93001, { words_status: 'working', words_heartbeat_at: fresh.toISOString(), words_finished_at: null })), [], 'a: in flight');
+  assert.deepEqual(out(row(93002, { words_status: 'pending', words_heartbeat_at: stale.toISOString(), words_finished_at: null })),
+    [['menu_failed', "Menu couldn't be generated: The menu run stopped partway. Open the menu to finish it."]], 'a: stopped');
+  // b. Words failed: as before.
+  assert.deepEqual(out(row(93003, { words_status: 'failed', words_error: JOB_SENTENCES.noDrinks })),
+    [['menu_failed', `Menu couldn't be generated: ${JOB_SENTENCES.noDrinks}`]], 'b');
+  // c. A proof out: nothing, whatever the pictures are doing.
+  for (const pieces of [{}, { pieces_open: 1, open_oldest_beat: stale, open_newest_beat: stale }, { pieces_open: 1, open_oldest_beat: fresh, open_newest_beat: fresh }]) {
+    assert.deepEqual(out(row(93004, { has_proof: true, ...pieces })), [], 'c');
+  }
+  // d. Pictures in flight: nothing; a picture just created (heartbeat now) is in flight, and so is a run with any fresh one.
+  assert.deepEqual(out(row(93005, { pieces_open: 2, open_oldest_beat: fresh, open_newest_beat: fresh })), [], 'd');
+  assert.deepEqual(out(row(93006, { pieces_open: 1, open_oldest_beat: now, open_newest_beat: now })), [], 'd: just created');
+  assert.deepEqual(out(row(93007, { pieces_open: 2, open_oldest_beat: stale, open_newest_beat: fresh })), [], 'd: one still drawing');
+  // e. Pictures stopped: ready, the stopped ones counted as failed, timed as before.
+  const e = mapMenuTaskRows([row(93008, { pieces_open: 2, pieces_failed: 1, open_oldest_beat: stale, open_newest_beat: stale })], { now });
+  assert.deepEqual(e.map((t) => [t.kind, t.text]), [['menu_ready', `${READY} · 3 pictures failed`]], 'e');
+  assert.equal(e[0].at.toISOString(), ago(HOUR).toISOString(), 'e: the latest finish stamp');
+  assert.deepEqual(out(row(93009, { pieces_open: 1, open_oldest_beat: stale, open_newest_beat: stale, pieces_finished_at: null })),
+    [['menu_ready', `${READY} · 1 picture failed`]], 'e: one');
+  // f. Nothing open: ready as before.
+  assert.deepEqual(out(row(93010)), [['menu_ready', READY]], 'f');
+  // The dead start keeps its own sentence.
+  assert.deepEqual(out(row(93011, { run_id: null, current_run_id: null, draft_id: null, dead_start: true })),
+    [['menu_failed', `Menu couldn't be generated: ${AUTO_START_SENTENCES.notStarted}`]]);
 });

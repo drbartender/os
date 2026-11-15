@@ -5215,6 +5215,30 @@ DO $$ BEGIN
 END $$;
 -- ─── end Menu proofs ───
 
+-- ─── Menu auto-starts (spec 2026-10-19 section 8.4) ───
+-- Spec: docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md, section 8.
+-- menu_auto_starts: the run-once guard of the menu draft a drink plan submit
+-- starts with nobody watching (server/utils/menuAutoStart.js). Its primary key
+-- is the guard: the auto-start inserts (proposal_id, plan_id) ON CONFLICT DO
+-- NOTHING as its last check before any provider call, and a rowCount of 0
+-- stops it, so two racing submits or a reopened plan resubmitted start at most
+-- one run. The row is never deleted, so a proposal is auto-started at most
+-- once in its life. plan_id is the submitted plan; draft_id and run_id are
+-- stored on success, error_code and error_sentence (the Inbox's fixed
+-- sentence) on a refusal. A row with neither, older than 10 minutes, is a
+-- start that died (the Inbox reader's menu_failed). Writer: the auto-start
+-- only. Readers: the Inbox (readMenuTasks.js) and the card (menuDraftRead.js).
+CREATE TABLE IF NOT EXISTS menu_auto_starts (
+  proposal_id INTEGER PRIMARY KEY REFERENCES proposals(id) ON DELETE CASCADE,
+  plan_id INTEGER REFERENCES drink_plans(id) ON DELETE SET NULL,
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  draft_id INTEGER REFERENCES menu_drafts(id) ON DELETE SET NULL,
+  run_id UUID,
+  error_code TEXT,
+  error_sentence TEXT
+);
+-- ─── end Menu auto-starts ───
+
 -- ─── Service extensions (on-site added bar time) ──────────────────────────
 -- One row per staff request for more bar time. Spec:
 -- docs/superpowers/specs/2026-07-25-service-extension-design.md

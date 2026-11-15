@@ -112,6 +112,26 @@ describe('table C, one row each', () => {
     expect(lines(s)).toEqual(['warn', 'Draft', 'Ready to review.', 'Saving...']);
   });
 
+  // Spec 2026-10-19 section 14: while the Inbox's menu_ready task is open (the
+  // draft's run is the auto-start's, read model draft.auto_started, and no proof
+  // has gone out), the Draft ready sub says the draft started itself.
+  test('Draft ready, auto-started: the sub says so until a proof exists; Saving... still wins', () => {
+    const AUTO = 'Drafted automatically when the client submitted their plan.';
+    const auto = (p) => { p.draft.auto_started = true; };
+    let s = run(P(auto));
+    expect(lines(s)).toEqual(['warn', 'Draft', 'Ready to review.', AUTO]);
+    expect(ids(s)).toEqual(['view', null]);
+    expect(run(P(auto), { savedAt: NOW - 10000 }).sub).toBe(AUTO);
+    expect(run(P(auto), { saving: true }).sub).toBe('Saving...');
+    // A proof means the task closed (an approval); a manual Generate clears auto_started.
+    s = run(P((p) => { auto(p); p.proof = { id: 9, state: 'withdrawn', sent_at: APPROVED_AT, withdrawn_at: APPROVED_AT }; }));
+    expect([s.id, s.sub]).toEqual(['draft', 'Saved']);
+    expect(run(P((p) => { p.draft.auto_started = false; })).sub).toBe('Saved');
+    // Only Draft ready carries it: a failed drawing keeps its own line.
+    s = run(P((p) => { auto(p); p.pieces[2] = piece('cocktail:2', 'failed'); }));
+    expect([s.id, s.sub]).toEqual(['drawing-failed', 'Re-roll it in the editor.']);
+  });
+
   test('Drawing failed: Fix opens the Drinks tab on the first failed drink; hidden drinks never count', () => {
     let s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: 'interrupted' }); }));
     expect(lines(s)).toEqual(['danger', '1 drawing failed', "Old Fashioned didn't draw.", 'Re-roll it in the editor.']);

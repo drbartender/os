@@ -4,7 +4,8 @@
 // readDraftPayload(proposalId) -> {
 //   draft: null | { id, proposal_id, drink_plan_id, version, art_version,
 //     inputs (reference_key replaced by has_reference), content, read_only,
-//     created_at, updated_at },
+//     auto_started (the current run is the drink plan submit's auto-start,
+//     menu_auto_starts.run_id; spec 2026-10-19 section 14), created_at, updated_at },
 //   pieces: [{ piece_key, status, error, reroll_note, has_image, image_rev, tone,
 //     ground_rgb, provider, model, drawn_count, started_at, finished_at }],
 //   brief: null | { theme, naming, notes, has_planner_image, planner_image_rev },
@@ -486,6 +487,7 @@ const DRAFT_SQL = `
          d.approved_art_version, d.approved_print_key, d.approved_planner_image_key,
          d.approved_at, d.created_at, d.updated_at,
          d.released_print_key, d.released_at, d.released_via,
+         EXISTS (SELECT 1 FROM menu_auto_starts a WHERE a.proposal_id = p.id AND a.run_id = d.run_id) AS auto_started,
          COALESCE(cp.display_name, cp.preferred_name, u.email) AS approved_by_name,
          COALESCE(rcp.display_name, rcp.preferred_name, ru.email) AS released_by_name,
          COALESCE((
@@ -642,6 +644,7 @@ async function readDraftPayload(proposalId) {
       inputs: publicInputs(row.inputs),
       content: publicContent(row.content, now, staleMs),
       read_only: !planRow,
+      auto_started: row.auto_started === true,
       created_at: row.created_at,
       updated_at: row.updated_at,
     } : null,

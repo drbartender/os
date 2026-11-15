@@ -1740,3 +1740,26 @@ test('house: a spirit moved after the read never refuses a write; a printed pick
   const refused = await request('POST', `${base(custom.id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: customHash } });
   assert.deepEqual([refused.status, refused.body.code], [409, 'MENU_PLAN_MOVED']);
 });
+
+// Spec 2026-10-19 section 8.3 (lane menu-auto-start): the Generate route's
+// body is startGeneration, the one path a manual and an automatic Generate
+// share. Called with no request (the auto-start's way), it drafts what the
+// route drafts and queues nothing (the caller queues the job); firstDraft,
+// the auto-start's own premise, refuses an event that already has a draft and
+// writes nothing.
+test('startGeneration: the route\'s one path, called with no request, returns the draft and run and queues nothing; firstDraft refuses a draft', async () => {
+  const { startGeneration } = require('./menuDraftGenerate');
+  const { id } = await newEvent({ drinks: 2, extra: { menuStyle: 'house' } });
+  await setEvent(id, 'celebration-of-life', '2027-03-04');
+  const out = await startGeneration({ proposalId: id, inputs: { image_model: 'gemini' }, file: null, firstDraft: true });
+  await idle();
+  const draft = await draftOf(id);
+  assert.deepEqual(out, { draftId: draft.id, runId: draft.run_id, version: draft.version });
+  assert.equal(draft.content.words_status, 'pending', 'nothing ran: the caller queues the job');
+  assert.deepEqual([draft.inputs.image_model, draft.inputs.look, draft.inputs.planner_image_role, draft.inputs.reference_source],
+    ['gemini', 'house', 'logo', 'none'], 'the posted image model, the decided look and the defaults');
+  await assert.rejects(startGeneration({ proposalId: id, inputs: { image_model: 'gemini' }, file: null, firstDraft: true }),
+    (err) => err.code === 'MENU_DRAFT_CHANGED');
+  const after = await draftOf(id);
+  assert.deepEqual([after.run_id, after.version], [draft.run_id, draft.version], 'a refused first draft writes nothing');
+});
