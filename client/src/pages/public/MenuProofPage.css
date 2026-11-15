@@ -5,7 +5,9 @@
    face comes from client/src/styles/drb-tokens.css, no literal color here.
    The ground --drb-paper, text --drb-deep-brown, secondary text
    --drb-text-muted, the kicker and rules --drb-brass, the primary button
-   --drb-teal on --drb-cream-text, the secondary button's text
+   --drb-teal-deep under --drb-cream-text (a shade deeper than the sketch's
+   teal, so its label reads at 4.7 to 1; the owner's call, 2026-11-15; the
+   kicker keeps the sketch's brass), the secondary button's text
    --drb-warm-brown, faces --drb-font-display and --drb-font-body. The sketch's
    pressed Request changes and read-only note ground is --drb-card-bg; its
    input border reads as a rule, --drb-brass. Every rule sits under
@@ -138,7 +140,8 @@
 }
 
 .menu-proof-page .menu-proof-btn.is-primary {
-  background: var(--drb-teal);
+  background: var(--drb-teal-deep);
+  border-color: var(--drb-teal-deep);
   color: var(--drb-cream-text);
 }
 

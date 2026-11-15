@@ -48,6 +48,7 @@
   /* ── Brand accents (use sparingly) ───────────────────────── */
   --drb-teal:          #1D8C89;  /* Apothecary Teal — primary */
   --drb-teal-light:    #2FA7A0;
+  --drb-teal-deep:     #17726F;  /* a button ground under cream text: 4.7 to 1 (the teal is 3.3) */
   --drb-brass:         #B8924A;  /* Antique Brass — rules, kickers */
   --drb-brass-bright:  #D6AE65;
   --drb-plum:          #6B4D7A;

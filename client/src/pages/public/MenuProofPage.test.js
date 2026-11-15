@@ -241,14 +241,15 @@ test('the page shows nothing the GET does not own: no client name, email, date o
 });
 
 // A 429 from either limiter on the answer: "Please try again" would be refused
-// again for up to an hour, so the page names the wait and the way out.
-test('a rate-limited post (429) says to try later or reply to the email, never the plain retry line', async () => {
+// again for up to an hour (the answer limiter is five an hour), so the page
+// names that wait and the way out, without blaming the client for the taps.
+test('a rate-limited post (429) says to try again in an hour or reply to the email, never the plain retry line', async () => {
   api.get.mockResolvedValue({ data: OPEN });
   api.post.mockRejectedValue({ status: 429, code: undefined, message: 'Too many tries. Please try again later.' });
   render(<MenuProofPage />);
   fireEvent.click(await screen.findByRole('button', { name: 'Looks great' }));
   const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('Too many tries. Please try again later, or reply to our email.');
+  expect(alert).toHaveTextContent('Please try again in an hour, or reply to our email.');
   expect(alert).not.toHaveTextContent("That didn't go through.");
   expect(screen.getByRole('button', { name: 'Looks great' })).toBeEnabled();
 });
@@ -394,7 +395,7 @@ test('never emailed: the missing picture and the rate-limited post say get in to
   fireEvent.error(await screen.findByRole('img'));
   expect(await screen.findByText("We couldn't load the menu picture. Get in touch with us and we'll send it again.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Looks great' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Too many tries. Please try again later, or get in touch with us.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Please try again in an hour, or get in touch with us.');
 });
 
 test('an emailed proof keeps every "our email" line as it was', async () => {

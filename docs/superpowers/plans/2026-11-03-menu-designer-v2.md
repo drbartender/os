@@ -1252,7 +1252,8 @@ lanes:
       image model stays gemini-3-pro-image (checked 2026-11-12 against Google's pricing page: no Gemini
       image model has a free tier; this one is $0.134 per 1K drink and $0.24 per 4K background, and the only
       id the code supports, since it takes style references; the cheaper Nano Banana 2.1, $0.0336 per 1K and
-      $0.113 per 4K, is untested with style references).
+      $0.113 per 4K, is untested with style references; the owner's call, 2026-11-15: "stay with current model", so no
+      side-by-side is owed).
       Copy (spec section 28, added): "Anthropic is out of credit. Add credit in Anthropic's billing settings,
       then Generate again."; "... then try Update draft again."; "Anthropic hit a spend limit. Raise it in
       Anthropic's limits settings, then Generate again."; "... then try Update draft again."; and a refusal,
@@ -1375,8 +1376,9 @@ lanes:
       card's "Drafted automatically when the client submitted their plan." sub line and the read model's
       auto_started.
       As built 2026-11-15 (Claude's calls, spec 8.6): built, reviewed (one finding, fixed) and walked on dev
-      with a made-up client; HELD UNMERGED in its worktree until the owner confirms the Anthropic and Gemini
-      keys in Render, since a merged squash rides the next push of main. Added to the spec's design: a test
+      with a made-up client; held unmerged until the owner confirmed the three Render settings on 2026-11-15
+      (the Anthropic key on the Default workspace, the Gemini key saved, no MENU_ART_TEXT_MODEL), then merged
+      the same day (b0417992, not pushed). Added to the spec's design: a test
       process never auto-starts; firstDraft, so a manual Generate that lands meanwhile stands; the guard
       row's run written inside the draft's own transaction (the onStarted hook); a failed mark step no
       longer skips the auto-start; and the reader's rule for a run a restart interrupted (ready with those

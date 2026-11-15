@@ -39,7 +39,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Each line that points the client somewhere, as [emailed, never emailed]:
 // a link the admin sent by hand never says "reply to our email" (carried item g).
 const LINES = {
-  later: ['Too many tries. Please try again later, or reply to our email.', 'Too many tries. Please try again later, or get in touch with us.'],
+  later: ['Please try again in an hour, or reply to our email.', 'Please try again in an hour, or get in touch with us.'],
   questions: ['If you have questions, just reply to our email.', 'If you have questions, just get in touch with us.'],
   fresh: ["Reply to our email and we'll send a fresh one.", "Get in touch with us and we'll send a fresh one."],
   latest: ['Check your email for the latest link.', 'Get in touch with us for the latest link.'],
