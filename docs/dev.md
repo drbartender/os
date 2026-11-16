@@ -74,7 +74,7 @@ Run on 2026-10-28 from a lane worktree unless a line says otherwise.
 
 ## Node
 
-- The box runs Node v24.16.0 (nvm), confirmed 2026-10-20 with `node --version`. `.node-version` pins 26.12.1 since 2026-10-27 (the Node security release of 2026-10-21; it was 26.5.0). Render builds with the pin unless `NODE_VERSION` is set in the Render env, which wins over the file, and a running service keeps its old Node until its next deploy. Caveat on fixing the box: the claude, codex and gemini CLIs are installed under the v24 global bin, so switching the nvm default means reinstalling all three; a per-invocation `nvm use` or `.node-version` pin in a gate worktree is the lighter fix.
+- The box runs Node v24.22.3 (nvm default since 2026-11-16, was 24.16.0, which stays installed for sessions started before the switch), confirmed with `node --version` in a clean shell. `.node-version` pins 26.12.1 since 2026-10-27 (the Node security release of 2026-10-21; it was 26.5.0). Render builds with the pin unless `NODE_VERSION` is set in the Render env, which wins over the file, and a running service keeps its old Node until its next deploy. Caveat on moving the box's Node: the npm global CLIs (claude, gemini, sentry-cli, vercel) live under each version's global bin, so install them under the new version before `nvm alias default` points at it (codex is a standalone install under `~/.codex` and needs nothing), and `thumbtack-agent/systemd/thumbtack-agent.service` names the Node path in `ExecStart`, so update it and the installed copy in `~/.config/systemd/user/` together; a per-invocation `nvm use` or `.node-version` pin in a gate worktree is the lighter fix.
 
 ## Neon
 

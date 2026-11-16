@@ -21,7 +21,7 @@ Environment=OZONE_PLATFORM=x11
 # headful Chrome a virtual display on the headless box.
 WorkingDirectory=/home/drbartender/projects/os/thumbtack-agent
 EnvironmentFile=/home/drbartender/projects/os/thumbtack-agent/.env
-ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.16.0/bin/node src/index.js
+ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.22.3/bin/node src/index.js
 Restart=on-failure
 RestartSec=30
 
