@@ -1,8 +1,9 @@
 ---
 spec: none. The gap was raised on 2026-11-16 by the access-egress lens during the overlap pass of the smaller payments audit lane (receipt 4a4840c, reported there as outside both diffs) and confirmed in the code and in Sentry; the owner asked on 2026-11-16 for it to be fixed ("lets fix that seperate issue"). This plan body records the design, which is Claude's.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 1 (2026-11-16)
-status: one lane, built in one pass by Claude in its own worktree, reviewed at the tier it computes (tier A: both scrub files are on the sensitive list), merged through scripts/merge-lane.sh from os. The ship waits for the owner's word.
+revision: 2 (2026-11-18): the review widened the scope inside the same footprint, as below.
+status: built in one pass, reviewed at tier A (one full pass, two fix re-passes, and an overlap pass after the payments audit fix merged first; receipt a48bf1d), merged as 21533b5 and shipped together with the payments audit fix on the owner's word ("your recommendation is perfect", 2026-11-18).
+revision 2 (Claude's calls in review): the same leak had more shapes than the plan named, so the lane also redacts the Telegram webhook secret path (/api/telegram/<48 hex>), the Telegram bot token in outgoing Bot API URLs, and a Stripe client secret by value (the paid return URL carries payment_intent_client_secret); the JWT rule is anchored at a delimiter and bounded, because unanchored it was quadratic on a crafted run of eyJ and a sentry-trace header can force sampling; the server error hook now runs scrubUrl over the message, exception values, every tag, extra and request.query_string (server/index.js's upload-limit warning put req.originalUrl in extra.path); the browser runs its token value rules before its phone rules; the server's older path rules stop at whitespace and quotes and its non-UUID rules take percent-encoded separators in either case; and both guards match a parameter named token or secret and read router.use, router.route, a path behind a comment, and single-quoted or braced client paths. Deferred minors are in the receipt's triage.
 lanes:
   - id: sentry-token-scrub
     scope: >
