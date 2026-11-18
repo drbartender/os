@@ -10,6 +10,7 @@ const { requireUuidToken } = require('../utils/tokens');
 const { chicagoTodayYmd } = require('../utils/businessTime');
 const { buildClientPriceRows, moneyToCents } = require('../utils/clientPriceLines');
 const { reportPriceRowsFold } = require('./proposals/publicToken');
+const { BOOKED_STATUSES } = require('../utils/proposalStatus');
 
 // Injection seam for the business day — see staffPortal.js. The UTC and
 // Chicago days agree for about 19 hours a day, so without this a boundary
@@ -43,6 +44,10 @@ router.get('/home', asyncHandler(async (req, res) => {
   // the oldest still-payable invoice (status sent|partially_paid) so Next-Up can
   // route "Pay balance" straight to the invoice page instead of the planner.
   // partially_paid is load-bearing: sent-only would re-dead-end a part-payer.
+  // Booked rows only (audit PAY-02): the send-time Deposit invoice is open on
+  // an UNBOOKED proposal, and handing its token out here rendered "Pay
+  // balance" beside "Review & book", taking the deposit from the invoice page
+  // before the agreement was signed. The proposal page is the rail until then.
   // drink_plan_submitted_at is COALESCE(submitted_at, finalized_at): a plan Dr.
   // Bartender built from the consult and finalized was never client-submitted,
   // and the portal must read it as done or Next-Up nags for a planner that is locked.
@@ -61,6 +66,7 @@ router.get('/home', asyncHandler(async (req, res) => {
     LEFT JOIN LATERAL (
       SELECT token AS open_invoice_token, label AS open_invoice_label
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+        AND p.status = ANY($2::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
@@ -77,8 +83,10 @@ router.get('/home', asyncHandler(async (req, res) => {
   // until the business day it falls on is over.
   const today = _deps.today();
   const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
-    pool.query(`${focusSelect} AND p.event_date >= $2::date ${BOOKED_FIRST}`, [clientId, today]),
-    pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId]),
+    // static-checks: allow parameterized-sql (focusSelect and BOOKED_FIRST are this handler's own constant SQL; every value is bound)
+    pool.query(`${focusSelect} AND p.event_date >= $3::date ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES, today]),
+    // static-checks: allow parameterized-sql (the same two fragments)
+    pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES]),
     pool.query(`SELECT COUNT(*)::int AS n FROM proposals
                 WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= $2::date`, [clientId, today]),
     // Archive is bounded (LIMIT 50) so the landing payload can't grow without
@@ -153,12 +161,14 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       ORDER BY id LIMIT 1
     ) dp ON true
     LEFT JOIN LATERAL (
+      -- Booked rows only (audit PAY-02), as /home above.
       SELECT token AS open_invoice_token, label AS open_invoice_label
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+        AND p.status = ANY($3::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1 AND p.client_id = $2
-  `, [req.params.token, req.user.id]);
+  `, [req.params.token, req.user.id, BOOKED_STATUSES]);
 
   if (!result.rows[0]) throw new NotFoundError('Proposal not found.');
 

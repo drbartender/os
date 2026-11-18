@@ -17,7 +17,7 @@ const { AppError, NotFoundError, ConflictError, ExternalServiceError, Validation
 const { getStripe } = require('../utils/stripeClient');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { deriveGratuityRate, gratuityBasisFromSnapshot, recomputeSnapshotGratuity } = require('../utils/pricingEngine');
-const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { depositCentsFor, CHECKOUT_PAYMENT_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { assertNoPaymentInFlight, STRIPE_RETRIEVE_OPTS } = require('../utils/paymentInFlight');
 const { requireUuidToken } = require('../utils/tokens');
 
@@ -112,9 +112,24 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
 
   const isFullPay = payment_option === 'full';
   const wantsAutopay = !isFullPay && autopay === true;
+  // The row's deposit (audit PAY-06), never the global default: the Deposit
+  // invoice and the cancellation retainer already read deposit_amount.
+  const depositCents = depositCentsFor(proposal);
   const amount = isFullPay
     ? Math.round(Number(effTotal) * 100)   // the ONE dollars->cents seam in this flow
-    : DEPOSIT_AMOUNT;
+    : depositCents;
+  // A contract at or below the deposit is paid in full in one payment (audit
+  // PAY-09): offering the deposit charged more than the whole contract and
+  // left a netted overpayment to refund. The public payload flags the same
+  // row full_payment_required (reason total_at_or_below_deposit), so the page
+  // never shows the tablet; this is the server-side backstop, under the code
+  // the page already handles by locking the full option.
+  if (!isFullPay && Math.round(Number(effTotal) * 100) <= depositCents) {
+    throw new ConflictError(
+      'Your event total is not more than the deposit, so it is paid in full in one payment.',
+      'FULL_PAYMENT_REQUIRED'
+    );
+  }
 
   // Bank debit in flight (spec 2026-09-14 section 5.1). Runs BEFORE the reuse
   // and stale-cancel logic below, so a settling intent is never reused, never
@@ -156,11 +171,21 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
         || (reqMeta !== null && intentMeta !== null
             && reqMeta.tip_jar === intentMeta.tip_jar
             && reqMeta.gratuity_rate === intentMeta.gratuity_rate);
+      // Autopay is part of the identity too (audit PAY-03). The page mints the
+      // deposit intent on load with autopay false and asks again with autopay
+      // true once the client ticks the box; reusing the pending intent
+      // regardless left setup_future_usage unset (the retrieved intent carries
+      // the field) and autopay_enrolled on the first request's value, so the
+      // webhook saved no card and the client who expected autopay was chased by
+      // the non-autopay ladder instead. A mismatch cancels and mints fresh, the
+      // same shape an election change takes.
+      const intentAutopay = intent.setup_future_usage === 'off_session';
+      const autopayMatch = intentAutopay === wantsAutopay;
       // Reuse ONLY a metadata-less intent for a metadata-less request: an
       // election-bearing intent is never reused (a reload resets the client's
       // UI state; confirming a stale election the client can no longer see is
       // exactly the harm this redesign removes).
-      if (amountMatch && reqMeta === null && intentMeta === null
+      if (amountMatch && autopayMatch && reqMeta === null && intentMeta === null
           && (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation')) {
         return res.json({
           clientSecret: intent.client_secret,
@@ -168,12 +193,13 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
           gratuity: (effSnap && effSnap.gratuity) || null,
         });
       }
-      // Stale-intent safety: cancel when the identity (amount OR election)
-      // no longer matches, so a stale tab can't confirm an old total/election.
+      // Stale-intent safety: cancel when the identity (amount, election OR
+      // autopay) no longer matches, so a stale tab can't confirm an old
+      // total/election and a toggled autopay box is honoured.
       // A succeeded/processing intent never reaches here any more (the
       // in-flight guards above refuse the request), so the status filter is
       // belt and braces for the one retrieve this branch makes itself.
-      if ((!amountMatch || !metaMatch)
+      if ((!amountMatch || !metaMatch || !autopayMatch)
           && !['succeeded', 'processing', 'canceled'].includes(intent.status)) {
         await stripe.paymentIntents.cancel(intent.id);
         await pool.query(

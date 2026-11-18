@@ -10,6 +10,8 @@ const { ValidationError } = require('../../utils/errors');
 const { calculateSyrupCost } = require('../../utils/pricingEngine');
 const { SYRUP_NAME_LOOKUP } = require('../../utils/shoppingListGen');
 const { isDrinkPlanPreBooking } = require('../../utils/drinkPlanAccess');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { toBaseYmd, shiftYmd } = require('../../utils/balanceReminderScheduling');
 
 // Event-level shelf slugs (per design canvas): toast + glassware always;
 // NA add-ons join for hosted plans. The mocktail-gap pair is EXCLUDED — those
@@ -123,14 +125,25 @@ function buildLabLineItems({ addonRows, labSyrupIds, guestCount }) {
   return items;
 }
 
+// Past due by the Chicago CALENDAR DAY (audit PAY-07's rule, which the
+// drink-plan rail, the scheduler and the reminders already use): a balance
+// due today is not past due. pg hands a DATE back at the process-local
+// midnight, so comparing it with the instant read the whole due day as late.
+// With no balance_due_date the due day is the event day minus 14, the
+// drink-plan rail's own fallback (stripe.js create-drink-plan-intent).
+function isBalancePastDue(due, dueDate, eventDate = null) {
+  if (!(due > 0)) return false;
+  const dueYmd = dueDate ? toBaseYmd(dueDate) : (eventDate ? shiftYmd(toBaseYmd(eventDate), -14) : null);
+  return dueYmd ? dueYmd < chicagoTodayYmd() : false;
+}
+
 function balanceOf(plan) {
   if (!plan.proposal_id) return null;
   const total = Number(plan.proposal_total_price) || 0;
   const paid = Number(plan.proposal_amount_paid) || 0;
   const due = Math.max(0, total - paid);
   const dueDate = plan.balance_due_date || null;
-  const pastDue = due > 0 && dueDate && new Date(dueDate) < new Date();
-  return { total, paid, due, due_date: dueDate, past_due: !!pastDue };
+  return { total, paid, due, due_date: dueDate, past_due: isBalancePastDue(due, dueDate, plan.proposal_event_date || null) };
 }
 
 // ─── PUT sanitizers ──────────────────────────────────────────────────
@@ -214,6 +227,7 @@ module.exports = {
   priceLabAdditions,
   buildLabLineItems,
   balanceOf,
+  isBalancePastDue,
   sanitizeLabAddOns,
   sanitizeLabSyrups,
 };

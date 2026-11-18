@@ -23,6 +23,8 @@ const { validatePhone } = require('../../utils/phone');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
+const { BOOKED_STATUSES } = require('../../utils/proposalStatus');
+const { depositCentsFor, totalAtOrBelowDeposit } = require('../../utils/stripeRouteHelpers');
 
 const router = express.Router();
 
@@ -181,10 +183,13 @@ async function buildPublicProposalPayload(token, db = pool) {
     LEFT JOIN proposal_groups pg ON pg.id = p.group_id
     -- Oldest still-payable invoice for THIS proposal (client-owned token for the
     -- client's own invoice; no PII widening). Lets ProposalView's paid-state card
-    -- link "Pay balance" straight to /invoice/:token.
+    -- link "Pay balance" straight to /invoice/:token. Booked rows only (audit
+    -- PAY-02): the send-time Deposit invoice is open on an unbooked proposal
+    -- and its page must not be offered as a way around the sign-and-pay rail.
     LEFT JOIN LATERAL (
       SELECT token AS open_invoice_token
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+        AND p.status = ANY($2::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1
@@ -222,7 +227,7 @@ async function buildPublicProposalPayload(token, db = pool) {
       -- Prod at 2026-08-25: 7 grouped, 3 ungrouped. Pinned by
       -- publicToken.archived.test.js.
       AND p.status <> 'archived'
-  `, [token]);
+  `, [token, BOOKED_STATUSES]);
 
   if (!result.rows[0]) return null;
 
@@ -253,6 +258,18 @@ async function buildPublicProposalPayload(token, db = pool) {
     eventDate: proposal.event_date,
     eventStartTime: proposal.event_start_time,
   });
+  // A contract at or below the row's deposit is paid in full by one payment
+  // (audit PAY-09): the deposit tablet would charge more than the contract.
+  // Same flag the booking window raises (the page hides the tablet and locks
+  // the full option on it); full_payment_reason picks the explainer copy.
+  // create-intent refuses the deposit option for such a row as the backstop.
+  const totalCents = Math.round(Number(proposal.total_price || 0) * 100);
+  // The deposit the server will charge (stripeRouteHelpers.depositCentsFor:
+  // the row's figure, or the server default for a NULL or 0 row). The page
+  // reads it off the payload as deposit_amount_effective (round 2 L2) instead
+  // of keeping a literal of its own, and the flag compares the same cents.
+  const depositCents = depositCentsFor(proposal);
+  const atOrBelowDeposit = totalAtOrBelowDeposit(totalCents, depositCents);
 
   // Optional-phone prefill (spec 2026-06-11 Component 4). A Thumbtack proxy
   // number must never show in the signing form: blank it so the client is
@@ -347,6 +364,9 @@ async function buildPublicProposalPayload(token, db = pool) {
     additional_time: additionalTime,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
+    // The deposit create-intent charges, in dollars (round 2 L2): the client's
+    // only source for the figure it quotes.
+    deposit_amount_effective: depositCents / 100,
     pending_payment: toPublicPending(inFlight),
     venue_complete: isVenueComplete(proposal),
     client_phone_prefill: clientPhonePrefill,
@@ -358,7 +378,9 @@ async function buildPublicProposalPayload(token, db = pool) {
     // but the flip is a display convention here, not a row guarantee.
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
     payment_policy: {
-      full_payment_required: win.fullPaymentRequired,
+      full_payment_required: win.fullPaymentRequired || atOrBelowDeposit,
+      full_payment_reason: win.fullPaymentRequired ? 'booking_window'
+        : (atOrBelowDeposit ? 'total_at_or_below_deposit' : null),
       last_minute_hold: win.lastMinuteHold,
       hours_until_event: win.hoursUntilEvent,
     },

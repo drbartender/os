@@ -8,6 +8,7 @@ const { pool } = require('../db');
 const { getStripe } = require('./stripeClient');
 const { ExternalServiceError } = require('./errors');
 const { getEventTypeLabel } = require('./eventTypes');
+const { BOOKED_SET } = require('./proposalStatus');
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
 // The payment methods the three client checkout rails offer (spec 2026-09-14,
@@ -26,6 +27,38 @@ const PAYMENT_LINK_METHOD_TYPES = Object.freeze(['card', 'link']);
 
 function eventLabelFor(row) {
   return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
+}
+
+// The deposit a proposal charges, in cents (audit PAY-06): the row's stated
+// deposit_amount, which the Deposit invoice, the cancellation retainer and the
+// compare page already read, with STRIPE_DEPOSIT_AMOUNT only for a row whose
+// column is NULL or non-positive (the schema defaults it to 100.00). Both
+// checkout rails (create-intent, the admin Payment Link) charge this, so the
+// figure the client pays is the figure the invoice and the retainer hold.
+function depositCentsFor(proposal) {
+  const dollars = Number(proposal && proposal.deposit_amount);
+  return Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : DEPOSIT_AMOUNT;
+}
+
+// A contract at or below its deposit is paid in full in one payment (audit
+// PAY-09): a deposit there would charge more than the contract and leave an
+// overpayment to refund. The public payload's full_payment_required flag and
+// the admin Payment Link both read this one rule. create-intent keeps its own
+// backstop, which also refuses a deposit on a zero total.
+function totalAtOrBelowDeposit(totalCents, depositCents) {
+  return totalCents > 0 && totalCents <= depositCents;
+}
+
+// Whether a contract invoice (Deposit, Balance, Full Payment) takes a payment
+// on its own page (audit PAY-02): only once the booking exists. Before that the
+// proposal page is the rail (the deposit with the signature, the gratuity
+// election, the 14-day window and the at-or-below-deposit rule), and an
+// admin's offline acceptance (Mark accepted, no signature) pays through the
+// admin Payment Link, which applies the same two rules and books the row. The
+// SQL twin, where a query hands out an open invoice token or lists an unpaid
+// contract invoice: p.status = ANY(<BOOKED_STATUSES>).
+function contractInvoicePayable(status) {
+  return BOOKED_SET.has(status);
 }
 
 // ─── Helper: get or create Stripe Customer for a proposal ────────
@@ -70,4 +103,4 @@ async function getOrCreateCustomer(proposal) {
   return customer.id;
 }
 
-module.exports = { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer };
+module.exports = { DEPOSIT_AMOUNT, depositCentsFor, totalAtOrBelowDeposit, contractInvoicePayable, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer };

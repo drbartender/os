@@ -2,8 +2,17 @@
 // adminos/format. Kept local to keep the public proposal page self-contained.
 import { fmtDateOnly, calcEndTime as sharedCalcEndTime } from '../../../components/adminos/format';
 
-export const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
-export const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
+// The deposit a proposal charges, in dollars (audit PAY-06, round 2 L2): the
+// payload's deposit_amount_effective, the figure the server will charge
+// (stripeRouteHelpers.depositCentsFor, with the server's own default for a
+// row whose deposit_amount is NULL or 0). The client keeps no literal and does
+// not read the row column: under a non-default STRIPE_DEPOSIT_AMOUNT a client
+// fallback quoted a figure the server did not charge. Null when the payload
+// carries none, and the page then names the deposit without an amount.
+export function depositDollars(proposal) {
+  const n = Number(proposal && proposal.deposit_amount_effective);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 export const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

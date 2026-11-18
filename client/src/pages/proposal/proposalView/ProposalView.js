@@ -9,7 +9,7 @@ import { useToast } from '../../../context/ToastContext';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { COMPANY_PHONE } from '../../../utils/constants';
 import { interpolatePackageIncludes } from '../../../utils/packageIncludes';
-import { fmt, DEPOSIT_DOLLARS } from './helpers';
+import { fmt, depositDollars } from './helpers';
 import styles from './styles';
 import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 import ProposalHeader from './ProposalHeader';
@@ -645,9 +645,11 @@ export default function ProposalView() {
   // basis for the remainder, as balanceAmount always was; the row's
   // total_price decides full-vs-deposit, as isFullyPaid always did.
   const paidInfo = paidState(proposal, snapshot ? Number(snapshot.total) : undefined);
+  // The row's deposit (audit PAY-06): what the server charges and the invoice holds.
+  const deposit = depositDollars(proposal);
   const balanceAmount = paidInfo.kind !== 'none'
     ? paidInfo.remaining
-    : totalPrice - DEPOSIT_DOLLARS;
+    : totalPrice - deposit;
 
   // Calculate balance due date (from DB or default 14 days before event)
   let balanceDueDate = proposal.balance_due_date;
@@ -664,6 +666,7 @@ export default function ProposalView() {
   // lastMinuteHold → also show the pre-payment cancellation-consent warning.
   const policy = proposal.payment_policy || {};
   const fullPaymentRequired = !!policy.full_payment_required;
+  const fullPaymentReason = policy.full_payment_reason || null;
   const lastMinuteHold = !!policy.last_minute_hold;
 
   // ROW truth only. The URL opens the settling state; it never renders the
@@ -679,10 +682,10 @@ export default function ProposalView() {
   const activeSecret = paymentOption === 'full' ? fullSecret : depositSecret;
   const payLabel = paymentOption === 'full'
     ? `Sign & Pay ${fmt(totalPrice)}`
-    : `Sign & Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
+    : `Sign & Pay ${fmt(deposit)} Deposit`;
   const payOnlyLabel = paymentOption === 'full'
     ? `Pay ${fmt(totalPrice)}`
-    : `Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
+    : `Pay ${fmt(deposit)} Deposit`;
 
   // The event facts a switch never touches. Deliberately guests/hours/bars only:
   // a package with a different bartender ratio WOULD re-derive the crew, so the
@@ -741,6 +744,7 @@ export default function ProposalView() {
               lineItems={lineItems}
               snapshot={snapshot}
               balanceAmount={balanceAmount}
+              depositDollars={deposit}
               balanceDueDate={balanceDueDate}
               fullPaymentRequired={fullPaymentRequired}
               paid={paidInfo}
@@ -788,9 +792,11 @@ export default function ProposalView() {
                 gratuityStaffNoun={gratuityStaffNoun}
                 gratuityBelowFloor={gratuityBelowFloor}
                 fullPaymentRequired={fullPaymentRequired}
+                fullPaymentReason={fullPaymentReason}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}
+                depositDollars={deposit}
                 balanceDueDate={balanceDueDate}
                 loadingIntent={loadingIntent}
                 formError={formError}
@@ -822,9 +828,11 @@ export default function ProposalView() {
                 autopayChecked={autopayChecked}
                 setAutopayChecked={setAutopayChecked}
                 fullPaymentRequired={fullPaymentRequired}
+                fullPaymentReason={fullPaymentReason}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}
+                depositDollars={deposit}
                 balanceDueDate={balanceDueDate}
                 loadingIntent={loadingIntent}
                 formError={formError}

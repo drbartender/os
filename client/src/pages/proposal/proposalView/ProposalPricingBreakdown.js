@@ -34,6 +34,7 @@ export default function ProposalPricingBreakdown({
   lineItems,
   snapshot,
   balanceAmount,
+  depositDollars,
   balanceDueDate,
   fullPaymentRequired,
   paid,
@@ -180,6 +181,7 @@ export default function ProposalPricingBreakdown({
           fullPaymentRequired={fullPaymentRequired}
           snapshotTotal={snapshot ? snapshot.total : null}
           balanceAmount={balanceAmount}
+          depositDollars={depositDollars}
           balanceDueDate={balanceDueDate}
         />
 

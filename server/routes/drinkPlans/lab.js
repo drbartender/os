@@ -41,6 +41,7 @@ const {
   priceLabAdditions,
   buildLabLineItems,
   balanceOf,
+  isBalancePastDue,
   sanitizeLabAddOns,
   sanitizeLabSyrups,
 } = require('./labHelpers');
@@ -531,7 +532,7 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         paid,
         due,
         due_date: dueDate,
-        past_due: !!(due > 0 && dueDate && new Date(dueDate) < new Date()),
+        past_due: isBalancePastDue(due, dueDate, proposal.event_date || null),
       };
     }
 

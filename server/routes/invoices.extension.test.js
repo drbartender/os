@@ -280,10 +280,18 @@ test('label guard, symmetric: renaming OUT of an off-ledger label is refused', a
   const inv = await seedInvoice(p, { label: 'Service Extension', amountDue: 5000 });
   const rename = await request('PATCH', `/api/invoices/${inv.id}`, {
     token: adminToken,
-    body: { label: 'Balance' },
+    body: { label: 'Rental Fee' },
   });
   assert.equal(rename.status, 409, `expected 409, got ${rename.status} ${rename.raw}`);
   assert.equal(rename.body.code, 'OFF_LEDGER_LABEL_LOCKED');
+  // Renamed OUT to a system label is refused too, by the earlier INTO guard
+  // (audit PAY-08: a system label is never a rename target).
+  const intoSystem = await request('PATCH', `/api/invoices/${inv.id}`, {
+    token: adminToken,
+    body: { label: 'Balance' },
+  });
+  assert.equal(intoSystem.status, 400, `expected 400, got ${intoSystem.status} ${intoSystem.raw}`);
+  assert.ok(intoSystem.body.fieldErrors?.label, 'the label field carries the error');
   const still = await pool.query('SELECT label FROM invoices WHERE id = $1', [inv.id]);
-  assert.equal(still.rows[0].label, 'Service Extension', 'label unchanged after refusal');
+  assert.equal(still.rows[0].label, 'Service Extension', 'label unchanged after both refusals');
 });

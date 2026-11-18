@@ -103,7 +103,10 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
         <p className="cp-rx-passed">This event has passed.</p>
       ) : (<>
         {!focus.booked && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Review & book</a>}
-        {focus.balance_due > 0 && <a className="btn client-btn-primary" href={focus.open_invoice_token ? `/invoice/${focus.open_invoice_token}` : `/proposal/${focus.token}`}>Pay balance</a>}
+        {/* Booked only (audit PAY-02): before booking, the balance is the
+            whole contract and Review & book is the one way to pay it, with
+            the signature; the Deposit invoice page is not a second door. */}
+        {focus.booked && focus.balance_due > 0 && <a className="btn client-btn-primary" href={focus.open_invoice_token ? `/invoice/${focus.open_invoice_token}` : `/proposal/${focus.token}`}>Pay balance</a>}
         <ShareButton url={`/proposal/${focus.token}`} label="Share this proposal" />
         {editable && !openRequest && !showForm && (
           <button type="button" className="btn client-btn-secondary" onClick={() => setShowForm(true)}>Request a change</button>

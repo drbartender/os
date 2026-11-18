@@ -440,7 +440,11 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
       setInvoiceRefreshKey(k => k + 1);
       toast.success('Invoice created.');
     } catch (err) {
-      toast.error(err.message || 'Failed to create invoice.');
+      // A refused label or amount names its reason only in fieldErrors; the
+      // form has no field slot, so the toast carries it (audit PAY-08 widened
+      // the reserved labels to every system label).
+      const fe = err.fieldErrors || {};
+      toast.error(fe.label || fe.amount || fe.line_items || err.message || 'Failed to create invoice.');
     } finally {
       setCreatingInvoice(false);
     }

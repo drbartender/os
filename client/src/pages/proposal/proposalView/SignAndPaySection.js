@@ -5,7 +5,7 @@ import React, { useMemo } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { fmt, formatDateShort } from './helpers';
 import { gratuityFloorMessage } from './gratuityFloor';
 import PaymentForm from './PaymentForm';
 import VenueAddressFields, { formatVenue } from '../../../components/VenueAddressFields';
@@ -86,10 +86,18 @@ export default function SignAndPaySection({
   gratuityMandated = false,
   // Booking-window policy (server-computed; never re-derived here)
   fullPaymentRequired,
+  // Why full payment is required (audit PAY-09): 'booking_window' (the event
+  // is within 14 days) or 'total_at_or_below_deposit' (the contract is not
+  // more than the deposit, so one payment covers it). An older payload with
+  // no reason reads as the booking window, which is what the flag meant then.
+  fullPaymentReason = null,
   lastMinuteHold,
   // Display
   totalPrice,
   balanceAmount,
+  // The deposit as the server charges it (audit PAY-06, round 2 L2: the
+  // payload's effective figure); null labels the tablet without an amount.
+  depositDollars = null,
   balanceDueDate,
   // Payment intent
   loadingIntent,
@@ -130,8 +138,9 @@ export default function SignAndPaySection({
   // card is charged.
   const fullRequiredNotice = fullPaymentRequired ? (
     <p className="payment-policy-note">
-      Because your event is within 2 weeks, the full event total is due now to confirm
-      your booking. This is the complete cost, there is no separate deposit and no balance later.
+      {fullPaymentReason === 'total_at_or_below_deposit'
+        ? 'Your event total is not more than the deposit, so it is paid in full in one payment. This is the complete cost, there is no separate deposit and no balance later.'
+        : 'Because your event is within 2 weeks, the full event total is due now to confirm your booking. This is the complete cost, there is no separate deposit and no balance later.'}
     </p>
   ) : null;
 
@@ -360,8 +369,8 @@ export default function SignAndPaySection({
               selected={depositSelected}
               onSelect={() => setPaymentOption('deposit')}
               value="deposit"
-              label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-              amount={fmt(DEPOSIT_DOLLARS)}
+              label={depositDollars == null ? 'Pay Deposit' : `Pay ${fmt(depositDollars)} Deposit`}
+              amount={depositDollars == null ? '' : fmt(depositDollars)}
               desc={`Remaining ${fmt(balanceAmount)} due before your event`}
               showAutopay={depositSelected && balanceAmount > 0}
               autopayChecked={autopayChecked}
@@ -460,8 +469,8 @@ export default function SignAndPaySection({
             selected={depositSelected}
             onSelect={() => setPaymentOption('deposit')}
             value="deposit"
-            label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-            amount={fmt(DEPOSIT_DOLLARS)}
+            label={depositDollars == null ? 'Pay Deposit' : `Pay ${fmt(depositDollars)} Deposit`}
+            amount={depositDollars == null ? '' : fmt(depositDollars)}
             desc={`Remaining ${fmt(balanceAmount)} due before your event`}
             showAutopay={depositSelected && balanceAmount > 0}
             autopayChecked={autopayChecked}

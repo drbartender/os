@@ -117,6 +117,9 @@ test('compare GET returns visible options with a shared header and NO PII', asyn
     }
     assert.equal(o.floor_reason, null, 'empty snapshot yields null floor_reason');
     assert.equal(o.floor_applied, false, 'empty snapshot yields floor_applied false');
+    // A 100 total against a 100 deposit is paid in full at booking (audit
+    // PAY-09), and the matrix says so instead of quoting the deposit.
+    assert.equal(o.full_payment_at_booking, true, 'the server judges the at-or-below-deposit rule per option');
   }
 });
 

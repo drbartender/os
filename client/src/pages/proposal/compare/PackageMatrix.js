@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { SECTION_ORDER, bucketsForSlug } from '../catalogBuckets';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from '../proposalView/helpers';
+import { fmt, formatDateShort } from '../proposalView/helpers';
 
 // Aligned package-compare matrix (P8, fix #3 Phase B). Two callers, two pricing
 // modes:
@@ -42,8 +42,13 @@ function priceText(info) {
 }
 
 function depositText(col, eventDate) {
-  if (fullPaymentLikely(eventDate)) return 'Full at booking';
-  const deposit = col.deposit != null ? Number(col.deposit) : DEPOSIT_DOLLARS;
+  // The server's at-or-below-deposit judgment for a curated option (audit
+  // PAY-09); the 14-day window is the cosmetic mirror below.
+  if (col.fullAtBooking || fullPaymentLikely(eventDate)) return 'Full at booking';
+  // The server's effective deposit for the option (round 2 L2); no literal of
+  // the client's own, so a column without the figure names the deposit only.
+  const deposit = Number(col.deposit);
+  if (col.deposit == null || !Number.isFinite(deposit) || deposit <= 0) return 'Deposit at booking';
   return `${fmt(deposit)} deposit`;
 }
 

@@ -9,44 +9,17 @@ const { getBookingWindow } = require('../../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, linkOpenContractInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
-const { OFF_LEDGER_INVOICE_LABELS } = require('../../utils/proposalMoneyShared');
+const { OFF_LEDGER_INVOICE_LABELS, CONTRACT_LABELS } = require('../../utils/proposalMoneyShared');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
-const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { notifyPaymentOnArchived, warnGratuityApplySkipped, notifyUnsignedSettle } = require('./settleAlerts');
 const { recomputeSnapshotGratuity, GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE } = require('../../utils/pricingEngine');
 
-// B3: email-first admin alert when a payment settles onto a cancelled (archived)
-// proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
-// guards, the extra catch keeps this from masking sibling post-commit work. Copy
-// carries no em dashes (client/admin copy convention).
-function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveReason) {
-  const dollars = `$${(amountCents / 100).toFixed(2)}`;
-  const reasonSuffix = archiveReason ? ` (archive reason: ${archiveReason})` : '';
-  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund already ran before it arrived. Open the proposal and refund this payment straight from the payment panel (the Refund button), which returns it without re-running the cancellation math. Do NOT expect the Cancel then Refund flow to catch it: the booking is already archived, so that path may report nothing is owed.`;
-  return notifyAdminCategory({
-    category: 'payment_failure',
-    subject: `Payment received on a cancelled event (proposal #${proposalId})`,
-    emailText: line,
-    emailHtml: `<p>${line}</p>`,
-  }).catch((err) => {
-    console.error('payment_on_archived admin notify failed (non-blocking):', err && err.message);
-  });
-}
-
-// Election-at-payment (spec 2026-08-03 §4.5): the gratuity apply must NEVER take
-// the payment record down with it. Both the pre-write validation refusal and the
-// SAVEPOINT rollback land here — loud breadcrumb, credit proceeds untouched.
-// The admin reconciles from the alert; the money is always in the ledger.
-function warnGratuityApplySkipped(reason, proposalId, intentId, metadata, err) {
-  const line = `gratuity_apply_skipped (${reason}): proposal ${proposalId}, intent ${intentId}, `
-    + `tip_jar=${metadata?.tip_jar}, gratuity_rate=${metadata?.gratuity_rate}`
-    + (err ? ` — ${err.message}` : '');
-  console.warn(line);
-  if (process.env.SENTRY_DSN_SERVER) {
-    Sentry.captureMessage(line, 'warning');
-  }
-}
+// The statuses a proposal holds before any money has booked it: the set
+// create-intent accepts, the gratuity apply guards on, and the invoice-branch
+// conversion below converts from.
+const PRE_CONVERSION_STATUSES = Object.freeze(['sent', 'viewed', 'accepted']);
 
 module.exports = async function handlePaymentIntentSucceeded(event) {
     const intent = event.data.object;
@@ -81,6 +54,27 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // money-anomaly lane. Post-commit because notifyAdminCategory takes a
       // pooled connection (one-pooled-connection rule).
       let linkOverflow = null;
+      // Audit PAY-02: set in-tx when a contract invoice (Deposit / Full
+      // Payment / Balance) is paid on a pre-conversion row, i.e. money that
+      // books the proposal arrived through the invoice rail (an intent minted
+      // before create-intent-for-invoice refused it, or a Balance paid on a
+      // row a full refund demoted). Drives the same conversion the deposit
+      // branch runs: the Balance invoice (in-tx), the last-minute hold, and
+      // post-commit the reminder ladder and the marketing enrol.
+      let invoiceConversion = false;
+      // Audit PAY-02 / ESIG-03: set in-tx when contract money (a deposit, a
+      // full payment, a contract invoice that books the row) settles on a row
+      // with no client signature; read post-commit for the alert. The three
+      // booking branches hand this their credit UPDATE's RETURNING row.
+      let unsignedSettle = null;
+      const noteUnsigned = async (row, invoiceLabel = null) => {
+        if (!row || row.client_signed_at) return;
+        unsignedSettle = { paymentType };
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'unsigned_payment', 'system', $2)`,
+          [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, invoice_label: invoiceLabel })]
+        );
+      };
       try {
         await dbClient.query('BEGIN');
 
@@ -192,10 +186,12 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           // is the independent second gate, not a substitute for it.)
           //
           // Status guard mirrors create-intent's PAYABLE set and is deliberately
-          // NARROWER than the credit's lifecycle guard: refundHelpers.js:411 and
-          // invoiceExtras.js:440 lower total_price WITHOUT touching
-          // pricing_snapshot, so a stale second intent settling post-conversion or
-          // post-refund must never rewrite total_price back up from a stale snapshot.
+          // NARROWER than the credit's lifecycle guard: a post-conversion or
+          // post-refund row can carry a total_price that its pricing_snapshot no
+          // longer explains (a refund lowers total_price without touching the
+          // snapshot, refundHelpers.js, and so does comping a Drink Plan Extras
+          // invoice, invoiceExtras.voidExtrasInvoiceWithReconcile), so a stale second intent settling
+          // then must never rewrite total_price back up from a stale snapshot.
           if ((paymentType === 'full' || paymentType === 'deposit')
               && intent.metadata?.tip_jar !== undefined) {
             const electTipJar = intent.metadata.tip_jar !== 'false';
@@ -280,12 +276,21 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // must not rewind those). The CASE keeps status monotonic, so excluding a
             // PAYMENT state would only drop a legitimate second distinct-intent credit
             // in a two-tab double-confirm race.
-            await dbClient.query(`
+            // accepted_at (audit ESIG-03): the sign UPDATE stamps it, but a
+            // client can confirm the intent without signing, and the financial
+            // dashboard filters accepted_at IS NOT NULL, so a paid, unsigned row
+            // was invisible to it. The money is the acceptance (the admin
+            // record-payment precedent); COALESCE never moves a signature's own
+            // stamp. RETURNING client_signed_at feeds the unsigned note.
+            const fullRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+              RETURNING client_signed_at
             `, [proposalId, intent.amount / 100]);
+            await noteUnsigned(fullRes.rows[0]);
           } else if (paymentType === 'balance') {
             // M3 (phantom-Outstanding fix): credit the balance monotonically across
             // EVERY money-bearing lifecycle state, not just 'deposit_paid'. The old
@@ -351,8 +356,28 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             const paidInvoiceId = Number(intent.metadata?.invoice_id) || null;
             let offLedger = false;
             if (paidInvoiceId) {
-              const labelRes = await dbClient.query('SELECT label FROM invoices WHERE id = $1', [paidInvoiceId]);
-              offLedger = OFF_LEDGER_INVOICE_LABELS.includes(labelRes.rows[0]?.label);
+              // The label decides the off-ledger skip; the proposal's status and
+              // signature decide the conversion below. Scoped to this proposal's
+              // own invoice (the link step re-checks ownership): a mismatched
+              // invoice_id must never convert or classify anything.
+              const labelRes = await dbClient.query(
+                `SELECT i.label, p.status, p.client_signed_at
+                   FROM invoices i JOIN proposals p ON p.id = i.proposal_id
+                  WHERE i.id = $1 AND i.proposal_id = $2`,
+                [paidInvoiceId, proposalId]
+              );
+              const paid = labelRes.rows[0];
+              offLedger = OFF_LEDGER_INVOICE_LABELS.includes(paid?.label);
+              // Audit PAY-02: a contract invoice paid before the booking existed
+              // (status still sent/viewed/accepted) is the deposit rail arriving
+              // through the invoice page. Convert the row exactly as the deposit
+              // branch does, so it is never left half-converted (credited, shift
+              // created, no deposit_paid, no Balance invoice, no reminders, Sign
+              // & Pay still offered, a second deposit takable).
+              if (paid && CONTRACT_LABELS.includes(paid.label) && PRE_CONVERSION_STATUSES.includes(paid.status)) {
+                invoiceConversion = true;
+                await noteUnsigned(paid, paid.label);
+              }
             }
             if (!offLedger) {
               const paidDollars = intent.amount / 100;
@@ -367,6 +392,17 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                   "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
                   [proposalId]
                 );
+              } else if (upd.rows[0] && invoiceConversion) {
+                // The deposit branch's derived status for the partial case,
+                // guarded to the pre-conversion statuses the read above saw.
+                await dbClient.query(
+                  "UPDATE proposals SET status = 'deposit_paid' WHERE id = $1 AND status IN ('sent', 'viewed', 'accepted')",
+                  [proposalId]
+                );
+              }
+              // accepted_at (audit ESIG-03), as the deposit and full branches.
+              if (upd.rows[0] && invoiceConversion) {
+                await dbClient.query('UPDATE proposals SET accepted_at = COALESCE(accepted_at, NOW()) WHERE id = $1', [proposalId]);
               }
             }
           } else {
@@ -377,12 +413,16 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // two same-amount deposit intents (fixed deposit amount → both survive the
             // stale-cancel), silently under-crediting a real charge. Idempotent via the
             // proposal_payments ON CONFLICT gate above.
-            await dbClient.query(`
+            // accepted_at and the unsigned note: see the full branch above.
+            const depRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+              RETURNING client_signed_at
             `, [proposalId, intent.amount / 100]);
+            await noteUnsigned(depRes.rows[0]);
           }
 
           // Last-minute staffing hold — only for INITIAL-booking branches (full;
@@ -392,7 +432,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           // flag AND isFirstDelivery, so a Stripe retry can't re-flag or re-blast.
           // !conflict (F1): a payment on a non-chosen option must never flag a
           // last-minute hold or trigger the post-commit staff SMS blast.
-          if ((paymentType === 'full' || paymentType === 'deposit') && !groupChoice.conflict && !archivedSettle) {
+          // invoiceConversion (audit PAY-02): a contract invoice that books the
+          // row is an initial booking too.
+          if ((paymentType === 'full' || paymentType === 'deposit' || invoiceConversion) && !groupChoice.conflict && !archivedSettle) {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
               [proposalId]
@@ -633,7 +675,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           // !conflict (F2): never mint a Balance invoice on an archived non-chosen
           // option. !archivedSettle (B3): never mint one on a cancelled event a
           // stale payment just landed on — the admin refunds it, no live booking.
-          if (paymentType === 'deposit' && !groupChoice.conflict && !archivedSettle) {
+          // invoiceConversion (audit PAY-02): the Deposit invoice paid through
+          // the invoice rail is credited and locked above, so the Balance minted
+          // here reads the remaining contract exactly as it does on the deposit
+          // rail (idempotent on an existing non-void Balance; null at zero).
+          if ((paymentType === 'deposit' || invoiceConversion) && !groupChoice.conflict && !archivedSettle) {
             await createBalanceInvoice(proposalId, dbClient);
           }
         } else {
@@ -676,6 +722,12 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             );
           }
           notifyPaymentOnArchived(proposalId, intent.amount, paymentType, archivedSettle.archiveReason);
+        }
+
+        // Audit PAY-02 / ESIG-03: contract money on an unsigned row (recorded
+        // in-tx); tell the admin post-commit, connection released.
+        if (unsignedSettle) {
+          notifyUnsignedSettle(proposalId, intent.amount, unsignedSettle.paymentType);
         }
 
         // ─── Service extension: settle AFTER the commit AND after release ───
@@ -819,8 +871,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
         let depositRemindersScheduled = false;
         // !conflict: no reminder ladder (and, via this flag, no sign+pay marketing
         // enroll below) for a payment on a non-chosen option. !archivedSettle (B3):
-        // nor for a stale payment on a cancelled event.
-        if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict && !archivedSettle) {
+        // nor for a stale payment on a cancelled event. invoiceConversion (audit
+        // PAY-02): a contract invoice that booked the row schedules the same ladder.
+        if ((paymentType === 'deposit' || paymentType === 'full' || invoiceConversion) && !groupChoice.conflict && !archivedSettle) {
           const { scheduleDepositPaidReminders } = require('../../utils/depositPaidSchedulers');
           await scheduleDepositPaidReminders(proposalId, { source: 'payment_intent.succeeded' });
           depositRemindersScheduled = true;

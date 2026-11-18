@@ -6,6 +6,9 @@ const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth')
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { computeExtrasBreakdown } = require('../utils/drinkPlanExtras');
+const { CONTRACT_LABELS } = require('../utils/proposalMoneyShared');
+const { chicagoTodayYmd } = require('../utils/businessTime');
+const { toBaseYmd, shiftYmd } = require('../utils/balanceReminderScheduling');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -20,7 +23,7 @@ const {
 
 // Shared helpers extracted to a sibling module (also used by the create-intent
 // sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
-const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { depositCentsFor, totalAtOrBelowDeposit, contractInvoicePayable, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('../utils/autopayDurableCharge');
 const { assertNoPaymentInFlight } = require('../utils/paymentInFlight');
 
@@ -86,14 +89,19 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
   );
   const extrasAmount = bd.totalCents / 100;
 
-  const now = new Date();
-  let balanceDueDate = data.balance_due_date;
-  if (!balanceDueDate && data.event_date) {
-    const d = new Date(data.event_date);
-    d.setUTCDate(d.getUTCDate() - 14);
-    balanceDueDate = d;
-  }
-  const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
+  // Past due by the Chicago CALENDAR DAY, never by the instant (audit PAY-07):
+  // pg hands a DATE back as a JS Date at the process-local midnight, which
+  // under the production GMT session is 19:00 Chicago the evening before, so
+  // `now > dueMidnight` called the whole due day (and the prior evening) past
+  // due and forced the balance into the extras charge a day before the
+  // scheduler charges it and the reminders call it due. Both of those compare
+  // calendar strings (balanceScheduler.js, balanceReminderScheduling.js); so
+  // does this now, including the event-day-minus-14 default. A balance due
+  // today is not past due.
+  const dueYmd = data.balance_due_date
+    ? toBaseYmd(data.balance_due_date)
+    : (data.event_date ? shiftYmd(toBaseYmd(data.event_date), -14) : null);
+  const isPastDue = dueYmd ? dueYmd < chicagoTodayYmd() : false;
   const currentBalance = Math.max(0, Number(data.total_price || 0) - Number(data.amount_paid || 0));
   const balanceOptionAvailable = !isPastDue && currentBalance > 0 && extrasAmount > 0;
 
@@ -192,7 +200,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   }
 
   const result = await pool.query(
-    'SELECT id, token, event_type, event_type_custom, event_date, event_start_time, total_price FROM proposals WHERE id = $1',
+    'SELECT id, token, event_type, event_type_custom, event_date, event_start_time, total_price, deposit_amount FROM proposals WHERE id = $1',
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
@@ -210,8 +218,13 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     eventDate: proposal.event_date,
     eventStartTime: proposal.event_start_time,
   });
-  const isFullPay = bookingWindow.fullPaymentRequired;
-  const amount = isFullPay ? Math.round(Number(proposal.total_price) * 100) : DEPOSIT_AMOUNT;
+  // The row's deposit (audit PAY-06), as create-intent charges it, and the
+  // full total for a contract at or below it (audit PAY-09), as the page and
+  // create-intent already require.
+  const totalCents = Math.round(Number(proposal.total_price) * 100);
+  const depositCents = depositCentsFor(proposal);
+  const isFullPay = bookingWindow.fullPaymentRequired || totalAtOrBelowDeposit(totalCents, depositCents);
+  const amount = isFullPay ? totalCents : depositCents;
   const linkPaymentType = isFullPay ? 'full' : 'deposit';
   const productName = isFullPay ? `Full Payment — ${eventLabel}` : `Event Deposit — ${eventLabel}`;
 
@@ -589,7 +602,9 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
 
   const invRes = await pool.query(`
     SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
-           p.id AS proposal_id, p.status AS proposal_status, p.event_type, p.event_type_custom, p.stripe_customer_id,
+           i.label,
+           p.id AS proposal_id, p.status AS proposal_status, p.token AS proposal_token,
+           p.event_type, p.event_type_custom, p.stripe_customer_id,
            p.event_timezone,
            c.email AS client_email, c.name AS client_name
     FROM invoices i
@@ -611,6 +626,28 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
     throw new ConflictError(
       'This event was cancelled, so this invoice can no longer be paid online. If you think this is a mistake, email contact@drbartender.com.',
       'EVENT_CANCELLED'
+    );
+  }
+
+  // A contract invoice (Deposit, Balance, Full Payment) is payable here only
+  // once the booking exists (audit PAY-02). The Deposit invoice is minted
+  // 'sent' the moment the proposal goes out, so this page took the deposit
+  // before the agreement was signed, and the webhook's invoice branch then
+  // credited it without converting the row. Before booking, the proposal page
+  // is the rail: it takes the deposit with the signature, the gratuity
+  // election and the autopay enrolment. A BOOKED row stays payable with no
+  // online signature on purpose: an admin-recorded deposit or a Payment Link
+  // deposit books a proposal with client_signed_at NULL, and the Balance
+  // invoice is the only online rail for its balance; an admin's offline
+  // acceptance (accepted, no signature) pays through the admin Payment Link
+  // (stripeRouteHelpers.contractInvoicePayable). 409, not 404: signing on the proposal page books the row and the same link
+  // then works. The message names no URL: this route is gated by the invoice
+  // token alone, and the proposal token is a higher tier than whoever holds an
+  // invoice link.
+  if (CONTRACT_LABELS.includes(inv.label) && !contractInvoicePayable(inv.proposal_status)) {
+    throw new ConflictError(
+      'This invoice is paid on your proposal page, where you sign and book. Open the proposal link in your email or in your client portal.',
+      'CONTRACT_INVOICE_NOT_BOOKED'
     );
   }
 

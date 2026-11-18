@@ -247,6 +247,53 @@ test('metadata-less pending intent at the same amount is still reused (existing 
   assert.equal(createCalls.length, before, 'no new intent minted');
 });
 
+// ─── Autopay is part of the intent identity (audit PAY-03, 2026-11-05) ──────
+// The page mints the deposit intent on load with autopay false and asks again
+// with autopay true once the client ticks the box. Reusing the pending intent
+// regardless of the election left setup_future_usage unset and autopay_enrolled
+// false, so the webhook saved no card. The pure pin is
+// stripeCreateIntent.autopayIdentity.test.js; these two cases assert the rows.
+
+test('ticking autopay after the load-time mint cancels the no-autopay intent and mints with setup_future_usage, autopay_enrolled true', async () => {
+  const p = await seedProposal();
+  const piId = `pi_${NONCE}_autopay_toggle_on`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status) VALUES ($1, $2, 10000, 'pending')`,
+    [p.id, piId]
+  );
+  retrieveResult = { id: piId, status: 'requires_payment_method', amount: 10000, client_secret: 'sec_no_autopay', metadata: {}, setup_future_usage: null };
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit', autopay: true });
+  assert.equal(res.status, 200, res.body);
+  assert.ok(cancelCalls.includes(piId), 'the no-autopay intent is cancelled');
+  assert.equal(createCalls.length, before + 1, 'a fresh intent is minted');
+  assert.equal(createCalls[before].setup_future_usage, 'off_session');
+  assert.notEqual(JSON.parse(res.body).clientSecret, 'sec_no_autopay');
+  const row = (await pool.query('SELECT autopay_enrolled FROM proposals WHERE id = $1', [p.id])).rows[0];
+  assert.equal(row.autopay_enrolled, true);
+  const sess = (await pool.query('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId])).rows[0];
+  assert.equal(sess.status, 'canceled');
+});
+
+test('unticking autopay cancels the off_session intent and mints without it, autopay_enrolled false', async () => {
+  const p = await seedProposal();
+  await pool.query('UPDATE proposals SET autopay_enrolled = true WHERE id = $1', [p.id]);
+  const piId = `pi_${NONCE}_autopay_toggle_off`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status) VALUES ($1, $2, 10000, 'pending')`,
+    [p.id, piId]
+  );
+  retrieveResult = { id: piId, status: 'requires_payment_method', amount: 10000, client_secret: 'sec_autopay', metadata: {}, setup_future_usage: 'off_session' };
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit', autopay: false });
+  assert.equal(res.status, 200, res.body);
+  assert.ok(cancelCalls.includes(piId));
+  assert.equal(createCalls.length, before + 1);
+  assert.equal(createCalls[before].setup_future_usage, undefined);
+  const row = (await pool.query('SELECT autopay_enrolled FROM proposals WHERE id = $1', [p.id])).rows[0];
+  assert.equal(row.autopay_enrolled, false);
+});
+
 // ─── Admin gratuity mandate (spec 2026-08-10) ────────────────────────────────
 // Mandated seed: 450 service + $100 mandate (rate 20, 1 staff x 5h) = 550.
 

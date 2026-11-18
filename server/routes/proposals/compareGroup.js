@@ -11,6 +11,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError } = require('../../utils/errors');
 const { requireUuidToken } = require('../../utils/tokens');
 const { COMPARE_VISIBLE_STATUSES } = require('../../utils/proposalGroups');
+const { depositCentsFor, totalAtOrBelowDeposit } = require('../../utils/stripeRouteHelpers');
 
 const router = express.Router();
 
@@ -82,6 +83,13 @@ function shape(g, options) {
       // addons, adjustments, overrides, and its own num_bars).
       total_price: o.total_price,
       deposit_amount: o.deposit_amount,
+      // The deposit the server would charge on this option (round 2 L2): the
+      // matrix quotes this, never a literal of its own.
+      deposit_amount_effective: depositCentsFor(o) / 100,
+      // An option at or below its deposit is paid in full at booking (audit
+      // PAY-09), the rule its own proposal page and create-intent hold, so the
+      // matrix never quotes a deposit that option cannot take.
+      full_payment_at_booking: totalAtOrBelowDeposit(Math.round(Number(o.total_price || 0) * 100), depositCentsFor(o)),
       floor_reason: o.floor_reason || null,
       billed_guests: o.billed_guests !== null && o.billed_guests !== undefined ? Number(o.billed_guests) : null,
       floor_applied: o.floor_applied === true,

@@ -284,6 +284,36 @@ test('invoiceSend: resolveRecipient uses the live client email; SMS unavailable 
   assert.match(r.channels.sms.unavailable_reason, /email only/i);
 });
 
+test('invoiceSend: a contract invoice on an archived proposal warns that it is archived, not that it is unbooked', async () => {
+  // The pay route refuses an archived proposal's invoice as a cancelled event
+  // (EVENT_CANCELLED), so "send the proposal link instead" would send the admin
+  // to a page that cannot take the money either.
+  const before = (await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId])).rows[0].status;
+  await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+  try {
+    const r = await getAction('invoice_send').resolveRecipient(invoiceId);
+    assert.ok(r.warnings.some((w) => /archived/i.test(w)), 'the warning names the archive');
+    assert.ok(!r.warnings.some((w) => /has not booked/.test(w)), 'an archived row never reads as an unbooked one');
+  } finally {
+    await pool.query('UPDATE proposals SET status = $1 WHERE id = $2', [before, proposalId]);
+  }
+});
+
+test('invoiceSend: an accepted proposal with no signature (an offline acceptance) is told to use the Payment Link; a signed one is told to send the proposal link', async () => {
+  const before = (await pool.query('SELECT status, client_signed_at FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  try {
+    await pool.query("UPDATE proposals SET status = 'accepted', client_signed_at = NULL WHERE id = $1", [proposalId]);
+    let r = await getAction('invoice_send').resolveRecipient(invoiceId);
+    assert.ok(r.warnings.some((w) => /Payment Link/.test(w)), 'an offline acceptance pays through the admin Payment Link');
+    assert.ok(!r.warnings.some((w) => /Send the proposal link/.test(w)), 'its proposal page cannot take the money');
+    await pool.query("UPDATE proposals SET client_signed_at = NOW() WHERE id = $1", [proposalId]);
+    r = await getAction('invoice_send').resolveRecipient(invoiceId);
+    assert.ok(r.warnings.some((w) => /has not booked/.test(w) && /Send the proposal link/.test(w)), 'a signed, unpaid row pays on its proposal page');
+  } finally {
+    await pool.query('UPDATE proposals SET status = $1, client_signed_at = $2 WHERE id = $3', [before.status, before.client_signed_at, proposalId]);
+  }
+});
+
 test('invoiceSend: buildMessages preformats the amount from cents and links the public invoice token', async () => {
   const m = await getAction('invoice_send').buildMessages(invoiceId);
   assert.match(m.email.subject, /invoice/i);

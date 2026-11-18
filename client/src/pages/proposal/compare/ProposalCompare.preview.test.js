@@ -77,3 +77,16 @@ test('preview with two sent options and a draft says the client sees it minus th
   expect(await screen.findByText(/sees this comparison without the hidden options/)).toBeInTheDocument();
   expect(screen.getByText(/Hidden from the client: The Premium Formula \(not sent yet\)/)).toBeInTheDocument();
 });
+
+test('an option at or below its deposit reads Full at booking, the others quote the deposit (audit PAY-09)', async () => {
+  // A year out from today, so the 14-day full-payment window never covers it.
+  const yearOut = new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+  const data = payload([
+    { ...option(1, 'viewed', 'The Core Reaction', true), deposit_amount_effective: 100, full_payment_at_booking: false },
+    { ...option(2, 'sent', 'The Small Formula', true), total_price: '75.00', deposit_amount_effective: 100, full_payment_at_booking: true },
+  ]);
+  api.get.mockResolvedValue({ data: { ...data, event_header: { ...data.event_header, event_date: yearOut } } });
+  mount('/compare/g1/preview', <ProposalCompare preview />);
+  expect((await screen.findAllByText('Full at booking')).length).toBeGreaterThan(0);
+  expect(screen.getAllByText('$100.00 deposit').length).toBeGreaterThan(0);
+});

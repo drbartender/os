@@ -31,6 +31,8 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const express = require('express');
 const { pool } = require('../db');
+const { chicagoTodayYmd } = require('../utils/businessTime');
+const { shiftYmd } = require('../utils/balanceReminderScheduling');
 const { AppError } = require('../utils/errors');
 const stripeRouter = require('./stripe');
 
@@ -109,7 +111,10 @@ after(async () => {
   await pool.end();
 });
 
-const yesterday = () => new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+// Yesterday by the Chicago business day, the day the route judges past due by
+// (audit PAY-07). The UTC day minus one is Chicago's today from 18:00 (19:00 in
+// summer) to midnight, and a balance due today is not past due.
+const yesterday = () => shiftYmd(chicagoTodayYmd(), -1);
 const nextMonth = () => new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
 test('a past-due balance with a processing row refuses 409 PAYMENT_IN_FLIGHT before any Stripe call', async () => {

@@ -70,12 +70,12 @@ async function seedProposal({ status = 'sent', totalPrice = 1000, amountPaid = 1
   return p.rows[0].id;
 }
 
-async function seedInvoice(proposalId, { status = 'partially_paid', amountDue = 50000, amountPaid = 10000 } = {}) {
+async function seedInvoice(proposalId, { status = 'partially_paid', amountDue = 50000, amountPaid = 10000, label = 'Balance' } = {}) {
   const token = crypto.randomUUID();
   await pool.query(
     `INSERT INTO invoices (proposal_id, token, invoice_number, label, amount_due, amount_paid, status)
-     VALUES ($1, $2, $3, 'Balance', $4, $5, $6)`,
-    [proposalId, token, `INV${crypto.randomBytes(5).toString('hex')}`, amountDue, amountPaid, status]
+     VALUES ($1, $2, $3, $7, $4, $5, $6)`,
+    [proposalId, token, `INV${crypto.randomBytes(5).toString('hex')}`, amountDue, amountPaid, status, label]
   );
   return token;
 }
@@ -170,8 +170,12 @@ test('create-intent-for-invoice on a deposit_paid proposal still returns 200 + c
 });
 
 test('create-intent-for-invoice on a draft proposal (archived->draft restore) is NOT blocked by the guard', async () => {
+  // An ordinary (non-contract) invoice: a contract invoice on an unbooked row is
+  // refused by a different gate on purpose (audit PAY-02, CONTRACT_INVOICE_NOT_BOOKED,
+  // pinned in stripe.invoiceIntentContract.test.js), so a Balance here would test
+  // that gate, not this one.
   const p = await seedProposal({ status: 'draft' });
-  const token = await seedInvoice(p, { status: 'sent', amountDue: 50000, amountPaid: 0 });
+  const token = await seedInvoice(p, { status: 'sent', amountDue: 50000, amountPaid: 0, label: 'Travel fee' });
 
   const r = await postJson(`/api/stripe/create-intent-for-invoice/${token}`, {});
   assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
