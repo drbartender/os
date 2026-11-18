@@ -316,3 +316,152 @@ test('a span description carrying a URL is scrubbed too', () => {
   });
   assert.equal(event.spans[0].description, 'GET /api/voice/vm/[redacted]');
 });
+
+// By value (2026-11-16): the token paths were named by hand and nine token
+// routes went past them, so every UUID and every JWT is redacted wherever
+// scrubUrl runs. sentryScrub.tokenRoutes.test.js holds every route; these pin
+// the value rules themselves.
+const UUID_A = 'abcdef12-3456-4789-8abc-def012345678';
+
+test('a UUID is redacted by value: in a path, a query string, either case, beside a dash or a dot', () => {
+  assert.equal(scrubUrl(`https://api.drbartender.com/api/calendar/feed/${UUID_A}`),
+    'https://api.drbartender.com/api/calendar/feed/[redacted-uuid]');
+  assert.equal(scrubUrl(`/api/stripe/create-intent/${UUID_A.toUpperCase()}`), '/api/stripe/create-intent/[redacted-uuid]');
+  assert.equal(scrubUrl(`/api/proposals/group/${UUID_A}/preview?x=1`), '/api/proposals/group/[redacted-uuid]/preview?x=1');
+  assert.equal(scrubUrl(`/x?id=${UUID_A}&y=2`), '/x?id=[redacted-uuid]&y=2');
+  assert.equal(scrubUrl(`menu-print/42/${UUID_A}.jpg`), 'menu-print/42/[redacted-uuid].jpg');
+  assert.equal(scrubUrl(`key-${UUID_A}`), 'key-[redacted-uuid]');
+  assert.equal(scrubUrl(`${UUID_A}`), '[redacted-uuid]');
+});
+
+test('a value that is not a UUID stays readable: a Sentry id, a git sha, a row id', () => {
+  const sentryId = 'abcdef0123456789abcdef0123456789';
+  const sha = 'b041799' + 'a'.repeat(33);
+  assert.equal(scrubUrl(`/x?event=${sentryId}`), `/x?event=${sentryId}`);
+  assert.equal(scrubUrl(`release ${sha}`), `release ${sha}`);
+  assert.equal(scrubUrl('/api/proposals/42/invoices'), '/api/proposals/42/invoices');
+});
+
+test('a UUID glued to a letter, or behind the F of a percent-encoded slash, is still redacted', () => {
+  assert.equal(scrubUrl(`x${UUID_A}`), 'x[redacted-uuid]');
+  assert.equal(scrubUrl(`/login?next=%2Fcompare%2F${UUID_A}`), '/login?next=%2Fcompare%2F[redacted-uuid]');
+});
+
+test('the known token paths keep their own markers; the value rule only adds where none applied', () => {
+  assert.equal(scrubUrl(`/api/proposals/t/${UUID_A}/sign`), '/api/proposals/t/[redacted]/sign');
+  assert.equal(scrubUrl(`/api/menu-proof/${UUID_A}`), '/api/menu-proof/[redacted]');
+  assert.equal(scrubUrl(`/api/voice/vm/${UUID_A}`), '/api/voice/vm/[redacted]');
+  assert.equal(scrubUrl(`/x?token=${UUID_A}`), '/x?token=[redacted]');
+});
+
+test('a JWT is redacted by value, and the cover-swap and verify-email paths by rule', () => {
+  const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzd2FwIjoiY292ZXIifQ.c2lnbmF0dXJlLXNpZ25hdHVyZQ';
+  assert.equal(scrubUrl(`/api/admin/cover-swaps/${jwt}`), '/api/admin/cover-swaps/[redacted]');
+  assert.equal(scrubUrl(`a link ${jwt} in a message`), 'a link [redacted-jwt] in a message');
+  assert.equal(scrubUrl('https://staff.drbartender.com/verify-email/Zm9vYmFyYmF6cXV4LXNlY3JldC10b2tlbg'),
+    'https://staff.drbartender.com/verify-email/[redacted]');
+});
+
+test('a UUID in span data and a breadcrumb is redacted on both pipelines', () => {
+  const url = `https://api.drbartender.com/api/calendar/feed/${UUID_A}`;
+  const txn = scrubTransactionEvent({ contexts: { trace: { data: { url, 'url.full': url, 'http.url': url } } },
+    spans: [{ data: { url } }], breadcrumbs: [{ message: url, data: { url } }] });
+  assert.equal(JSON.stringify(txn).includes(UUID_A), false, 'a transaction');
+  const err = scrubErrorEvent({ request: { url }, breadcrumbs: [{ message: url, data: { url } }] });
+  assert.equal(JSON.stringify(err).includes(UUID_A), false, 'an error event');
+});
+
+// Review 2026-11-16: an unbounded JWT rule is quadratic on eyJ repeated, and
+// scrubUrl runs on a caller's URL several times per sampled transaction. The
+// bounded rule takes milliseconds here; the unbounded one took over a second.
+test('the JWT rule is linear on a crafted run of eyJ openings, and still catches a JWT after an encoded slash', () => {
+  const crafted = `/api/health?q=${'eyJ'.repeat(20000)}`;
+  const t0 = process.hrtime.bigint();
+  scrubTransactionEvent({ transaction: `GET ${crafted}`, request: { url: crafted },
+    contexts: { trace: { data: { url: crafted, 'url.full': crafted, 'http.target': crafted } } } });
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 1500, `scrubbing a 60 KB crafted URL took ${ms.toFixed(0)} ms`);
+  const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzd2FwIjoiY292ZXIifQ.c2lnbmF0dXJlLXNpZ25hdHVyZQ';
+  assert.equal(scrubUrl(`/r?next=%2Fx%2F${jwt}`), '/r?next=%2Fx%2F[redacted-jwt]');
+});
+
+test('the Telegram webhook path is redacted: its segment is the webhook secret', () => {
+  const secret = 'cd'.repeat(24);
+  assert.equal(scrubUrl(`https://api.drbartender.com/api/telegram/${secret}`), 'https://api.drbartender.com/api/telegram/[redacted]');
+  assert.equal(scrubUrl(`POST /API/TELEGRAM/${secret}`), 'POST /api/telegram/[redacted]');
+});
+
+test('the non-UUID token paths are redacted percent-encoded and in either case', () => {
+  assert.equal(scrubUrl(`/login?next=%2Freset-password%2F${'ab'.repeat(32)}&y=1`), '/login?next=/reset-password/[redacted]&y=1');
+  assert.equal(scrubUrl('/R?next=%2FVerify-Email%2FZm9vYmFyYmF6cXV4LXNlY3JldA'), '/R?next=/verify-email/[redacted]');
+  assert.equal(scrubUrl(`/r?u=%2Fapi%2Ftelegram%2F${'cd'.repeat(24)}`), '/r?u=/api/telegram/[redacted]');
+});
+
+test('the Telegram bot token is redacted out of an outgoing Bot API URL, in a breadcrumb and a span', () => {
+  const bot = `bot${'7'.repeat(6)}:AA${'x'.repeat(33)}`;
+  const url = `https://api.telegram.org/${bot}/sendMessage`;
+  assert.equal(scrubUrl(url), 'https://api.telegram.org/bot[redacted]/sendMessage');
+  const txn = scrubTransactionEvent({ spans: [{ description: `POST ${url}`, data: { url, 'url.full': url } }],
+    breadcrumbs: [{ category: 'http', data: { url, method: 'POST' } }] });
+  assert.equal(JSON.stringify(txn).includes('x'.repeat(33)), false, 'a transaction');
+  const err = scrubErrorEvent({ breadcrumbs: [{ category: 'http', data: { url, method: 'POST' } }] });
+  assert.equal(JSON.stringify(err).includes('x'.repeat(33)), false, 'an error event');
+});
+
+test('a Stripe client secret is redacted by value', () => {
+  const secret = `pi_3Abc${'D'.repeat(18)}_secret_${'e'.repeat(25)}`;
+  assert.equal(scrubUrl(`/proposal/x?paid=true&payment_intent_client_secret=${secret}`),
+    '/proposal/x?paid=true&payment_intent_client_secret=[redacted-client-secret]');
+  assert.equal(scrubUrl(`seti_1Xyz${'Q'.repeat(18)}_secret_${'r'.repeat(25)}`), '[redacted-client-secret]');
+});
+
+test('an error event\'s message, exception values, tags, extra and query string are redacted by value', () => {
+  const url = `/api/drink-plans/t/${UUID_A}/logo`;
+  const err = scrubErrorEvent({
+    message: `upload failed on /x/${UUID_A}`,
+    exception: { values: [{ type: 'Error', value: `duplicate key (token)=(${UUID_A})` }] },
+    tags: { route: `/x/${UUID_A}`, component: 'upload', link: `https://drbartender.com/invoice/${UUID_A}`, attempt: 2 },
+    extra: { path: url, method: 'POST', nested: { link: `https://drbartender.com/proposal/${UUID_A}` }, count: 3 },
+    request: { url: `/api/y?ref=${UUID_A}`, query_string: `ref=${UUID_A}&n=2` },
+  });
+  assert.equal(JSON.stringify(err).includes(UUID_A), false);
+  assert.equal(err.extra.method, 'POST');
+  assert.equal(err.extra.count, 3);
+  assert.equal(err.tags.component, 'upload');
+  // A tag other than route is walked too (the route tag was scrubbed before).
+  assert.equal(err.tags.link, 'https://drbartender.com/invoice/[redacted-uuid]');
+  assert.equal(err.tags.attempt, 2);
+  assert.equal(err.request.query_string, 'ref=[redacted-uuid]&n=2');
+  assert.equal(err.tags.scrub_failed, undefined);
+  const formatted = scrubErrorEvent({ message: { formatted: `see /x/${UUID_A}` } });
+  assert.equal(formatted.message.formatted, 'see /x/[redacted-uuid]');
+});
+
+test('an extra block that cannot be walked fails closed to the marker', () => {
+  const err = scrubErrorEvent({ extra: { get path() { throw new Error('no'); } } });
+  assert.deepEqual(err.extra, { 'sentry.scrub_failed': true });
+  assert.equal(err.tags.scrub_failed, 'true');
+});
+
+test('the JWT rule starts only at a delimiter: a crafted eyJ run is cheap, and every real place a JWT sits is caught', () => {
+  const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzd2FwIjoiY292ZXIifQ.c2lnbmF0dXJlLXNpZ25hdHVyZQ';
+  for (const [input, out] of [
+    [jwt, '[redacted-jwt]'],
+    [`/api/admin/x/${jwt}`, '/api/admin/x/[redacted-jwt]'],
+    [`/x?t=${jwt}&y=1`, '/x?t=[redacted-jwt]&y=1'],
+    [`Bearer ${jwt}`, 'Bearer [redacted-jwt]'],
+    [`"${jwt}"`, '"[redacted-jwt]"'],
+  ]) assert.equal(scrubUrl(input), out);
+  const dotted = `/x?q=${'eyJ'.repeat(5000)}.${'eyJ'.repeat(5000)}`;
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < 100; i++) scrubUrl(dotted);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 1000, `a hundred 30 KB crafted strings took ${ms.toFixed(0)} ms`);
+});
+
+test('a token path inside a message is redacted and the words after it are kept', () => {
+  assert.equal(scrubUrl(`Failed GET /api/proposals/t/${UUID_A} with status 500: pool timeout`),
+    'Failed GET /api/proposals/t/[redacted] with status 500: pool timeout');
+  assert.equal(scrubUrl(`link "/api/menu-proof/${UUID_A}" expired`), 'link "/api/menu-proof/[redacted]" expired');
+  assert.equal(scrubUrl('see /x?token=abc123 then retry'), 'see /x?token=[redacted] then retry');
+});

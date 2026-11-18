@@ -51,6 +51,43 @@ const E164 = /\+\d{7,15}(?!\d)/g;
 // percent-encoded separators and in either case.
 const MENU_PROOF_PATH = /(?:\/|%2F)menu-proof(?:\/|%2F)[^/?#&%\s"'<>]+/gi;
 
+// Every other public token (2026-11-16). Naming token paths here was the
+// server's mistake again: this scrub named only the menu proof, so every other
+// token page (proposal, invoice, drink plan, compare, shopping list, tip,
+// feedback) and every token API call it makes reached Sentry raw. So a token
+// is redacted by VALUE: every UUID and every JWT, in any string. Every token
+// the system mints for a URL is one or the other; the path rules below are
+// for the ones that are neither (reset-password is hex, verify-email is
+// base64url), and mirror the server's. sentryScrub.tokenRoutes.test.js lists
+// every App.js route with a token parameter and fails on a new one until it
+// says which shape its token has.
+//
+// The UUID rule has no guard on its neighbours: a token glued to a letter is
+// still a token, and a percent-encoded redirect puts the F of %2F right
+// against it (next=%2Fcompare%2F<uuid>). Nothing UUID-shaped is worth keeping;
+// Sentry's own ids are 32 hex with no dashes, so they stay readable.
+//
+// No lookbehind anywhere in this file: a browser without it (Safari before
+// 16.4) throws a SyntaxError parsing the literal, the module never loads, and
+// index.js imports it, so the app would not start.
+const UUID_VALUE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// Three base64url segments, the header opening eyJ (`{"`): the cover-swap and
+// unsubscribe links. Linear for the server's two reasons: a JWT starts only at
+// the start, after a character outside base64url, or after a percent-encoded
+// byte (the F of %2F), so an eyJ inside a run never starts a scan; and every
+// segment is bounded. Unanchored, a string of eyJ repeated was quadratic,
+// seconds of main thread at 100 KB. A JWT glued to a letter is not caught.
+const JWT_VALUE = /(^|[^A-Za-z0-9_-]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{1,256}\.[A-Za-z0-9_-]{1,8192}\.[A-Za-z0-9_-]{1,1024}/g;
+// A Stripe client secret by value: confirmPayment returns to the token page
+// with payment_intent_client_secret=pi_..._secret_... in its query (the
+// proposal's PaymentForm and the drink plan's ConfirmationStep), and the page
+// stays on that URL.
+const CLIENT_SECRET_VALUE = /(?:pi|seti)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/g;
+// A non-UUID token's path, with percent-encoded separators as above.
+const TOKEN_PATH = /(?:\/|%2F)(t|tip|unsubscribe|reset-password|verify-email|cover-swaps)(?:\/|%2F)[^/?#&%\s"'<>]+/gi;
+// A token in a query string (?token=, &token=, or percent-encoded).
+const TOKEN_QUERY = /([?&]|%3F|%26)token(=|%3D)[^&#%\s"'<>]+/gi;
+
 const MAX_DEPTH = 24;
 const MAX_NODES = 20000;
 
@@ -58,6 +95,15 @@ export function scrubText(s) {
   return String(s)
     .replace(INBOX_P_PATH, '/inbox/p-[redacted]')
     .replace(MENU_PROOF_PATH, '/menu-proof/[redacted]')
+    .replace(TOKEN_PATH, (m, seg) => `/${seg.toLowerCase()}/[redacted]`)
+    .replace(TOKEN_QUERY, '$1token$2[redacted]')
+    // The token values after the path rules, so those keep their markers, and
+    // BEFORE the phone rules: a plus sign (an encoded space) before a UUID that
+    // opens with seven digits reads as an E.164 number, and the number marker
+    // would eat the first group and leave the rest of the token for nothing.
+    .replace(UUID_VALUE, '[redacted-uuid]')
+    .replace(JWT_VALUE, '$1[redacted-jwt]')
+    .replace(CLIENT_SECRET_VALUE, '[redacted-client-secret]')
     .replace(BARE_P_KEY, '$1p-[redacted]')
     .replace(DISPLAY_PHONE, '[number]')
     .replace(E164, '[number]');

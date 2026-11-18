@@ -188,3 +188,69 @@ test('the three hooks, and index.js spreads them into Sentry.init', () => {
   expect(after).not.toMatch(/\b(?:beforeSend|beforeSendTransaction|beforeBreadcrumb)\b/);
   expect(after.trim()).toBe('');
 });
+
+// By value (2026-11-16): this scrub named only the menu proof, so every other
+// token page and token API call reached Sentry raw. Every UUID and every JWT
+// is now redacted in any string; sentryScrub.tokenRoutes.test.js holds every
+// token page, and these pin the value rules and the non-UUID path rules.
+const UUID_A = 'abcdef12-3456-4789-8abc-def012345678';
+
+test('a UUID is redacted by value in the API calls a token page makes, in either case', () => {
+  expect(scrubText(`https://api.drbartender.com/api/proposals/t/${UUID_A}/sign`)).toBe('https://api.drbartender.com/api/proposals/t/[redacted]/sign');
+  expect(scrubText(`/api/stripe/create-intent/${UUID_A}`)).toBe('/api/stripe/create-intent/[redacted-uuid]');
+  expect(scrubText(`/api/stripe/create-intent-for-invoice/${UUID_A.toUpperCase()}`)).toBe('/api/stripe/create-intent-for-invoice/[redacted-uuid]');
+  expect(scrubText(`/api/client-portal/proposals/${UUID_A}/change-requests`)).toBe('/api/client-portal/proposals/[redacted-uuid]/change-requests');
+  expect(scrubText(`/api/invoices/client/${UUID_A}`)).toBe('/api/invoices/client/[redacted-uuid]');
+  expect(scrubText(`/api/proposals/group/${UUID_A}?x=1`)).toBe('/api/proposals/group/[redacted-uuid]?x=1');
+  expect(scrubText(`GET /x/${UUID_A} failed with 404`)).toBe('GET /x/[redacted-uuid] failed with 404');
+});
+
+test('a value that is not a UUID stays readable: a Sentry id, a row id', () => {
+  const sentryId = 'abcdef0123456789abcdef0123456789';
+  expect(scrubText(`/x?event=${sentryId}`)).toBe(`/x?event=${sentryId}`);
+  expect(scrubText('/admin/proposals/42')).toBe('/admin/proposals/42');
+});
+
+test('a UUID glued to a letter, or behind the F of a percent-encoded slash, is still redacted', () => {
+  expect(scrubText(`x${UUID_A}`)).toBe('x[redacted-uuid]');
+  expect(scrubText(`/login?next=%2Fcompare%2F${UUID_A}`)).toBe('/login?next=%2Fcompare%2F[redacted-uuid]');
+});
+
+test('the non-UUID tokens are redacted by path, a query token by name, and a JWT by value', () => {
+  expect(scrubText(`https://drbartender.com/reset-password/${'ab'.repeat(32)}`)).toBe('https://drbartender.com/reset-password/[redacted]');
+  expect(scrubText('https://staff.drbartender.com/verify-email/Zm9vYmFyYmF6cXV4LXNlY3JldC10b2tlbg')).toBe('https://staff.drbartender.com/verify-email/[redacted]');
+  expect(scrubText('/login?next=%2Freset-password%2Fabcdef&y=1')).toBe('/login?next=/reset-password/[redacted]&y=1');
+  expect(scrubText('/unsubscribe?token=abc123&list=1')).toBe('/unsubscribe?token=[redacted]&list=1');
+  expect(scrubText('/r?next=%3Ftoken%3Dabc123%26x%3D1')).toBe('/r?next=%3Ftoken%3D[redacted]%26x%3D1');
+  const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzd2FwIjoiY292ZXIifQ.c2lnbmF0dXJlLXNpZ25hdHVyZQ';
+  expect(scrubText(`/api/admin/cover-swaps/${jwt}`)).toBe('/api/admin/cover-swaps/[redacted]');
+  expect(scrubText(`link ${jwt} here`)).toBe('link [redacted-jwt] here');
+});
+
+test('the scrub uses no lookbehind, which an older Safari cannot parse', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'sentryScrub.js'), 'utf8');
+  expect(src).not.toMatch(/\(\?<[=!]/);
+});
+
+test('the JWT rule is linear on a crafted run of eyJ openings', () => {
+  const crafted = `/x?q=${'eyJ'.repeat(20000)}`;
+  const t0 = Date.now();
+  beforeBreadcrumb({ category: 'console', message: crafted, data: { arguments: [crafted, crafted] } });
+  expect(Date.now() - t0).toBeLessThan(1500);
+});
+
+test('the Stripe client secret on a paid return URL is redacted, with the page token', () => {
+  const secret = `pi_3Abc${'D'.repeat(18)}_secret_${'e'.repeat(25)}`;
+  const url = `https://drbartender.com/proposal/${UUID_A}?paid=true&payment_intent=pi_3Abc${'D'.repeat(18)}&payment_intent_client_secret=${secret}&redirect_status=succeeded`;
+  const out = scrubText(url);
+  expect(out).not.toContain(secret);
+  expect(out).not.toContain(UUID_A);
+  expect(out).toContain('payment_intent_client_secret=[redacted-client-secret]');
+  const crumb = beforeBreadcrumb({ category: 'navigation', data: { from: url, to: '/' } });
+  expect(JSON.stringify(crumb)).not.toContain('e'.repeat(25));
+});
+
+test('a UUID after a plus sign is redacted whole, not read as a phone number first', () => {
+  const digitsFirst = `${'1234'}${'5678'}-3456-4789-8abc-def012345678`;
+  expect(scrubText(`/x?q=see+${digitsFirst}`)).toBe('/x?q=see+[redacted-uuid]');
+});

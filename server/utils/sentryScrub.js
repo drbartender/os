@@ -27,25 +27,85 @@
 // scrubSpanData walks EVERY string attribute, and both hooks run the same
 // request scrub. Keep it that way. If you find yourself adding a key name to a
 // list to fix a leak, you are writing the fourth one.
+//
+// The token PATHS were the same mistake a fourth time: scrubUrl named the
+// routes it knew, and nine token routes added since went past it (the calendar
+// feed, the three payment-intent routes, the compare group, the client portal,
+// the invoice list, feedback, the quote draft), so sampled spans carried live
+// tokens (2026-11-16). So a token is now redacted by VALUE: every UUID and
+// every JWT, wherever scrubUrl runs. Every token this system mints for a URL
+// is one or the other; a path rule below is only for a token that is neither
+// (hex or base64url), and the markers they write keep their shape.
+// sentryScrub.tokenRoutes.test.js lists every route with a token parameter and
+// fails on a new one until it says which shape its token has.
+
+// A UUID by value, either case, with no guard on its neighbours: a token glued
+// to a letter is still a token, and a percent-encoded redirect puts the F of
+// %2F right against it (next=%2Fcompare%2F<uuid>). Nothing UUID-shaped is
+// worth keeping. Sentry's own ids are 32 hex with no dashes and a git sha has
+// none either, so both stay readable. The same rule as the browser scrub
+// (client/src/utils/sentryScrub.js).
+const UUID_VALUE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// A JWT by value: three base64url segments, the header opening eyJ (`{"`).
+// The cover-swap link and the unsubscribe link carry one. Two things keep it
+// linear, and both are load-bearing (review 2026-11-16). A JWT starts only at
+// the start, after a character outside base64url, or after a percent-encoded
+// byte (the F of %2F sits right against it in an encoded redirect), so an eyJ
+// INSIDE a run never starts a match: unanchored, a request path of eyJ repeated
+// started a scan every three characters, quadratic, and one crafted 16 KB URL
+// held the event loop for most of a second across a sampled transaction's
+// fields (a sentry-trace header can force the sampling); bounded but
+// unanchored, it still cost about a hundred times main. And every segment is
+// bounded. A JWT glued to a letter is not caught; no URL or header puts one
+// there. The leading character is captured, not looked behind, as in the
+// browser scrub.
+const JWT_VALUE = /(^|[^A-Za-z0-9_-]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{1,256}\.[A-Za-z0-9_-]{1,8192}\.[A-Za-z0-9_-]{1,1024}/g;
+// A Stripe client secret by value (pi_..._secret_..., seti_..._secret_...).
+// Stripe appends payment_intent_client_secret to a payment's return URL, so
+// the token page carries it after a card payment; the server sees it only in a
+// Referer, but a value rule costs nothing and matches the browser's.
+const CLIENT_SECRET_VALUE = /(?:pi|seti)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/g;
 
 /** Public token segments and query-string tokens, redacted out of any URL. */
 const scrubUrl = (u) => {
   if (!u) return u;
   return String(u)
-    .replace(/\/t\/[^/?#]+/g, '/t/[redacted]')
-    .replace(/\/api\/public\/tip\/[^/?#]+/g, '/api/public/tip/[redacted]')
-    .replace(/\/tip\/[^/?#]+/g, '/tip/[redacted]')
-    .replace(/\/unsubscribe\/[^/?#]+/g, '/unsubscribe/[redacted]')
-    .replace(/\/reset-password\/[^/?#]+/g, '/reset-password/[redacted]')
+    // Each segment rule stops at whitespace and quotes too: scrubUrl also runs
+    // over an error's message and extra, where the path is followed by words.
+    .replace(/\/t\/[^/?#\s"'<>]+/g, '/t/[redacted]')
+    .replace(/\/api\/public\/tip\/[^/?#\s"'<>]+/g, '/api/public/tip/[redacted]')
+    .replace(/\/tip\/[^/?#\s"'<>]+/g, '/tip/[redacted]')
+    .replace(/\/unsubscribe\/[^/?#\s"'<>]+/g, '/unsubscribe/[redacted]')
+    // The three tokens below are neither UUIDs nor JWTs, so their path rule is
+    // the only one that sees them: either case, and with percent-encoded
+    // separators too (a next= or redirect parameter carries the path encoded).
+    .replace(/(?:\/|%2F)reset-password(?:\/|%2F)[^/?#&%\s"'<>]+/gi, '/reset-password/[redacted]')
+    // The staff email-change link: a base64url token on the page path (it
+    // reaches the server only as a Referer, and headers are dropped below, but
+    // the page path is the one place it rides).
+    .replace(/(?:\/|%2F)verify-email(?:\/|%2F)[^/?#&%\s"'<>]+/gi, '/verify-email/[redacted]')
+    // The cover-swap link: a signed JWT is the whole authorization for the
+    // swap; the JWT rule below catches it too.
+    .replace(/\/cover-swaps\/[^/?#\s"'<>]+/gi, '/cover-swaps/[redacted]')
+    // The Telegram webhook: the path segment IS the webhook secret (48 hex,
+    // server/routes/telegram.js), the same value as the secret-token header,
+    // on a route that places billed calls.
+    .replace(/(?:\/|%2F)api(?:\/|%2F)telegram(?:\/|%2F)[^/?#&%\s"'<>]+/gi, '/api/telegram/[redacted]')
+    // The Telegram BOT token, in the path of every outgoing Bot API call
+    // (https://api.telegram.org/bot<id>:<secret>/<method>, server/utils/
+    // telegram.js): the fetch breadcrumb and the outgoing span keep that path.
+    // Whoever holds it runs the bot, and getWebhookInfo hands back the webhook
+    // secret above. The same reason as the Account SID rule below.
+    .replace(/\/bot\d+(?::|%3A)[A-Za-z0-9_-]+/gi, '/bot[redacted]')
     // The client menu proof (spec 2026-10-19 section 18): the UUID after
     // /menu-proof/ is the page's only credential, on the page URL (a Referer)
     // and on /api/menu-proof/<token>, its /image and its /answer. Whoever holds
     // it can see the client's menu and note and give the one answer.
     // Case-insensitive, because Express matches paths that way.
-    .replace(/\/menu-proof\/[^/?#]+/gi, '/menu-proof/[redacted]')
+    .replace(/\/menu-proof\/[^/?#\s"'<>]+/gi, '/menu-proof/[redacted]')
     // The listen token IS the auth on a route that streams a client's recorded
     // voice, so it must never come to rest in telemetry (spec 2026-08-10).
-    .replace(/\/api\/voice\/vm\/[^/?#]+/g, '/api/voice/vm/[redacted]')
+    .replace(/\/api\/voice\/vm\/[^/?#\s"'<>]+/g, '/api/voice/vm/[redacted]')
     // An Inbox person key for an unknown number is p- plus the last ten digits
     // of the phone (spec 2026-10-06), so every /api/admin/inbox/p-... URL
     // carries a phone number. Not a token, but it must never come to rest in
@@ -53,7 +113,7 @@ const scrubUrl = (u) => {
     // way, so /INBOX/p-... still reaches the route. c- and s- keys are row ids,
     // not phones, and stay readable.
     .replace(/\/inbox\/p-\d+/gi, '/inbox/p-[redacted]')
-    .replace(/[?&]token=[^&]+/g, (m) => m[0] + 'token=[redacted]')
+    .replace(/[?&]token=[^&#\s"'<>]+/g, (m) => m[0] + 'token=[redacted]')
     // Twilio Account SID. Not a public token: it is the basic-auth USERNAME on
     // the media fetch, so it is half a credential pair, and it rides in the
     // outgoing-request URL that instrumentation records on spans and
@@ -69,7 +129,11 @@ const scrubUrl = (u) => {
     // but a hash in a span attribute is not. Dropping /i is right on its own:
     // Account SIDs are always uppercase AC + lowercase hex, so /i bought
     // nothing but false positives.
-    .replace(/(?<![0-9a-zA-Z])AC[0-9a-f]{32}(?![0-9a-zA-Z])/g, '[redacted-account-sid]');
+    .replace(/(?<![0-9a-zA-Z])AC[0-9a-f]{32}(?![0-9a-zA-Z])/g, '[redacted-account-sid]')
+    // By value, last, so the path rules above keep their markers.
+    .replace(UUID_VALUE, '[redacted-uuid]')
+    .replace(JWT_VALUE, '$1[redacted-jwt]')
+    .replace(CLIENT_SECRET_VALUE, '[redacted-client-secret]');
 };
 
 /**
@@ -210,24 +274,51 @@ function scrubRequest(event) {
   if (event.request?.cookies) delete event.request.cookies;
   if (event.request?.url) event.request.url = scrubUrl(event.request.url);
   if (event.request?.query_string) {
-    event.request.query_string = scrubBareQuery(event.request.query_string);
+    // The name rule, then the value rules: a UUID under any other parameter
+    // name is redacted here as it is in request.url.
+    event.request.query_string = scrubUrl(scrubBareQuery(event.request.query_string));
   }
   // Drop request headers entirely: the default scrub list misses
   // x-thumbtack-secret and friends.
   if (event.request) delete event.request.headers;
 }
 
+/**
+ * The text an error event carries outside the request (review 2026-11-16): its
+ * message, each exception's value, every tag and the extra block. A call site
+ * that puts a raw URL there ships a token page's token: server/index.js's
+ * upload_limit_exceeded puts req.originalUrl in extra.path, and an error's own
+ * text can quote a URL or a value. By value, through scrubUrl, so an id or a
+ * count is untouched; the extra block goes through scrubSpanData, the same
+ * walk with the same fail-closed marker.
+ */
+function scrubErrorText(event) {
+  if (typeof event.message === 'string') event.message = scrubUrl(event.message);
+  else if (event.message && typeof event.message.formatted === 'string') {
+    event.message.formatted = scrubUrl(event.message.formatted);
+  }
+  for (const ex of event.exception?.values || []) {
+    if (ex && typeof ex.value === 'string') ex.value = scrubUrl(ex.value);
+  }
+  if (event.tags && typeof event.tags === 'object') {
+    for (const k of Object.keys(event.tags)) {
+      if (typeof event.tags[k] === 'string') event.tags[k] = scrubUrl(event.tags[k]);
+    }
+  }
+  if (event.extra) event.extra = markScrubFailed(event, scrubSpanData(event.extra));
+}
+
 /** `beforeSend` (ERROR events). */
 function scrubErrorEvent(event) {
   scrubRequest(event);
   scrubBreadcrumbs(event);
+  scrubErrorText(event);
   // Error events are believed to carry no span DATA (spanToTraceContext returns
   // ids only), but "believed to carry no" is exactly the assumption that cost
   // three leaks, and scrubbing an absent field is free.
   if (event.contexts?.trace) {
     event.contexts.trace.data = markScrubFailed(event, scrubSpanData(event.contexts.trace.data));
   }
-  if (event.tags?.route) event.tags.route = scrubUrl(event.tags.route);
   // Express resolves the name to the `:token` pattern before an error event is
   // built, so this is symmetry hardening rather than a live leak -- but the
   // asymmetry itself is the bug pattern this module keeps getting bitten by.
