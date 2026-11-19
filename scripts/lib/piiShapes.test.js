@@ -1082,3 +1082,18 @@ test('the path-hit text never carries the value it blocks on, whichever spelling
     for (const h of hits) assert.ok(!h.text.includes(d[2]) && h.text.includes('<PHONE>'), h.text);
   }
 });
+
+// The bearer shape is a token, not a word: prose that follows "Bearer" in a
+// spec passes, and a token-shaped value still masks (2026-11-19, a design
+// spec's WWW-Authenticate example refused a ship range).
+test('a bearer rule matches a token-shaped value, never the prose after the word', () => {
+  const SPEC = 'docs/superpowers/specs/example.md';
+  for (const prose of ['a `WWW-Authenticate: Bearer resource_metadata="..."` header', 'send it as Bearer token', 'Bearer authorization-server-metadata']) {
+    assert.deepStrictEqual(findPii(prose, { path: SPEC }), [], prose);
+  }
+  const value = 'Q7xZq7XzQ7xZq7Xz' + '42';
+  assert.strictEqual(mask(`Authorization: Bearer ${value}`, { path: SPEC }), 'Authorization: <TOKEN>');
+  // A letters-only base62 token (no digit) still masks (scanner lane review, L1).
+  const lettersOnly = 'QxZqXzQxZqXzQxZqXzQxZqXz';
+  assert.strictEqual(mask(`Authorization: Bearer ${lettersOnly}`, { path: SPEC }), 'Authorization: <TOKEN>');
+});

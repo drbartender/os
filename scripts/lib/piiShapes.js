@@ -127,7 +127,12 @@ const FORMS = Object.freeze([
   // TOKEN: bearer-style, the JWT-ish dotted pair, the provider key formats
   // this codebase holds (Stripe, Anthropic, OpenAI, Google, GitHub, Neon,
   // Telegram), 32 or more hex, and a base64 run of 40 or more that holds a digit.
-  { shape: 'TOKEN', name: 'bearer', re: /Bearer[ ]+[A-Za-z0-9._-]+/g },
+  // A bearer value is token-shaped: 16 or more characters holding a digit,
+  // or 20 or more mixing upper- and lower-case letters (a letters-only
+  // base62 token). A lower-case word after it, the WWW-Authenticate example
+  // in a spec or the word token in prose, is neither, and used to refuse a
+  // whole ship range (2026-11-19).
+  { shape: 'TOKEN', name: 'bearer', re: /Bearer[ ]+(?:(?=[A-Za-z0-9._-]{16,})(?=[A-Za-z._-]*[0-9])|(?=[A-Za-z0-9._-]{20,})(?=[a-z0-9._-]*[A-Z])(?=[A-Z0-9._-]*[a-z]))[A-Za-z0-9._-]+/g },
   // A three-part JWT masks whole (the longest span wins over the dotted pair),
   // so the signature never reaches an external reviewer on its own. It starts
   // only where a run of its characters starts (not at every \b, which a dash
