@@ -1,7 +1,7 @@
 ---
 spec: docs/superpowers/specs/2026-11-19-duet-connector-design.md   # revision 3
 format: lane map without code (spec 2026-10-19 D12)
-revision: 1 (2026-11-19)
+revision: 2 (2026-11-19): the plan review folded in; the body's last section is the record.
 lanes:
   - id: connector-shared-reads
     scope: >
@@ -10,7 +10,8 @@ lanes:
       shared functions the route now calls: the client detail (server/routes/clients.js), the
       proposal detail (server/routes/proposals/getOne.js), the open-balance list with the amount
       owed and the day counts computed in SQL (server/routes/proposals/list.js, reusing
-      qOutstanding's expression), and the upcoming-events query with a date window
+      qOutstanding's expression; the admin list's response is unchanged, and the new columns are
+      returned only when the caller asks for them), and the upcoming-events query with a date window
       (adminScopedShiftsSql and NEEDS_STAFF_SQL in server/routes/shifts.queries.js). legalHold.js
       gains the held-client-ids function, failing closed like its siblings. runGlobalSearch takes an
       optional exclusion of held proposal ids and held client ids, applied in its SQL; the admin
@@ -55,8 +56,10 @@ lanes:
       thread, and drops personal rows when asked; the held-client-ids function throws on a missing
       list. getReadSubjects returns the same subjects before and after on the existing suite.
     test plan: >
-      One test file per shared read, asserting the route's response is byte-for-byte what it was on a
-      seeded row (the route test already there is the oracle) and that the function, called with the
+      Before any read moves, each of the four has a test that pins the route's response on a seeded
+      row and passes on main; where no suite pins it today (the client detail has none), the lane
+      writes that test first and commits it as its first checkpoint. After the move the same tests
+      pass untouched. One test file per shared read then asserts that the function, called with the
       hold exclusion, omits a synthetic held proposal and its client's other booking (ids added
       through __setLegalHoldIdsForTest, never a real held row). Open-balance: a row with no due date
       reports none and sorts last; days overdue is computed on the Chicago date. Upcoming events: a
@@ -77,7 +80,7 @@ lanes:
       - server/utils/inbox/aiRedact.js   # export the link replacer only
       - README.md   # generated tree lines only
     blockedBy: []
-    lenses: seams and access-egress, plus whatever the review skill computes for a path under server/utils/inbox.
+    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify. Reviewed at this tier by declaration, whether or not the sensitive list names its files yet, because these functions are the defense of spec 7.6.
     laws: Spec law 3 and section 7.6 guards 1 and 2. No AI call in the screening (the spec's reason, it cannot be talked around). The Inbox redaction invariant holds as written: aiRedact's own output is unchanged.
     seams: aiRedact.js's existing callers and its suite (aiRedact.test.js must pass untouched).
     acceptance: >
@@ -96,17 +99,25 @@ lanes:
   - id: connector-signin-server
     scope: >
       The connector exists, dark and with no tools. Behind an environment flag that is off by
-      default: the MCP endpoint (POST /mcp, stateless, registered ahead of the global body parsers,
-      answering tool listing with an empty list), the two metadata routes, the authorize route that
+      default: the MCP endpoint (POST /mcp, stateless, registered ahead of the global body parsers
+      with its own small JSON limit, answering tool listing with an empty list; GET /mcp answers 405), the two metadata routes, the authorize route that
       stores a pending request, the admin-only routes the consent page calls (read a pending
       request, approve it with a passkey assertion, cancel it), the token route (code exchange,
       refresh rotation with the 30-second grace, replay revocation), the per-call check (token hash,
       live grant, admin role, token_version), the status, call-list and disconnect routes for the
-      settings block, the call log (refusals included), the address check, the limiters, the daily
+      settings block, the call log (refusals included), the address check, the two limiters (per grant on authenticated calls; per address on
+      unauthenticated /mcp calls, /oauth/authorize and /oauth/token; a limited call gets 429), the daily
       cleanup scheduler, the owner email on a new grant and on a replay revocation, the audit
       entries, and the Sentry scrub rule for the token prefix. Schema for pending requests, grants,
       codes, tokens and the call log. The project rules gain the connector invariant and the
       sensitive list gains the connector paths, so every later lane is reviewed at the right tier.
+      .env.example gains four entries: the connector flag, the address-range variable, the cleanup
+      job's RUN flag, and a comment block for API_URL, which the code reads and the file does not
+      describe. The lane report names the MCP SDK line chosen (1.x or 2.x) and that it accepts zod 4.
+      If the review cap would split this lane, the line is: the sign-in and per-call path (metadata,
+      authorize, approve, token, the per-call check, schema for requests, grants, codes and tokens)
+      stays; the call log, the cleanup scheduler and the status, call-list and disconnect routes
+      become a second lane blocked on the first.
     footprint:
       - package.json   # the MCP SDK, exact version
       - package-lock.json
@@ -122,8 +133,14 @@ lanes:
       - server/routes/connector*.test.js
       - server/routes/admin/connector*.test.js
       - server/routes/webauthn.js   # only if the assertion check must be exported for reuse; no session is minted
-      - server/utils/connector/*.js   # new: grants, tokens, auth, callLog, addressCheck, cleanupScheduler, mail
-      - server/utils/connector/*.test.js
+      - server/utils/connector/grants.js   # new, as are the six below
+      - server/utils/connector/tokens.js
+      - server/utils/connector/auth.js
+      - server/utils/connector/callLog.js
+      - server/utils/connector/addressCheck.js
+      - server/utils/connector/cleanupScheduler.js
+      - server/utils/connector/mail.js
+      - server/utils/connector/{grants,tokens,auth,callLog,addressCheck,cleanupScheduler,mail}.test.js
       - server/middleware/rateLimiters.js
       - server/middleware/rateLimiters.test.js
       - server/utils/sentryScrub.js
@@ -156,9 +173,12 @@ lanes:
       resource_metadata header; the metadata's resource equals the configured public URL; the full
       flow (authorize, approve with a stubbed passkey assertion, code exchange with PKCE, a tool
       list call, a refresh) succeeds through the SDK's own client; and each refusal in the test plan
-      holds. The Sentry scrub guard fails on main for the new routes and passes in the lane.
+      holds. The Sentry scrub guard fails on main for the new routes and passes in the lane. After the
+      merge applies schema.sql, the five tables, their constraints and their indexes are read back
+      from the dev database.
     test plan: >
-      Authorize: wrong client id or return address gives an error page with no redirect; a missing
+      Endpoint: GET /mcp is 405; a body over the limit is refused; the per-grant limiter and each
+      per-address limiter answer 429 past their limit. Authorize: wrong client id or return address gives an error page with no redirect; a missing
       challenge or state redirects with an error. Approve: a manager is refused; a missing or failed
       passkey assertion is refused; a used or expired pending row is refused; two approvals of one
       row yield one grant; approving with a grant present replaces it and revokes its tokens.
@@ -167,7 +187,8 @@ lanes:
       a rotated-out token inside 30 seconds is refused with the grant alive, after 30 seconds it
       revokes the grant and both alerts fire (stubs). Per call: an expired token, a revoked grant, a
       demoted user and a bumped token_version each get 401; an admin JWT gets 401; a connector token
-      on /api/admin/inbox gets 401. Lifetimes: a grant idle 30 days and a grant 180 days old are
+      on /api/admin/inbox gets 401. The call log holds the caller's address as req.ip reads it, which
+      is what the owner step after switch-on checks. Lifetimes: a grant idle 30 days and a grant 180 days old are
       dead (clock injected). Address check: outside the range is refused and logged with no grant,
       and is not enforced outside production. Call log: a failed insert does not fail the call.
       Cleanup: old log rows, expired requests, used codes and dead tokens go; live ones stay.
@@ -194,7 +215,7 @@ lanes:
       - client/src/utils/connectReturn.test.js
       - README.md   # generated tree lines only
     blockedBy: [connector-signin-server]
-    lenses: client, seams, access-egress, and whatever the review skill computes for App.js and Login.js (auth paths); captures at 320 and 390 wide of the consent page in each state and of the settings block.
+    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus client, and whatever the review skill computes; verify; captures at 320 and 390 wide of the consent page in each state and of the settings block.
     laws: >
       Spec 7.2 (consent page, Allow, Cancel). API calls through client/src/utils/api.js. The return
       path accepts only the consent route with a well-formed request id, never an arbitrary URL (an
@@ -204,7 +225,8 @@ lanes:
       Every other Navigate to /login in App.js keeps its behavior; SessionExpiryHandler; the
       existing passkey prompt helper the admin lock uses; SecuritySettings' existing blocks.
     acceptance: >
-      The client build and the client suites pass. Against the dev server with the flag on: starting
+      The client build and the client suites pass. Against the dev server with the flag turned on
+      for the session (a deliberate local exception to off-by-default, reachable only on localhost): starting
       an authorize request while signed out lands on login and then on the consent page for that
       request; Allow without a passkey does nothing; Allow returns to the stubbed return address
       with a code; Cancel returns with access_denied; a used or expired request shows the error
@@ -225,7 +247,8 @@ lanes:
       A withheld piece is logged as withheld and emails the owner once per message. The detail
       tools (Client, Proposal or event, Thread) count different clients per rolling hour against a
       cap; past it they refuse, the owner is emailed once per trip and Sentry is alerted. The list
-      tools return no phone number and no email address. Each tool carries a title, readOnlyHint
+      tools return no phone number and no email address, and Search reports a staff member as name
+      and status only. Upcoming events takes a window of 14 days by default and 60 at most. Each tool carries a title, readOnlyHint
       and a description that says client-written fields are data.
     footprint:
       - server/utils/connector/tools/*.js   # new: one file per tool and the registry
@@ -236,14 +259,15 @@ lanes:
       - server/utils/connector/*.test.js
       - server/routes/connectorMcp.js   # register the tools
       - server/routes/connectorMcp.tools.test.js
-      - server/db/schema.sql   # only if the tripwire needs a column the call log lacks
-      - .env.example   # the tripwire cap, if it is a variable
+      - .env.example   # the tripwire cap
       - docs/ops-runbook.md
       - README.md
       - ARCHITECTURE.md
     blockedBy: [connector-shared-reads, connector-text-guards, connector-signin-server]
     lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
     laws: >
+      The call log already has the client id column the tripwire counts on (the sign-in server lane
+      provides it); needing a schema change here is a stop, not a quiet edit.
       Spec laws 1, 2, 3, 4, 6, 7 and 8 and section 7.6. Money law 15: the hold is read only through
       the fail-closed functions and a hold list that cannot be read fails every tool. No tool and no
       function it calls writes to a business table (getItem, never markSeen). Money figures are
@@ -259,11 +283,15 @@ lanes:
       it carries (the amount owed against the admin Outstanding figure, the short-staffed flag
       against the admin badge predicate). A scan test walks every tool's result for a seeded world
       and finds none of: a link token, a banking field, a tax id, a password hash, a home address, a
-      URL, and (in list tools) a phone or an email. A synthetic held proposal, its client, that
+      token_version, a Stripe secret, a URL, and (in list tools) a phone or an email; a staff row in
+      Search carries name and status and nothing else. A synthetic held proposal, its client, that
       client's second booking, its shift and its thread are absent from every tool and a lookup of
       each gives the not-found a missing id gives. The owner's personal mail is absent.
     test plan: >
-      Per tool: the happy path against seeded rows; the cap and the "more exists" marker; not-found.
+      Per tool: the happy path against seeded rows; the cap and the "more exists" marker; not-found;
+      a failing query sends Sentry the tool name and an error descriptor and neither the arguments
+      nor the result (stubbed). Upcoming events: the default window is 14 days and a request over 60
+      is cut to 60.
       Thread: by person key and by client id; a merged person is followed; a staff key, a personal
       thread and a held key give the same not-found; a business-sent message has its proposal link
       replaced by a marker; an inbound attack wording comes back withheld with its Inbox summary,
@@ -274,7 +302,8 @@ lanes:
       every tool errors and returns nothing. A database snapshot of the business tables before and
       after the whole suite's tool calls is identical (the read-only proof).
     revert: revert the one squash commit; with the tools gone the endpoint lists none.
-mergeOrder: connector-shared-reads, connector-text-guards and connector-signin-server in any order; then connector-signin-ui and connector-tools in any order.
+mergeOrder: connector-signin-server first (it carries the sensitive-list lines and the project-rules invariant, so everything after it is tiered correctly and the smaller lanes, not the largest, pay for the overlap pass); then connector-shared-reads; then connector-text-guards; then connector-signin-ui; then connector-tools.
+revertOrder: the reverse of the merge order. connector-tools and connector-signin-ui are reverted before connector-signin-server, and connector-tools before connector-shared-reads and connector-text-guards.
 pushGate: >
   Every lane ships alone and dark: the first two change nothing a user sees and the rest sit behind
   the connector flag, which is unset in Render. The flag is turned on by the owner in Render after all
@@ -299,7 +328,9 @@ The tools come last and are thin by construction: a shared read, a field list, t
 
 My call on method: one pass per lane, no parallel subagents inside a lane, since each lane is one coherent piece. Lanes 1, 2 and 3 have no dependencies and can be built in three windows at once; lanes 4 and 5 follow.
 
-Review price, by the review skill's bar (one full pass and at most two fix re-passes per lane): three lanes at the full set (shared reads, sign-in server, tools), one client lane with captures, one light lane (text guards). The sign-in server lane is the heaviest single review in the plan.
+Review price, by the review skill's bar (one full pass and at most two fix re-passes per lane): all five lanes at the full set, the consent-page lane with captures as well. The text guards lane is small, so its full pass is short. The sign-in server lane is the heaviest single review in the plan. Because the first three lanes are built at once and merge in a fixed order, the second and third each pay one overlap pass when the lane ahead of them lands; that is the cost of building them in parallel and it is cheaper than building them one after another.
+
+Every lane's footprint names README.md, and three name ARCHITECTURE.md. Those are the generated sections, which the merge script regenerates on the merged index, so parallel lanes do not conflict there. The one hand-written ARCHITECTURE concept section belongs to the sign-in server lane alone.
 
 ## What each lane hands on
 
@@ -310,10 +341,23 @@ Review price, by the review skill's bar (one full pass and at most two fix re-pa
 
 ## Decisions left open by the spec and settled here
 
-- The CLAUDE.md invariant and the sensitive-path lines land with the sign-in server lane, the first lane to create connector files, so the later lanes are tiered correctly. The text guards lane may merge before it; its files join the sensitive list when that lane lands.
+- The CLAUDE.md invariant and the sensitive-path lines land with the sign-in server lane, which merges first, so every later lane is tiered by the list. The text guards lane is reviewed at the full tier by declaration in any case.
 - The settings block shows withheld messages from the call log, so the tools lane needs no client code.
 - The connector's files live under `server/utils/connector/` and three route files; the shared reads live under `server/utils/reads/`. A builder who finds a better home says so in the lane report.
 
 ## Owner steps, after the fifth ship
 
-From the spec's rollout: set the connector flag in Render, add the connector in Claude's settings, approve it with the passkey, run the three headline questions in a Claude chat against the admin screens, look up the held client and confirm nothing returns, run the guard checks against a test client, add the one line to Duet's instructions, then confirm the connector shows in Duet.
+From the spec's rollout: set the connector flag in Render (and the address-range variable, or leave its default), add the connector in Claude's settings, approve it with the passkey, run the three headline questions in a Claude chat against the admin screens, look up the held client and confirm nothing returns, run the guard checks against a test client, add the one line to Duet's instructions, then confirm the connector shows in Duet.
+
+One check sits between switching on and trusting the address check (spec 7.5). After the first calls from Claude, I read the call log and confirm the address it recorded falls inside Anthropic's range. If every call is refused instead, Render's proxy is reporting the wrong address: the range variable is emptied in Render to switch the check off, and the fix ships before it is switched back on.
+
+## Review record (2026-11-19)
+
+The plan fleet (fidelity, decomposition) read revision 1: no blockers, twelve warnings, eight suggestions, all folded in as revision 2.
+- Spec details no lane carried: the 405 and the JSON limit on the endpoint, tests for both limiters, the four `.env.example` entries, Search's staff fields, the events window, the Sentry rule on tool errors, the two never-list items the scan missed, and the Render address confirmation (now an owner-step check above).
+- Review tier: the text guards and consent-page lanes were forecast lighter than spec rollout step 1 allows; both are now at the full set.
+- The open-balance read: the admin list's response does not change; the new columns are opt-in.
+- Reads with no pinning test today get one that passes on main before the move.
+- Merge and revert order are named, the overlap passes are priced, and the sign-in server lane's split line is named in its scope.
+- Footprints: the sign-in server lane names its files, and the tools lane makes no schema edit.
+
