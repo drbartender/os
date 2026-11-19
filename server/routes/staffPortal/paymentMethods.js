@@ -22,8 +22,16 @@ const PAYMENT_METHOD_ALLOWED_KEYS = new Set([
   'routing_number', 'account_number', 'payment_username',
 ]);
 
+// THE allowed set for payment_profiles.preferred_payment_method and for the
+// payouts.payment_method the admin records at mark-paid: one constant for
+// every writer (this file, me.js, admin/contractorTipPage.js,
+// admin/payroll.js, admin/users.js), mirrored by the client's PayPanel.js
+// METHODS, and the superset every reader handles (the Pay panel pays by any
+// of these; tipMethods.js renders venmo, cashapp, paypal and zelle). Three
+// writers used to carry their own lists that disagreed on zelle and other
+// (audit 2026-11-05, POUT-10).
 const PAYMENT_METHOD_VALUES = new Set([
-  'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check',
+  'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check', 'other',
 ]);
 
 // The ABA routing checksum and the 4 to 17 digit account rule, shared with the
@@ -56,9 +64,21 @@ function last4OrNull(plaintext) {
   return plaintext.slice(-4);
 }
 
-// Single resolver shared by PATCH (auto-NULL after a handle clear) and PUT
-// (eligibility check). Returns true if the user has the data needed to use
-// `method` as their preferred payroll target.
+// Single resolver shared by PATCH (auto-NULL after a handle clear), PUT
+// (eligibility check) and every other writer of preferred_payment_method
+// (me.js, admin/contractorTipPage.js, admin/users.js). Returns true if the
+// user has the data needed to use `method` as their preferred payroll target.
+// check and other need nothing on file: the admin pays those by hand.
+// payment_username does not count: the Pay panel and the payroll payload read
+// only the per-method handle, and onboarding writes the handle to both, so
+// counting it would keep a method whose own handle was just removed (verify
+// pass 1 of the payouts lane, M3).
+//
+// A stored value outside the set is a legacy label ('PayPal', 'Cash App' on
+// prod) that the Pay panel reads as Other and the admin pays by hand, so it
+// counts as payable like other; a NEW election is checked against
+// PAYMENT_METHOD_VALUES before it gets here, so only a stored value reaches
+// this arm (L4 of that pass).
 function isPreferredEligible(method, row) {
   if (!row) return false;
   switch (method) {
@@ -67,9 +87,21 @@ function isPreferredEligible(method, row) {
     case 'paypal':        return !!row.paypal_url;
     case 'zelle':         return !!row.zelle_handle;
     case 'check':         return true;
+    case 'other':         return true;
     case 'direct_deposit': return !!row.routing_number && !!row.account_number;
-    default: return false;
+    default: return typeof method === 'string' && method.length > 0 && !PAYMENT_METHOD_VALUES.has(method);
   }
+}
+
+// The one refusal text for a preferred method with nothing on file to pay to,
+// in words a person reads (every writer shows it as the error message, since
+// the admin tabs render only the message, not the field errors).
+const METHOD_NEEDS = Object.freeze({
+  venmo: 'a Venmo handle', cashapp: 'a Cash App handle', paypal: 'a PayPal link',
+  zelle: 'a Zelle handle', direct_deposit: 'bank routing and account numbers',
+});
+function preferredIneligibleMessage(method) {
+  return `Add ${METHOD_NEEDS[method] || 'the payment details'} before setting it as the preferred method.`;
 }
 
 // Project the payment_profiles row into the wire shape. Last-4-only for the
@@ -301,10 +333,8 @@ function register(router) {
         zelle: 'zelle_handle', direct_deposit: 'routing_number',
       };
       const f = fieldMap[method] || 'method';
-      throw new ValidationError(
-        { [f]: `Add a ${method} handle before setting it as preferred.` },
-        `Add a ${method} handle before setting it as preferred.`
-      );
+      const msg = preferredIneligibleMessage(method);
+      throw new ValidationError({ [f]: msg }, msg);
     }
 
     const from = (row && row.preferred_payment_method) || null;
@@ -321,4 +351,4 @@ function register(router) {
   }));
 }
 
-module.exports = { register };
+module.exports = { register, PAYMENT_METHOD_VALUES, isPreferredEligible, preferredIneligibleMessage };

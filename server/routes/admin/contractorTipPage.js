@@ -30,7 +30,9 @@ const router = express.Router();
 // `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
 // working — only the Stripe link rotates.
 
-const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
+// The one allowed set and the one eligibility rule for the preferred payroll
+// method, shared with every other writer (audit 2026-11-05, POUT-10).
+const { PAYMENT_METHOD_VALUES, isPreferredEligible, preferredIneligibleMessage } = require('../staffPortal/paymentMethods');
 
 // PATCH — admin override of handles + payroll preference + preferred_name
 router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(async (req, res) => {
@@ -48,13 +50,41 @@ router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(asyn
     delete fields.preferred_payment_method;
   }
   if ('preferred_payment_method' in fields && fields.preferred_payment_method
-      && !ALLOWED_PAYMENT_METHODS.includes(fields.preferred_payment_method)) {
-    throw new ValidationError('invalid preferred_payment_method');
+      && !PAYMENT_METHOD_VALUES.has(fields.preferred_payment_method)) {
+    throw new ValidationError({ preferred_payment_method: `must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}` });
   }
 
   // Validate + normalize handle formats (paypal_url especially — flows into an
   // <a href> on the public tip page so anything off paypal.me is rejected).
   normalizeTipHandlesInPlace(fields);
+
+  // The preferred payroll method must be payable (POUT-10), the rule me.js
+  // applies: evaluated against the row as it will be after this write whenever
+  // the method or a handle is in the request. A NEW election that is not
+  // payable is a 400; a stored or resent method this very request makes
+  // unpayable (the Venmo handle cleared beside preferred venmo, which the Tip
+  // Page tab sends as the edited key alone) is cleared to NULL and reported.
+  let preferredCleared = false;
+  const touchesMethod = 'preferred_payment_method' in fields;
+  const touchesHandle = ['venmo_handle', 'cashapp_handle', 'paypal_url'].some((k) => k in fields);
+  if (touchesMethod || touchesHandle) {
+    const cur = await pool.query(
+      `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
+              payment_username, routing_number, account_number
+         FROM payment_profiles WHERE user_id = $1`,
+      [userId]
+    );
+    const row = cur.rows[0] || {};
+    const method = touchesMethod ? fields.preferred_payment_method : (row.preferred_payment_method || null);
+    if (method && !isPreferredEligible(method, { ...row, ...fields })) {
+      if (method !== row.preferred_payment_method) {
+        const msg = preferredIneligibleMessage(method);
+        throw new ValidationError({ preferred_payment_method: msg }, msg);
+      }
+      fields.preferred_payment_method = null;
+      preferredCleared = true;
+    }
+  }
 
   if ('preferred_name' in req.body) {
     const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]);
@@ -90,8 +120,18 @@ router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(asyn
       VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')})
       ON CONFLICT (user_id) DO UPDATE SET ${setClause}, updated_at = NOW()
     `, [userId, ...cols.map(c => fields[c] || null)]);
+    // Field names only: a handle is where a person's money goes and never
+    // belongs in a log row. Awaited (rotate-token pattern) so the row exists
+    // when the caller sees 200; the helper takes its own pooled connection and
+    // this handler holds none (audit 2026-11-05, POUT-01).
+    await logAdminAction({
+      actorUserId: req.user.id,
+      targetUserId: userId,
+      action: 'tip_handles_change',
+      metadata: { fields_changed: cols },
+    });
   }
-  res.json({ ok: true });
+  res.json({ ok: true, preferred_cleared: preferredCleared });
 }));
 
 // POST — emergency rotation: issue a NEW tip_page_token AND a new Stripe link.

@@ -217,7 +217,11 @@ const ALLOWED_PATCH_FIELDS = new Set([
   'paypal_url',
   'preferred_payment_method',
 ]);
-const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+// The one allowed set and the one eligibility rule for the preferred payroll
+// method, shared with every other writer (audit 2026-11-05, POUT-10; this
+// file's own list lacked zelle and let direct_deposit through with no bank
+// data on file).
+const { PAYMENT_METHOD_VALUES, isPreferredEligible, preferredIneligibleMessage } = require('./staffPortal/paymentMethods');
 
 // Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles,
 // opt-in flags).
@@ -246,13 +250,44 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     delete updates.preferred_payment_method;
   }
   if ('preferred_payment_method' in updates && updates.preferred_payment_method
-      && !ALLOWED_PAYMENT_METHODS.includes(updates.preferred_payment_method)) {
-    throw new ValidationError('invalid preferred_payment_method');
+      && !PAYMENT_METHOD_VALUES.has(updates.preferred_payment_method)) {
+    throw new ValidationError({ preferred_payment_method: `must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}` });
   }
 
   // Validate + normalize handle formats so a malformed paypal_url can't land
   // in the DB and end up as a phishing link target on the public tip page.
   normalizeTipHandlesInPlace(updates);
+
+  // The preferred payroll method must be payable: a method whose handle or
+  // bank data is missing leaves the admin's Pay panel with nothing to pay to
+  // (POUT-10; direct_deposit used to be accepted here with no bank numbers on
+  // file). Evaluated against the row as it will be after this write, cleared
+  // handles included, whenever the method or a handle is in the request. A
+  // NEW election that is not payable is a 400; a stored or resent method that
+  // this very request makes unpayable (a venmo handle cleared beside a resent
+  // venmo) is cleared to NULL and reported, the staff portal PATCH's rule,
+  // never silently stored (L1 of the verify pass).
+  let preferredCleared = false;
+  const touchesMethod = 'preferred_payment_method' in updates;
+  const touchesHandle = ['venmo_handle', 'cashapp_handle', 'paypal_url'].some((k) => k in updates);
+  if (touchesMethod || touchesHandle) {
+    const cur = await pool.query(
+      `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
+              payment_username, routing_number, account_number
+         FROM payment_profiles WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const row = cur.rows[0] || {};
+    const method = touchesMethod ? updates.preferred_payment_method : (row.preferred_payment_method || null);
+    if (method && !isPreferredEligible(method, { ...row, ...updates })) {
+      if (method !== row.preferred_payment_method) {
+        const msg = preferredIneligibleMessage(method);
+        throw new ValidationError({ preferred_payment_method: msg }, msg);
+      }
+      updates.preferred_payment_method = null;
+      preferredCleared = true;
+    }
+  }
 
   // preferred_name lives on contractor_profiles
   if ('preferred_name' in updates) {
@@ -286,7 +321,7 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     `, [req.user.id, ...cols.map(c => updates[c] || null)]);
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, preferred_cleared: preferredCleared });
 }));
 
 // Paginated list of recent successful tips for the current bartender (amount, source, created_at).

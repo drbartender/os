@@ -232,7 +232,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
       );
       // Holder-scoped: unassigning one staffer must never release a bonus that
       // belongs to a teammate still working the shift.
-      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId, unassignUserId);
+      await releaseOutOfAreaLock(dbClient, shiftId, unassignUserId);
     }
 
     // BEO: suppress pending nudges for affected staffers on the proposal.
@@ -250,9 +250,24 @@ async function cancelOrUnassignShiftHandler(req, res) {
     dbClient.release();
   }
 
-  // Post-commit (pooled client released): re-derive duty lines only when a
-  // bonus lock actually moved.
-  if (bonusReleased) reaccrueDutyForProposal(proposalIdForDuty);
+  // Post-commit (pooled client released). For an UNASSIGN the payroll
+  // re-accrual is deliberately NOT gated on the lock, the same rule as Remove
+  // (shifts.js): on a completed event the wage and tip lines were minted at
+  // auto-completion, and only accrual's orphan sweep removes an off-roster
+  // line and re-splits the tips. Gated on the lock, a no-show unassigned after
+  // completion kept her wage and a share of the tips whenever the shift
+  // carried no bonus (audit 2026-11-05, POUT-02; the Remove precedent is prod
+  // 2026-08-24). The hook is a full re-accrual on a recently-completed
+  // proposal and one cheap SELECT on anything else (maybeReaccrueForDuty), so
+  // a pre-event unassign costs nothing.
+  //
+  // A CANCEL keeps its lock gate on purpose: it empties the roster, and on a
+  // completed shift the empty-roster sweep deletes every zero-adjustment line
+  // (an admin's hour edits included) and the emptied payouts, so a mistaken
+  // cancel followed by a re-approve would re-mint the lines from contract
+  // hours (verify pass of POUT-02, L4). A cancelled event's payroll is the
+  // cancel flow's business, not this hook's.
+  if (mode === 'unassign' || bonusReleased) reaccrueDutyForProposal(proposalIdForDuty);
 
   if (notify_assigned_staff === true && (notify_sms === true || notify_email === true)) {
     try {

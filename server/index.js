@@ -327,6 +327,10 @@ app.get('/api/files/:filename', auth, async (req, res) => {
     res.status(404).json({ error: 'File not found' });
   }
 });
+// A document a staffer replaced from the Account page lives under an R2
+// prefix (`staff/<doc_type>/<user_id>/`) the basename route above cannot
+// reach; its reader is a sibling router on the same prefix.
+app.use('/api/files', require('./routes/staffDocumentFiles'));
 
 // Routes
 // Webauthn passkey routes live under the /api/auth/ prefix ON PURPOSE (the

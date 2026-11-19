@@ -20,6 +20,7 @@ const PAY_METHODS = [
   ['venmo', 'Venmo'],
   ['cashapp', 'Cash App'],
   ['paypal', 'PayPal'],
+  ['zelle', 'Zelle'],
   ['check', 'Check'],
   ['direct_deposit', 'Direct deposit'],
   ['other', 'Other'],
@@ -32,6 +33,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
   const [edit, setEdit] = useState({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [notice, setNotice] = useState('');
 
   // Reset the edit buffer whenever a fresh payment row arrives (e.g. after save)
   useEffect(() => { setEdit({}); }, [payment?.updated_at, payment?.user_id]);
@@ -49,6 +51,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
   const run = async (fn) => {
     setBusy(true);
     setErr('');
+    setNotice('');
     try {
       await fn();
       if (onChanged) await onChanged();
@@ -86,8 +89,9 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
   const saveEdits = () => {
     if (Object.keys(edit).length === 0) return;
     run(async () => {
-      await api.patch(`/admin/contractors/${userId}/tip-page`, edit);
+      const r = await api.patch(`/admin/contractors/${userId}/tip-page`, edit);
       setEdit({});
+      if (r.data?.preferred_cleared) setNotice('Saved. The payroll method was cleared: nothing is on file to pay it to.');
     });
   };
 
@@ -99,6 +103,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
       {/* Main column */}
       <div className="vstack" style={{ gap: 'var(--gap)' }}>
         {err && <div className="chip danger">{err}</div>}
+        {notice && <div className="chip warn">{notice}</div>}
 
         {/* Page status */}
         <div className="card">

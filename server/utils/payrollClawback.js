@@ -22,6 +22,12 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
   // to 'denied' by the time the clawback runs, so the internal approved-query would
   // find nobody. When provided, stub-filtering still applies (via users.cc_id).
   const explicitBartenderIds = Array.isArray(opts.bartenderUserIds) ? opts.bartenderUserIds : null;
+  // opts.periodYmd: book the claw in the open period containing this date
+  // instead of today's. Tip placement on an open event passes the event's
+  // date so the claw nets on the same line the accrual pays the gross into;
+  // booked in a later week it collected only against that week's earnings.
+  const targetYmd = typeof opts.periodYmd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(opts.periodYmd)
+    ? opts.periodYmd : null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -121,7 +127,7 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
     // in America/Chicago, not the server's UTC/GMT day: a late-evening clawback
     // in Chicago must land in the CURRENT Tue-Mon period, not next week's (which
     // the UTC day would pick once past ~6-7pm Central).
-    const todayYmd = chicagoTodayYmd();
+    const todayYmd = targetYmd || chicagoTodayYmd();
     let period = await findOpenPeriodForDate(client, todayYmd);
     if (!period) {
       const { startDate, endDate } = payPeriodForDate(todayYmd);

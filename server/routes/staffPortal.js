@@ -535,7 +535,9 @@ const MAX_DOC_BYTES = 10 * 1024 * 1024;
 function slugifyFilename(name) {
   if (!name || typeof name !== 'string') return 'upload';
   const trimmed = name.trim().replace(/^\.+/, '');
-  const cleaned = trimmed.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+  // A run of dots collapses to one: the reader's key guard refuses '..', so a
+  // name like scan..pdf was stored and could never be opened.
+  const cleaned = trimmed.replace(/[^A-Za-z0-9._-]/g, '_').replace(/\.{2,}/g, '.').slice(0, 120);
   return cleaned || 'upload';
 }
 
@@ -587,6 +589,13 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
 
   const slug = slugifyFilename(file.name);
   const r2Key = `staff/${docType}/${req.user.id}/${Date.now()}_${slug}`;
+  // Stored as a URL every reader understands: `/files/` plus the key, the
+  // shape the onboarding writers store (`/files/<basename>`) and the one the
+  // admin Documents and Certifications tabs hand to api.get() verbatim. The
+  // prefixed key is signed by routes/staffDocumentFiles.js; the bare key used
+  // to be stored and no admin surface could open it (audit 2026-11-05,
+  // POUT-05; schema.sql backfills the rows written before).
+  const fileUrl = `/files/${r2Key}`;
 
   // R2 upload BEFORE the transaction. If R2 is down, return 502 and nothing
   // in the DB changes. Orphan upload on a later transaction failure is the
@@ -623,7 +632,7 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
         `UPDATE payment_profiles
             SET w9_file_url = $2, w9_filename = $3, updated_at = NOW()
           WHERE user_id = $1`,
-        [req.user.id, r2Key, slug]
+        [req.user.id, fileUrl, slug]
       );
     } else {
       // alcohol_certification → contractor_profiles.
@@ -654,7 +663,7 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
                 alcohol_certification_expires_on = $4,
                 updated_at = NOW()
           WHERE user_id = $1`,
-        [req.user.id, r2Key, slug, expiresOn]
+        [req.user.id, fileUrl, slug, expiresOn]
       );
     }
 
@@ -668,7 +677,7 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
 
   return res.json({
     ok: true,
-    file_url: r2Key,
+    file_url: fileUrl,
     filename: slug,
     ...(expiresOn ? { expires_on: expiresOn } : {}),
   });

@@ -210,13 +210,24 @@ async function releaseOutOfAreaLock(executor, shiftId, userId = null) {
 }
 
 /**
- * Duty re-derivation after an out-of-area amount or lock change. Same shape as
- * the other reversal hooks (menuPrint.js, cancelLineItem.js): fire-and-forget,
- * post-commit, its own pooled connection, never on the response path.
+ * Payroll re-accrual hook for a roster or out-of-area change. Despite the
+ * name it is NOT duty-only: `maybeReaccrueForDuty` runs the FULL
+ * accruePayoutsForProposal (wages, gratuity split, card tips, the orphan sweep
+ * that removes an off-roster line, and the duty lines) on a recently-completed
+ * proposal. That is why the admin roster removals (Remove, unassign, deny, cover
+ * swap) call it unconditionally, never only when a lock moved: on a completed
+ * event the sweep is the only thing that stops paying a no-show. Cancel is the
+ * exception and keeps its lock gate on purpose (shifts.handlers.js): an
+ * unconditional re-accrual after a mistaken cancel would run the empty-roster
+ * sweep and delete an admin's hour edits.
+ * Same shape as the other reversal hooks (menuPrint.js, cancelLineItem.js):
+ * fire-and-forget, post-commit, its own pooled connection, never on the
+ * response path.
  *
  * `maybeReaccrueForDuty` no-ops on anything but a recently-completed proposal,
- * so a pre-event lock change costs exactly one cheap SELECT — which is the
- * common case, since bonuses are attached and locked long before the event.
+ * so a pre-event roster or lock change costs exactly one cheap SELECT — which
+ * is the common case, since bonuses are attached and locked long before the
+ * event.
  */
 function reaccrueDutyForProposal(proposalId) {
   // Standalone shifts carry a NULL proposal_id, and Number(null) is 0, so the

@@ -1,6 +1,7 @@
 require('dotenv').config();
-const { test, before, beforeEach, afterEach, after } = require('node:test');
+const { test, before, beforeEach, afterEach, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
 
@@ -236,8 +237,9 @@ test('accruePayoutsForProposal > fully-paid event accrues the pooled gratuity (f
   assert.equal(rows[0].gratuity_share_cents, 10000, 'pooled gratuity accrues when funded');
 });
 
-test('accruePayoutsForProposal > removes an off-roster worker line, keeps A, leaves a frozen-period row untouched', async () => {
-  // Second bartender B on the same shift.
+// Second bartender B on the suite's shift. Returns B's user id; removeB()
+// takes every row B owns back out.
+async function addBartenderB() {
   const u2 = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('accrue-orphan-b@example.com','x','staff') RETURNING id"
   );
@@ -251,9 +253,69 @@ test('accruePayoutsForProposal > removes an off-roster worker line, keeps A, lea
     "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'Bartender','approved')",
     [shiftId, userB]
   );
+  return userB;
+}
 
-  // A FROZEN prior-period line for B on the SAME shift must survive the sweep:
-  // the roster correction is scoped to the accrual's own OPEN period only.
+async function removeB(userB) {
+  await pool.query(
+    `DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id = $1)`,
+    [userB]
+  );
+  await pool.query('DELETE FROM payouts WHERE contractor_id = $1', [userB]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, userB]);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [userB]);
+  await pool.query('DELETE FROM users WHERE id = $1', [userB]);
+}
+
+async function linesOf(contractorId, periodId) {
+  const { rows } = await pool.query(
+    `SELECT pe.id, pe.hours, pe.wage_cents, pe.gratuity_share_cents, pe.adjustment_cents,
+            pe.line_total_cents, po.total_cents
+       FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+      WHERE po.contractor_id = $1 AND po.pay_period_id = $2`,
+    [contractorId, periodId]
+  );
+  return rows;
+}
+
+test('accruePayoutsForProposal > removes an off-roster worker line and re-pools the gratuity to A', async () => {
+  const userB = await addBartenderB();
+  try {
+    // First accrual: both A and B get an open-period line, the pool split two ways.
+    await accruePayoutsForProposal(proposalId);
+    assert.equal((await linesOf(userB, ownPeriodId)).length, 1, 'B has a line before removal');
+
+    // Deny B exactly as the unassign route does (status -> denied).
+    await pool.query(
+      "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2",
+      [shiftId, userB]
+    );
+    await accruePayoutsForProposal(proposalId);
+
+    // B's line is gone; the emptied pending payout is gone too.
+    assert.equal((await linesOf(userB, ownPeriodId)).length, 0, 'B payout_event removed');
+    const bPayouts = await pool.query(
+      'SELECT COUNT(*)::int AS c FROM payouts WHERE contractor_id = $1', [userB]
+    );
+    assert.equal(bPayouts.rows[0].c, 0, 'B emptied payout removed');
+
+    // A's line survives; gratuity re-pools to A alone and the total recomputes.
+    const a = await linesOf(userId, ownPeriodId);
+    assert.equal(a.length, 1, 'A line remains');
+    assert.equal(Number(a[0].gratuity_share_cents), 10000, 'gratuity re-pooled to A alone');
+    assert.equal(Number(a[0].total_cents), 21000, 'A payout total recomputed');
+  } finally {
+    await removeB(userB);
+  }
+});
+
+// POUT-03 (audit 2026-11-05). This test used to seed the PAID frozen line and
+// then assert "B has an open-period line before removal": the double accrual
+// of one shift into two periods, enshrined as setup state. A paid line in
+// another period is now a hard stop for that worker, with a Sentry warning
+// naming the period, and the frozen row is left exactly as it was.
+test('accruePayoutsForProposal > a PAID line for the same shift in a frozen period is a hard stop for B, never a seed, and stays untouched', async () => {
+  const userB = await addBartenderB();
   const frozen = await pool.query(
     `INSERT INTO pay_periods (start_date, end_date, payday, status)
      VALUES ('2019-01-07','2019-01-13','2019-01-14','paid')
@@ -274,67 +336,109 @@ test('accruePayoutsForProposal > removes an off-roster worker line, keeps A, lea
     [frozenPayoutId, shiftId]
   );
   const frozenEventId = frozenEvent.rows[0].id;
+  const sentry = mock.method(Sentry, 'captureMessage');
 
   try {
-    // First accrual: both A and B get an OPEN-period line.
+    // First accrual: A gets an open-period line; B does NOT, because B's pay
+    // for this shift is already booked (and paid) in the frozen period.
     await accruePayoutsForProposal(proposalId);
-    const bBefore = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payout_events pe
-         JOIN payouts po ON po.id = pe.payout_id
-        WHERE po.contractor_id = $1 AND po.pay_period_id <> $2`,
-      [userB, frozenPeriodId]
+    assert.equal((await linesOf(userB, ownPeriodId)).length, 0, 'no second line for B in the open period');
+    const bOpenPayouts = await pool.query(
+      'SELECT COUNT(*)::int AS c FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2',
+      [userB, ownPeriodId]
     );
-    assert.equal(bBefore.rows[0].c, 1, 'B has an open-period line before removal');
+    assert.equal(bOpenPayouts.rows[0].c, 0, 'and no phantom payout stub for B either');
+    const warnings = sentry.mock.calls.filter((c) => /another period/i.test(String(c.arguments[0])));
+    assert.equal(warnings.length, 1, 'one Sentry warning for B');
+    assert.deepEqual(warnings[0].arguments[1].extra.other_period_ids, [frozenPeriodId],
+      'the warning names the frozen period that holds the line');
+    assert.equal(warnings[0].arguments[1].extra.contractorId, userB);
+    // The split still counts B (B's half sits on the frozen line), so A is
+    // not handed B's share here.
+    const aFirst = await linesOf(userId, ownPeriodId);
+    assert.equal(aFirst.length, 1);
+    assert.equal(Number(aFirst[0].gratuity_share_cents), 5000, 'A gets half; B half is on the frozen line');
 
-    // Deny B exactly as the unassign route does (status -> denied).
+    // Deny B and re-accrue: A re-pools, B still has nothing in the open period.
     await pool.query(
       "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2",
       [shiftId, userB]
     );
     await accruePayoutsForProposal(proposalId);
-
-    // B's OPEN-period line is gone; the emptied pending payout is gone too.
-    const bOpenEvents = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payout_events pe
-         JOIN payouts po ON po.id = pe.payout_id
-        WHERE po.contractor_id = $1 AND po.pay_period_id <> $2`,
-      [userB, frozenPeriodId]
-    );
-    assert.equal(bOpenEvents.rows[0].c, 0, 'B open-period payout_event removed');
-    const bOpenPayouts = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payouts WHERE contractor_id = $1 AND pay_period_id <> $2`,
-      [userB, frozenPeriodId]
-    );
-    assert.equal(bOpenPayouts.rows[0].c, 0, 'B emptied open-period payout removed');
-
-    // A's line survives; gratuity re-pools to A alone and the total recomputes.
-    const a = await pool.query(
-      `SELECT pe.gratuity_share_cents, po.total_cents FROM payout_events pe
-         JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
-      [userId]
-    );
-    assert.equal(a.rows.length, 1, 'A line remains');
-    assert.equal(a.rows[0].gratuity_share_cents, 10000, 'gratuity re-pooled to A alone');
-    assert.equal(a.rows[0].total_cents, 21000, 'A payout total recomputed');
+    assert.equal((await linesOf(userB, ownPeriodId)).length, 0);
+    const a = await linesOf(userId, ownPeriodId);
+    assert.equal(a.length, 1, 'A line remains');
+    assert.equal(Number(a[0].gratuity_share_cents), 10000, 'gratuity re-pooled to A alone');
+    assert.equal(Number(a[0].total_cents), 21000, 'A payout total recomputed');
 
     // The frozen prior-period line for B is untouched.
     const frozenStill = await pool.query(
-      'SELECT line_total_cents FROM payout_events WHERE id = $1', [frozenEventId]
+      'SELECT hours, line_total_cents FROM payout_events WHERE id = $1', [frozenEventId]
     );
     assert.equal(frozenStill.rows.length, 1, 'frozen-period line preserved');
+    assert.equal(Number(frozenStill.rows[0].hours), 5.5);
     assert.equal(Number(frozenStill.rows[0].line_total_cents), 16000);
   } finally {
+    sentry.mock.restore();
     await pool.query('DELETE FROM payout_events WHERE id = $1', [frozenEventId]);
     await pool.query('DELETE FROM payouts WHERE id = $1', [frozenPayoutId]);
     await pool.query('DELETE FROM pay_periods WHERE id = $1', [frozenPeriodId]);
-    await pool.query(
-      `DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id = $1)`,
-      [userB]
+    await removeB(userB);
+  }
+});
+
+// POUT-03 scenario B. A card tip from this event refunded while a later
+// period was already open left a clawback stub (hours 0, wage 0, a negative
+// adjustment) keyed by this shift in that later period. The prior-line lookup,
+// keyed without the period, could pick that stub as A's "prior" line and
+// rewrite the event period's wage to 0 hours / 0 wage / the debt, booking the
+// claw twice and losing the wage; which row won depended on SELECT order.
+test('accruePayoutsForProposal > a clawback stub in a later open period never rewrites the event period wage line', async () => {
+  await accruePayoutsForProposal(proposalId);
+  const later = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2019-02-12','2019-02-18','2019-02-19','open')
+     ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`
+  );
+  const laterPeriodId = later.rows[0].id;
+  const laterPayout = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1,$2,'pending',0) RETURNING id`,
+    [laterPeriodId, userId]
+  );
+  const laterPayoutId = laterPayout.rows[0].id;
+  const stub = await pool.query(
+    `INSERT INTO payout_events
+       (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+        adjustment_cents, adjustment_note, line_total_cents)
+     VALUES ($1,$2,0,0,0,0,-1936,'Chargeback on tip 1: +$40.00 (cumulative $40.00)',-1936) RETURNING id`,
+    [laterPayoutId, shiftId]
+  );
+  const stubId = stub.rows[0].id;
+  const sentry = mock.method(Sentry, 'captureMessage');
+
+  try {
+    await accruePayoutsForProposal(proposalId);
+    const a = await linesOf(userId, ownPeriodId);
+    assert.equal(a.length, 1, 'one line in the event period');
+    assert.equal(Number(a[0].hours), 5.5, 'hours come from the event period own line');
+    assert.equal(Number(a[0].wage_cents), 11000);
+    assert.equal(Number(a[0].adjustment_cents), 0, 'the debt is not booked a second time here');
+    assert.equal(Number(a[0].line_total_cents), 21000);
+
+    const stubStill = await pool.query(
+      'SELECT hours, wage_cents, adjustment_cents, line_total_cents FROM payout_events WHERE id = $1', [stubId]
     );
-    await pool.query('DELETE FROM payouts WHERE contractor_id = $1', [userB]);
-    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, userB]);
-    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [userB]);
-    await pool.query('DELETE FROM users WHERE id = $1', [userB]);
+    assert.equal(stubStill.rows.length, 1, 'the later-period stub survives');
+    assert.equal(Number(stubStill.rows[0].adjustment_cents), -1936);
+    assert.equal(Number(stubStill.rows[0].hours), 0);
+    assert.equal(sentry.mock.calls.filter((c) => /another period/i.test(String(c.arguments[0]))).length, 0,
+      'a pure debt stub elsewhere is not a cross-period wage line');
+  } finally {
+    sentry.mock.restore();
+    await pool.query('DELETE FROM payout_events WHERE id = $1', [stubId]);
+    await pool.query('DELETE FROM payouts WHERE id = $1', [laterPayoutId]);
+    await pool.query('DELETE FROM pay_periods WHERE id = $1', [laterPeriodId]);
   }
 });
 

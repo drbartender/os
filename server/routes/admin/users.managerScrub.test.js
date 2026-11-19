@@ -70,6 +70,17 @@ before(async () => {
       [subjectId]
     );
 
+    // A signed agreement with the signature and its forensic columns (AUTH-10):
+    // a drawn-signature stub, a documentation-range IP and a plain UA, fixture
+    // shapes only.
+    await c.query(
+      `INSERT INTO agreements (user_id, full_name, sms_consent, signature_data, signature_method,
+                               signature_ip, signature_user_agent, signed_at)
+       VALUES ($1, 'Subject Sam', true, 'data:image/png;base64,AAAA', 'draw',
+               '203.0.113.7', 'Mozilla/5.0 (fixture)', NOW())`,
+      [subjectId]
+    );
+
     await c.query('COMMIT');
   } catch (err) {
     await c.query('ROLLBACK');
@@ -99,6 +110,7 @@ after(async () => {
   if (subjectId) {
     await pool.query(`DELETE FROM contractor_profiles WHERE user_id = $1`, [subjectId]);
     await pool.query(`DELETE FROM payment_profiles WHERE user_id = $1`, [subjectId]);
+    await pool.query(`DELETE FROM agreements WHERE user_id = $1`, [subjectId]);
   }
   for (const id of userIds) {
     await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
@@ -144,4 +156,31 @@ test('manager GET /users/:id is denied hourly_rate and the payment row', async (
   assert.deepEqual(body.payment, {}, 'manager must NOT receive the payment_profiles row');
   // Operational data still flows — we scrubbed the comp field, not the whole profile.
   assert.equal(body.profile.preferred_name, 'Subject Sam', 'manager still sees operational profile data');
+});
+
+// AUTH-10 (audit 2026-11-05): the whole agreements row used to reach a manager,
+// signature image, signing IP and user agent included. The forensic columns
+// are read by no client surface and stay on the server for everyone; the
+// signature itself is what the admin Documents tab renders, so it is withheld
+// from a manager only.
+test('manager GET /users/:id gets the agreement without the signature, the IP or the user agent', async () => {
+  const r = await req('GET', `/api/admin/users/${subjectId}`, managerToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.ok(body.agreement.signed_at, 'the signed state still flows');
+  assert.equal(body.agreement.sms_consent, true);
+  for (const k of ['signature_data', 'signature_ip', 'signature_user_agent']) {
+    assert.ok(!(k in body.agreement), `${k} must not reach a manager`);
+  }
+  assert.ok(!r.body.includes('203.0.113.7'), 'the IP appears nowhere in the response');
+});
+
+test('admin GET /users/:id keeps the signature and still never the IP or the user agent', async () => {
+  const r = await req('GET', `/api/admin/users/${subjectId}`, adminToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.equal(body.agreement.signature_data, 'data:image/png;base64,AAAA', 'admin sees the signature the Documents tab renders');
+  for (const k of ['signature_ip', 'signature_user_agent']) {
+    assert.ok(!(k in body.agreement), `${k} stays on the server`);
+  }
 });

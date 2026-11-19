@@ -175,8 +175,8 @@ router.get('/payroll/tax-totals', auth, adminOnly, asyncHandler(async (req, res)
 }));
 
 // ─── PATCH /api/admin/payroll/tax-totals/:userId/exclude ───────────────────
-// Toggle the per-person 1099 exclusion flag (foreign contractors on W-8BEN,
-// e.g. Zul). Admin-toggleable post-import — not set-once.
+// Toggle the per-person 1099 exclusion flag (a foreign contractor on W-8BEN).
+// Admin-toggleable post-import — not set-once.
 router.patch('/payroll/tax-totals/:userId/exclude', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = Number(req.params.userId);
   if (!Number.isInteger(userId) || userId <= 0) throw new ValidationError(null, 'invalid userId');

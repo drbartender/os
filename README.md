@@ -1234,6 +1234,7 @@ tests omitted
 │   │   ├── shifts.queries.js # Long SQL strings for server/routes/shifts.js (Task 28 projections).
 │   │   ├── sms.js            # Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the admin thread API; the status callback and the Messages reply clear the Inbox cache, and a first reply from a 224 line takes the Inbox first-text prefix
 │   │   ├── smsOptIn.js       # Standalone public SMS opt-in form (POST /api/sms/opt-in).
+│   │   ├── staffDocumentFiles.js # GET /files/staff/:docType/:userId/:basename, the admin and manager reader for a document a staffer replaced from the Account page: signs the R2 object under its staff/<doc_type>/<user_id>/ key, which the basename-only /api/files route in index.js cannot reach
 │   │   ├── staffPortal.js    # Staff portal API - composite + account-management endpoints (spec docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md).
 │   │   ├── staffShiftActions.js # Staff portal Drop / Cover marketplace endpoints (spec §6.5).
 │   │   ├── stripe.js         # Payment intents, payment links, webhooks
@@ -1264,6 +1265,7 @@ tests omitted
 │   │   │   ├── payroll.js    # Admin-only payroll portal routes mounted at /api/admin/payroll/*.
 │   │   │   ├── payrollDuty.js # Admin duty-line endpoints (spec 2026-08-06 §3.6), sibling to payroll.js (which sits over the soft cap; payrollTax.js set the extraction precedent). Mounted from ./index.js; routes declare FULL paths under /api/admin.
 │   │   │   ├── payrollTax.js # Admin-only 1099 / payment-history read surfaces, mounted at /api/admin/payroll/* (staff-payment-import spec 2026-07-10, §8).
+│   │   │   ├── payrollTips.js # Admin tip-placement endpoints, sibling to payroll.js (which sits over the soft cap; payrollTax.js set the extraction precedent): the unplaced-tip list, PATCH /payroll/tips/:id/assign, and the deferred-tip list and retry. Mounted from ./index.js; routes declare FULL paths under /api/admin.
 │   │   │   ├── presence.js   # Presence tracker endpoints (spec: API section). Strip reads/mutations are admin+manager; the interval history is a timesheet, so it is admin-only. Mutations only ever write the caller's own row (IDOR-safe by construction).
 │   │   │   ├── search.js     # GET /api/admin/search: global record search powering the Cmd/Ctrl+K command palette and the phone's full-screen search (lane ma-f3, client/src/pages/mobile/SearchPhone.js). Read-only; matches clients, proposals, events, and staff by partial name, email, or phone. Search logic lives in server/utils/globalSearch.js so it can be unit-tested directly.
 │   │   │   ├── settings.js   # /settings + /test-email + /backfill-geocodes + /badge-counts

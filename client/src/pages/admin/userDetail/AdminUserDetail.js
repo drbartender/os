@@ -315,7 +315,9 @@ function UserDetailBody() {
       const r = await api.put(`/admin/users/${id}/profile`, profileSaveBody(editForm, bankSeedRef.current));
       setData(d => ({ ...d, profile: r.data.profile, payment: r.data.payment }));
       setEditing(false);
-      toast.success('User updated.');
+      toast.success(r.data.preferred_cleared
+        ? 'User updated. The payout method was cleared: nothing is on file to pay it to.'
+        : 'User updated.');
     } catch (e) {
       setProfileError(e.message || 'Failed to save changes.');
       setProfileFieldErrors(e.fieldErrors || {});

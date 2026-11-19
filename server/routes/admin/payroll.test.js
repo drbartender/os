@@ -9,6 +9,10 @@ const { AppError } = require('../../utils/errors');
 const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
 const payrollRouter = require('./payroll');
+// The tip-placement routes (unassigned-tips, tips/:id/assign, deferred-tips)
+// live in payrollTips.js since 2026-11-05; both mount under /api/admin here as
+// they do in routes/admin/index.js.
+const payrollTipsRouter = require('./payrollTips');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payroll.test.js refuses to run against production');
@@ -126,6 +130,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/admin', payrollRouter);
+  app.use('/api/admin', payrollTipsRouter);
   app.use((err, req, res, _next) => {
     if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message });
     res.status(500).json({ error: err.message });
@@ -622,6 +627,7 @@ test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts'
     [contractorId]
   );
   const tipId = tip.rows[0].id;
+  let refundedTipId = null;
   try {
     // Make the contractor an approved bartender on the recent shift so it
     // shows up in candidate_shifts.
@@ -631,6 +637,16 @@ test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts'
        ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
       [recentShiftId, contractorId]
     );
+    // A tip refunded in full while unplaced is refused by the assign gate, so
+    // the list must not offer it (review of the payouts lane).
+    const refunded = await pool.query(
+      `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, refunded_amount_cents,
+                         stripe_payment_intent_id, tipped_at)
+       VALUES (gen_random_uuid(), $1, 5000, 5000, 'pi_unassigned_refunded_test', NOW() - INTERVAL '1 day')
+       RETURNING id`,
+      [contractorId]
+    );
+    refundedTipId = refunded.rows[0].id;
     const r = await req('GET', '/api/admin/payroll/unassigned-tips', adminToken);
     assert.equal(r.status, 200);
     const { tips } = JSON.parse(r.body);
@@ -639,7 +655,19 @@ test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts'
     assert.equal(ours.amount_cents, 5000);
     assert.ok(Array.isArray(ours.candidate_shifts));
     assert.ok(ours.candidate_shifts.find(c => c.shift_id === recentShiftId), 'fixture shift in candidates');
+    assert.ok(!tips.find(t => t.id === refundedTipId), 'a tip refunded in full is not listed');
+
+    // A shift worked as a barback is refused by the gate, so it is no candidate.
+    await pool.query(
+      `UPDATE shift_requests SET position = 'Barback' WHERE shift_id = $1 AND user_id = $2`,
+      [recentShiftId, contractorId]
+    );
+    const r2 = await req('GET', '/api/admin/payroll/unassigned-tips', adminToken);
+    const ours2 = JSON.parse(r2.body).tips.find(t => t.id === tipId);
+    assert.ok(ours2, 'fixture tip still listed');
+    assert.ok(!ours2.candidate_shifts.find(c => c.shift_id === recentShiftId), 'a barback shift is no candidate');
   } finally {
+    if (refundedTipId) await pool.query('DELETE FROM tips WHERE id = $1', [refundedTipId]);
     await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
     await pool.query(
       'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',

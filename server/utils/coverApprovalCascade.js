@@ -211,10 +211,14 @@ async function approveAndCascade(pool, originalRequestId, newRequestId) {
     );
     const result = await applyCoverCascade(dbc, originalRequestId, newRequestId);
     await dbc.query('COMMIT');
-    // Post-commit, after the client is released below: an out-of-area bonus
-    // that changed hands on a completed event owes a duty-line re-derivation.
-    // Fire-and-forget; no-ops on anything but a recently-completed proposal.
-    if (result.outOfAreaLockMoved) reaccrueDutyForProposal(result.proposalId);
+    // Post-commit (the hook defers to setImmediate, so it runs after the
+    // client is released below). The swap takes the original off the roster
+    // and puts the claimer on it; on a completed event payroll must re-derive
+    // both lines, not only when an out-of-area bonus changed hands, or the
+    // original keeps a wage and tip share for a shift the claimer worked
+    // (audit 2026-11-05, POUT-02, the Remove rule in shifts.js). Fire-and-
+    // forget; no-ops on anything but a recently-completed proposal.
+    reaccrueDutyForProposal(result.proposalId);
     return result;
   } catch (err) {
     await dbc.query('ROLLBACK').catch(() => {});

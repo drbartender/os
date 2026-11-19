@@ -9,10 +9,12 @@ const { promoteOnboardingIfEligible } = require('../utils/onboardingPromotion');
 const { auth } = require('../middleware/auth');
 const { isValidUpload, safeUploadExtension } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
-const { decrypt } = require('../utils/encryption');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
-const { resolveBankFields, BANK_REQUIRED_MESSAGES } = require('../utils/bankNumbers');
+// maskBankNumber is the safe mask this file used to define locally: a bad
+// ciphertext degrades to '****' instead of a 500, now shared with the admin
+// user record (audit 2026-11-05, POUT-08).
+const { resolveBankFields, BANK_REQUIRED_MESSAGES, maskBankNumber } = require('../utils/bankNumbers');
 const {
   normalizeVenmoHandle,
   normalizeCashappHandle,
@@ -22,25 +24,12 @@ const {
 
 const router = express.Router();
 
-// A corrupted/mismatched encrypted value should not 500 the whole response —
-// fall back to a fixed mask so the rest of the profile still loads and the
-// user can re-enter it if needed.
-function safeMask(enc) {
-  if (!enc) return enc;
-  try {
-    const raw = decrypt(enc);
-    return '****' + String(raw).slice(-4);
-  } catch {
-    return '****';
-  }
-}
-
 // Get payment profile
 router.get('/', auth, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
   const profile = result.rows[0] || {};
-  if (profile.routing_number) profile.routing_number = safeMask(profile.routing_number);
-  if (profile.account_number) profile.account_number = safeMask(profile.account_number);
+  if (profile.routing_number) profile.routing_number = maskBankNumber(profile.routing_number, { userId: req.user.id, column: 'routing_number' });
+  if (profile.account_number) profile.account_number = maskBankNumber(profile.account_number, { userId: req.user.id, column: 'account_number' });
   res.json(profile);
 }));
 
@@ -306,8 +295,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     step = 'hydrate_response';
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
     const profile = result.rows[0];
-    if (profile.routing_number) profile.routing_number = safeMask(profile.routing_number);
-    if (profile.account_number) profile.account_number = safeMask(profile.account_number);
+    if (profile.routing_number) profile.routing_number = maskBankNumber(profile.routing_number, { userId: req.user.id, column: 'routing_number' });
+    if (profile.account_number) profile.account_number = maskBankNumber(profile.account_number, { userId: req.user.id, column: 'account_number' });
     res.json(profile);
   } catch (err) {
     // AppError subclasses carry statusCode and are expected user-facing errors;

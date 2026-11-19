@@ -10,7 +10,9 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
 
-// Every method mark-paid accepts (mirrors ALLOWED_PAY_METHODS server-side).
+// Every method mark-paid accepts: mirrors PAYMENT_METHOD_VALUES in
+// server/routes/staffPortal/paymentMethods.js, the one server-side set every
+// writer of preferred_payment_method validates against (POUT-10).
 const METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check', 'other'];
 const QR_METHODS = ['venmo', 'cashapp'];
 // Methods whose stored handle may surface in the panel. direct_deposit and
