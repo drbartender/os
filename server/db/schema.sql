@@ -5803,3 +5803,133 @@ DO $$ BEGIN
     CHECK (kind IN ('message','auto_reply','bounce','zola_inquiry','zola_message','zola_closed','zola_unparsed'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- ─── end Inbox ───
+
+-- ─── GV proposal posts (spec docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md) ───
+-- When an admin sends or resends a proposal to a Thumbtack relay client, the
+-- proposal text is queued here and the box (gv-agent/) posts it through Google
+-- Voice into the customer's Thumbtack thread instead of the toll-free text.
+-- One row per queued post, and the row is the ledger: a GV post writes no
+-- message_log row. States: queued, then leased, then sent, clicked_unverified,
+-- failed_preclick (with a reason) or skipped_already_posted. A queued row past
+-- the stale window goes stale, a leased row past the lease window unreported
+-- goes unknown, and a suppression found at lease ends it cancelled.
+-- fallback_status tracks the toll-free text sent when the post definitely did
+-- not happen (spec law 5): the claim sets 'claimed' and fallback_at right
+-- before the send, then sent, suppressed or failed. A claim that never
+-- finishes is never retried (plan decision 11).
+--
+-- No phone number column (spec law 11): the row stores client, lead and
+-- negotiation ids, and the number is resolved from clients.phone at lease.
+-- negotiation_id matches thumbtack_leads.negotiation_id, which is also the bid
+-- id in the GV notice. Rows are never pruned (plan decision 6): the token in a
+-- body already lives in thumbtack_messages, and the Inbox reads old sends.
+CREATE TABLE IF NOT EXISTS gv_posts (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  lead_id INTEGER REFERENCES thumbtack_leads(id) ON DELETE SET NULL,
+  negotiation_id VARCHAR(100) NOT NULL,
+  body TEXT NOT NULL,
+  send_path TEXT NOT NULL CHECK (send_path IN ('auto','compose')),
+  sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','leased','sent','clicked_unverified','failed_preclick','skipped_already_posted','stale','unknown','cancelled')),
+  reason TEXT,
+  fallback_status TEXT CHECK (fallback_status IS NULL OR fallback_status IN ('claimed','sent','suppressed','failed')),
+  fallback_at TIMESTAMPTZ,
+  leased_at TIMESTAMPTZ,
+  reported_at TIMESTAMPTZ,
+  clicked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- A leased row always carries its lease time: the sweep turns a lease past
+  -- its window unknown by comparing leased_at, so a NULL would never expire.
+  CONSTRAINT gv_posts_leased_at_check CHECK (status <> 'leased' OR leased_at IS NOT NULL),
+  -- The fallback claim and its time travel together, and only on the two states
+  -- that may fall back to the toll-free text (spec law 5).
+  CONSTRAINT gv_posts_fallback_pair_check CHECK ((fallback_status IS NULL AND fallback_at IS NULL) OR (fallback_status IS NOT NULL AND fallback_at IS NOT NULL AND status IN ('stale','failed_preclick')))
+);
+
+-- The inline CHECKs above reach only a fresh database; dev and prod get these
+-- (the inbox_reads and gmail_messages pattern). A widening goes in BOTH sites,
+-- and server/db/index.js CONSTRAINT_CONTRACT asserts every value at boot.
+DO $$ BEGIN
+  ALTER TABLE gv_posts DROP CONSTRAINT IF EXISTS gv_posts_status_check;
+  ALTER TABLE gv_posts ADD CONSTRAINT gv_posts_status_check
+    CHECK (status IN ('queued','leased','sent','clicked_unverified','failed_preclick','skipped_already_posted','stale','unknown','cancelled'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE gv_posts DROP CONSTRAINT IF EXISTS gv_posts_send_path_check;
+  ALTER TABLE gv_posts ADD CONSTRAINT gv_posts_send_path_check
+    CHECK (send_path IN ('auto','compose'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE gv_posts DROP CONSTRAINT IF EXISTS gv_posts_fallback_status_check;
+  ALTER TABLE gv_posts ADD CONSTRAINT gv_posts_fallback_status_check
+    CHECK (fallback_status IS NULL OR fallback_status IN ('claimed','sent','suppressed','failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+-- The two cross-column CHECKs for a table that already exists (database
+-- review, plan Task 1): the guarded shape of the FK blocks above, with NO
+-- exception handler, so a failed add (a row that breaks the rule) reaches
+-- initDb and alerts instead of booting green. Steady state is a no-op. The
+-- bodies match the inline ones above byte for byte; constraintContract.test.js
+-- compares them.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'gv_posts_leased_at_check'
+       AND conrelid = 'gv_posts'::regclass
+  ) THEN
+    ALTER TABLE gv_posts ADD CONSTRAINT gv_posts_leased_at_check
+      CHECK (status <> 'leased' OR leased_at IS NOT NULL);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'gv_posts_fallback_pair_check'
+       AND conrelid = 'gv_posts'::regclass
+  ) THEN
+    ALTER TABLE gv_posts ADD CONSTRAINT gv_posts_fallback_pair_check
+      CHECK ((fallback_status IS NULL AND fallback_at IS NULL) OR (fallback_status IS NOT NULL AND fallback_at IS NOT NULL AND status IN ('stale','failed_preclick')));
+  END IF;
+END $$;
+
+-- One open post per proposal (spec law 4): a second send while one is open
+-- merges into it. The router's INSERT ... ON CONFLICT (proposal_id) WHERE
+-- status IN ('queued','leased') infers this index, and CRITICAL_INDEXES
+-- alerts at boot if it is ever missing.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gv_posts_open_per_proposal
+  ON gv_posts (proposal_id) WHERE status IN ('queued','leased');
+-- The lease takes the oldest queued row, and the sweep stales queued rows by age.
+CREATE INDEX IF NOT EXISTS idx_gv_posts_queued ON gv_posts (created_at) WHERE status = 'queued';
+-- The proposal page's latest post, and the proposal delete's cascade lookup.
+CREATE INDEX IF NOT EXISTS idx_gv_posts_proposal ON gv_posts (proposal_id, created_at DESC);
+-- The spacing check and the Inbox look posts up by negotiation.
+CREATE INDEX IF NOT EXISTS idx_gv_posts_negotiation ON gv_posts (negotiation_id);
+-- The sweep's two fallback arms (plan Task 9): the retry arm finds stale or
+-- failed_preclick rows a restart left unclaimed, by age; the interrupted-claim
+-- arm finds claims that never finished, by claim time.
+CREATE INDEX IF NOT EXISTS idx_gv_posts_fallback_unclaimed ON gv_posts (updated_at)
+  WHERE fallback_status IS NULL AND status IN ('stale','failed_preclick');
+CREATE INDEX IF NOT EXISTS idx_gv_posts_fallback_claimed ON gv_posts (fallback_at)
+  WHERE fallback_status = 'claimed';
+
+-- The GV sender's single state row: the outage episode (one admin email per
+-- episode, keyed on outage_alerted_at), the last lease and success times the
+-- liveness check reads, and the three streak counters that open an episode at
+-- 3 (pre-click failures, unknowns, unverified clicks). A success zeroes all
+-- three and closes the episode.
+CREATE TABLE IF NOT EXISTS gv_sender_state (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  outage_since TIMESTAMPTZ,
+  outage_reason TEXT,
+  outage_alerted_at TIMESTAMPTZ,
+  last_lease_at TIMESTAMPTZ,
+  last_success_at TIMESTAMPTZ,
+  consecutive_preclick_failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_unknown INTEGER NOT NULL DEFAULT 0,
+  consecutive_unverified INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO gv_sender_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+-- ─── end GV proposal posts ───

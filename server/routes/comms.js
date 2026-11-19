@@ -11,11 +11,48 @@ const { adminWriteLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, PermissionError } = require('../utils/errors');
 const { getAction } = require('../utils/comms/registry');
+// SMS_MAX_CHARS is the SMS ceiling: 4 GSM segments (spec 4.2), a hard server
+// cap the modal mirrors. proposalResend.js owns the one constant, since its
+// Text row reports it as max_chars.
+const { load: loadProposal, SMS_MAX_CHARS } = require('../utils/comms/actions/proposalResend');
+const { gvPostEnabled, GV_BODY_MAX, validateGvBody } = require('../utils/gvPost/rules');
 
 const router = express.Router();
 
-// SMS ceiling: 4 GSM segments (spec 4.2). Hard server cap; the modal mirrors it.
-const SMS_MAX_CHARS = 640;
+// The proposal text actions, whose recipient (proposalResend.resolveRecipient)
+// marks a Thumbtack relay client's Text row via 'thumbtack' and whose entity is
+// a proposal id. Only these can route a text to a GV post (spec 2026-10-17).
+const PROPOSAL_TEXT_ACTIONS = new Set(['proposal_resend', 'proposal_send']);
+// One message per validateGvBody reason, shown as both the field error and the
+// error message. The SendModal mirrors the cap and missing-link copy (plan
+// Task 11).
+const GV_BODY_MESSAGES = new Map([
+  ['too_long', `Thumbtack texts are capped at ${GV_BODY_MAX} characters.`],
+  ['no_link', 'The text must include the proposal link.'],
+  ['multiple_links', 'The text can carry only one proposal link.'],
+  ['wrong_link', "The text links a different proposal. Use this proposal's link."],
+]);
+
+function relayBodyError(reason) {
+  const message = GV_BODY_MESSAGES.get(reason) || GV_BODY_MESSAGES.get('no_link');
+  return new ValidationError({ sms_body: message }, message);
+}
+
+// A relay client's text becomes a GV post, which must be one message of at
+// most 320 characters carrying exactly this proposal's link (spec 2026-10-17
+// law 9). Checked here, before ensureSideEffects, so a rejected body can never
+// flip a draft to sent. The flag check comes first: off, nothing is looked up
+// and today's rules stand. The raw length is checked before the collapsed one,
+// matching the modal's counter.
+async function assertRelaySmsBody(action, entityId, smsBody) {
+  if (!gvPostEnabled() || !PROPOSAL_TEXT_ACTIONS.has(action.key)) return;
+  const recipient = await action.resolveRecipient(entityId);
+  if (recipient.channels.sms.via !== 'thumbtack') return;
+  if (smsBody.length > GV_BODY_MAX) throw relayBodyError('too_long');
+  const { token } = await loadProposal(entityId);
+  const check = validateGvBody(smsBody, token);
+  if (!check.ok) throw relayBodyError(check.reason);
+}
 
 function requireAction(body, user) {
   const action = getAction(body.action);
@@ -105,6 +142,7 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
     if (smsBody.length > SMS_MAX_CHARS) {
       throw new ValidationError({ sms_body: `SMS message is over the ${SMS_MAX_CHARS} character cap.` });
     }
+    await assertRelaySmsBody(action, entityId, smsBody);
   }
 
   const isRetry = body.retry === true;
@@ -152,6 +190,9 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
     side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
     email: results.email,
     sms: results.sms,
+    // 'thumbtack' when the text was queued as a GV post into the Thumbtack
+    // thread (sms 'queued'); null when it went, or failed, as today's text.
+    sms_route: results.sms_route || null,
     email_error: results.email_error || null,
     sms_error: results.sms_error || null,
     skip_reasons: results.skip_reasons,

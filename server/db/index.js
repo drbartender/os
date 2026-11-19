@@ -195,6 +195,11 @@ const CRITICAL_INDEXES = [
   // the boot green. Listing them here is what turns that into a loud alert.
   'idx_scheduled_messages_pending_uniq', // enqueue dedupe; absence = duplicate sends
   'idx_sms_messages_twilio_sid',         // Twilio webhook-retry dedupe; absence = double-logged inbound SMS
+  // GV proposal posts (spec 2026-10-17, law 4): at most one open post per
+  // proposal. The router's INSERT ... ON CONFLICT infers this partial index;
+  // absent, that INSERT raises 42P10 and every relay send falls back to the
+  // toll-free text.
+  'uq_gv_posts_open_per_proposal',
 ];
 
 // Constraints whose VALUE LIST is load-bearing and which schema.sql defines more
@@ -309,6 +314,34 @@ const CONSTRAINT_CONTRACT = [
   { table: 'gmail_messages', constraint: 'gmail_messages_kind_check',
     mustContain: ['message', 'auto_reply', 'bounce', 'zola_inquiry', 'zola_message',
       'zola_closed', 'zola_unparsed'] },
+  // GV proposal posts (spec 2026-10-17, plan Task 1), the same double-definition
+  // shape: inline CHECKs in CREATE TABLE gv_posts for a fresh database and
+  // DO-block DROP + ADDs for dev and prod. Every value is asserted, the
+  // consult_call_attempts reasoning above. status is written by the router, the
+  // lease, the report and the sweep, and a narrowed list raises 23514 inside the
+  // sweep that drains a dead sender's rows to the toll-free text.
+  // fallback_status 'claimed' is that text's at-most-once claim: narrowed, every
+  // fallback throws and a relay client gets neither the post nor the text.
+  // send_path is the router INSERT's own value: narrowed, every enqueue fails
+  // open to the text.
+  { table: 'gv_posts', constraint: 'gv_posts_status_check',
+    mustContain: ['queued', 'leased', 'sent', 'clicked_unverified', 'failed_preclick',
+      'skipped_already_posted', 'stale', 'unknown', 'cancelled'] },
+  { table: 'gv_posts', constraint: 'gv_posts_send_path_check',
+    mustContain: ['auto', 'compose'] },
+  { table: 'gv_posts', constraint: 'gv_posts_fallback_status_check',
+    mustContain: ['claimed', 'sent', 'suppressed', 'failed'] },
+  // The two cross-column gv_posts backstops (database review of plan Task 1),
+  // each an inline named CHECK plus a guarded add with no exception handler.
+  // Contracted mainly for ABSENCE, which the guarded add makes loud at boot
+  // but which a fresh database built from an edited inline site would not.
+  // leased_at: a leased row without its lease time never goes unknown. The
+  // fallback pair: narrowed by 'failed_preclick', every pre-click fallback
+  // claim raises 23514 and the relay client gets neither the post nor the text.
+  { table: 'gv_posts', constraint: 'gv_posts_leased_at_check',
+    mustContain: ['leased'] },
+  { table: 'gv_posts', constraint: 'gv_posts_fallback_pair_check',
+    mustContain: ['stale', 'failed_preclick'] },
   //
   // DELIBERATELY NOT HERE: email_sends_recipient_check (schema.sql:1673, the
   // lead_id/client_id XOR). It is the same bare DROP-then-ADD shape and its
@@ -369,10 +402,12 @@ async function findViolatedConstraintContracts(db = pool) {
     // assumed, 2026-08-20; the backlog carried the opposite claim.
     //
     // The residual hole is a MULTI-ARM check whose arms are about different
-    // columns, where the literal could be found in the wrong arm. Every
-    // contracted constraint here is single-column today (archive_reason's two
-    // arms are both about archive_reason), so it is latent; closing it properly
-    // needs the column name and a scoped extractor, not a tighter substring.
+    // columns, where the literal could be found in the wrong arm. The two
+    // gv_posts pairing checks are multi-column, but each contracted literal
+    // appears in exactly one arm (the status arm), and every other contracted
+    // constraint is single-column (archive_reason's two arms are both about
+    // archive_reason), so it is latent; closing it properly needs the column
+    // name and a scoped extractor, not a tighter substring.
     const missing = mustContain.filter((v) => !def.includes(`'${v}'`));
     if (missing.length > 0) {
       violations.push(`${table}.${constraint} is NARROWED — missing: ${missing.join(', ')}`);

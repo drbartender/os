@@ -356,6 +356,11 @@ app.use('/api/application', require('./routes/application'));
 // general /api/admin router so the agent-secret paths match here first and never
 // hit the admin router's JWT auth (the agent presents no JWT).
 app.use('/api/admin/thumbtack', require('./routes/thumbtackAgent'));
+// GV proposal-post agent API (spec 2026-10-17): the box's Google Voice sender
+// leases posts, prechecks, reports and signals its session here. Its own
+// prefix, secret (GV_AGENT_SECRET) and rate limiter, so neither the Thumbtack
+// agent's limiter nor the admin router's JWT auth ever applies.
+app.use('/api/gv-agent', require('./routes/gvAgent'));
 app.use('/api/admin/packages', require('./routes/packages'));
 app.use('/api/admin', require('./routes/admin'));
 // Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
@@ -792,6 +797,22 @@ async function start() {
         setInterval(wrapped, 60000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('first_reply_sweep');
+      }
+
+      // GV post sweep (spec 2026-10-17 section 6): a queued post the box never
+      // leased goes stale and the toll-free text goes instead, a lease gone
+      // unreported goes unknown, and the outage email goes out once per episode.
+      // Deliberately NOT gated by GV_PROPOSAL_POST_ENABLED: after a rollback flip
+      // the sweep must keep draining queued rows to the toll-free text.
+      if (enabled('RUN_GV_POST_SWEEP_SCHEDULER')) {
+        const { runGvPostSweep } = require('./utils/gvPostSweepScheduler');
+        // The router queues a GV post only in a process that runs the sweep.
+        require('./utils/gvPost/sweepState').markGvSweepRegistered();
+        const wrapped = wrapScheduler('gv_post_sweep', 60, runGvPostSweep);
+        setTimeout(wrapped, 50000); // 60s cadence; 50s is off every sibling's boot slot
+        setInterval(wrapped, 60000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('gv_post_sweep');
       }
 
       // Consult call sweep (spec 2026-08-25 section 4.3): opens a chain for each

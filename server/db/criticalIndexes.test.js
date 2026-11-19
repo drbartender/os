@@ -45,6 +45,13 @@ test('one manifest index absent → exactly that one is reported', async () => {
   assert.deepEqual(missing, [absent]);
 });
 
+test('the GV post open-row guard is listed (spec 2026-10-17, law 4)', () => {
+  // One open post per proposal. The router's INSERT ... ON CONFLICT infers this
+  // partial unique index, and initDb's 23505 swallow would hide a failed build.
+  assert.ok(CRITICAL_INDEXES.includes('uq_gv_posts_open_per_proposal'),
+    'uq_gv_posts_open_per_proposal must be in CRITICAL_INDEXES');
+});
+
 test('scopes the lookup to the public schema (removes the multi-schema false-negative)', async () => {
   let capturedSql = '';
   const spyDb = {

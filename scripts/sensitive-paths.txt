@@ -726,3 +726,21 @@ server/routes/serviceExtensions/*
 server/utils/paystubData.js
 client/src/data/eventServicesAgreement.js
 server/data/contractorAgreement.js
+
+# Proposal link into the Thumbtack thread through Google Voice (spec
+# 2026-10-17-tt-proposal-link-via-gv, lane gv-post-server). Outward texts from
+# the owner's personal Google Voice line into a customer's Thumbtack thread,
+# each carrying a proposal token link: bearer access to the client's details
+# and to sign-and-pay. gvPost/ holds the identity rule that picks the customer
+# (a wrong answer posts a token into another customer's thread), the router
+# and queue, the toll-free fallback and the outage email. gvAgent.js is the
+# secret-gated API the box leases from and reports to. sendProposalSentEmail.js
+# is the admin send's choke point, which now routes the proposal text (its
+# resend sibling is already covered by server/utils/comms/actions/*.js).
+# gv-agent/src/ drives the personal Google account itself, under the
+# at-most-once send law. The sweep is covered by *Scheduler.js above. A folder
+# needs dir/*.js (a '*' never crosses '/').
+server/utils/gvPost/*.js
+server/routes/gvAgent.js
+server/utils/sendProposalSentEmail.js
+gv-agent/src/*.js

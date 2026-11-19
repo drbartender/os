@@ -153,6 +153,76 @@ test('AUTH is contracted: users_role_check names all three roles', () => {
   }
 });
 
+test('GV posts are contracted: gv_posts_status_check names all nine statuses', () => {
+  // Spec 2026-10-17 section 6 (plan Task 1). Every status has a live writer: the
+  // router queues, the lease leases, cancels, skips or fails pre-click, the
+  // report records sent or clicked_unverified, and the sweep stales or marks
+  // unknown. A narrowed list raises 23514 inside one of them, and the sweep's
+  // own UPDATE is what drains a dead sender's rows to the toll-free text.
+  const entry = CONSTRAINT_CONTRACT.find((c) => c.constraint === 'gv_posts_status_check');
+  assert.ok(entry, 'gv_posts_status_check must be contracted');
+  assert.equal(entry.table, 'gv_posts');
+  for (const status of ['queued', 'leased', 'sent', 'clicked_unverified', 'failed_preclick',
+    'skipped_already_posted', 'stale', 'unknown', 'cancelled']) {
+    assert.ok(entry.mustContain.includes(status), `${status} must be asserted`);
+  }
+});
+
+test('GV posts: the send_path and fallback_status CHECKs are contracted too', () => {
+  // Same double-definition shape as the status CHECK. fallback_status 'claimed' is
+  // the toll-free fallback's at-most-once claim: narrowed, every fallback throws
+  // and a relay client gets neither the post nor the text. send_path is the
+  // router INSERT's own value: narrowed, every enqueue fails open to the text.
+  const byName = (name) => CONSTRAINT_CONTRACT.find((c) => c.constraint === name);
+  const sendPath = byName('gv_posts_send_path_check');
+  assert.ok(sendPath, 'gv_posts_send_path_check must be contracted');
+  assert.equal(sendPath.table, 'gv_posts');
+  for (const v of ['auto', 'compose']) {
+    assert.ok(sendPath.mustContain.includes(v), `send_path ${v} must be asserted`);
+  }
+  const fallback = byName('gv_posts_fallback_status_check');
+  assert.ok(fallback, 'gv_posts_fallback_status_check must be contracted');
+  assert.equal(fallback.table, 'gv_posts');
+  for (const v of ['claimed', 'sent', 'suppressed', 'failed']) {
+    assert.ok(fallback.mustContain.includes(v), `fallback_status ${v} must be asserted`);
+  }
+});
+
+test('GV posts: the leased_at and fallback pairing CHECKs are contracted (database review)', () => {
+  // Two cross-column backstops, each an inline named CHECK for a fresh database
+  // plus a guarded add for dev and prod. A leased row with no leased_at would
+  // never go unknown (the sweep compares leased_at). The fallback pair keeps the
+  // claim and its time together and only on the two states that may fall back
+  // (spec law 5): narrowed by 'failed_preclick', every pre-click fallback claim
+  // raises 23514 and a relay client gets neither the post nor the text.
+  const byName = (name) => CONSTRAINT_CONTRACT.find((c) => c.constraint === name);
+  const leased = byName('gv_posts_leased_at_check');
+  assert.ok(leased, 'gv_posts_leased_at_check must be contracted');
+  assert.equal(leased.table, 'gv_posts');
+  assert.ok(leased.mustContain.includes('leased'), 'the leased arm must be asserted');
+  const pair = byName('gv_posts_fallback_pair_check');
+  assert.ok(pair, 'gv_posts_fallback_pair_check must be contracted');
+  assert.equal(pair.table, 'gv_posts');
+  for (const v of ['stale', 'failed_preclick']) {
+    assert.ok(pair.mustContain.includes(v), `fallback pair status ${v} must be asserted`);
+  }
+});
+
+test('GV posts: both pairing CHECKs are defined inline AND as a guarded add', () => {
+  // The inline site reaches only a fresh database and the guarded DO block only
+  // an existing table, so each constraint needs both, with identical bodies (the
+  // pairing test below compares them). Asserted here so a later edit cannot
+  // quietly drop one site and leave dev or a fresh database without the guard.
+  const sql = readSchema();
+  for (const name of ['gv_posts_leased_at_check', 'gv_posts_fallback_pair_check']) {
+    assert.match(sql, new RegExp(`\\n\\s*CONSTRAINT ${name} CHECK \\(`), `${name} must be inline in CREATE TABLE gv_posts`);
+    assert.match(sql, new RegExp(`WHERE conname = '${name}'\\s+AND conrelid = 'gv_posts'::regclass`),
+      `${name} must have a pg_constraint-guarded add`);
+    assert.match(sql, new RegExp(`ALTER TABLE gv_posts ADD CONSTRAINT ${name}\\s+CHECK \\(`),
+      `${name} must be added by its guarded DO block`);
+  }
+});
+
 test('the live dev DB satisfies the contract', async () => {
   // This assertion was withheld when the guard first shipped, because dev
   // genuinely violated it: shifts_status_check was ABSENT there, its DO-block ADD

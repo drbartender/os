@@ -7,6 +7,14 @@
 // effect (ensureSideEffects is a validate-only no-op). dispatch OWNS its ledger
 // writes with skipLog so a provider throw can never leave a sent-but-unlogged
 // message (the 7/16 Brandon Martin failure class).
+//
+// GV posts (spec docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md):
+// for a Thumbtack relay client the text is routed first, and a queued or
+// merged Google Voice post into the Thumbtack thread replaces the toll-free
+// text (no message_log row: the gv_posts row is the ledger). The GV sender's
+// toll-free fallback for a 'compose' post calls sendResendText, so this stays
+// the one writer of the proposal_sent_sms type.
+const realSentry = require('@sentry/node');
 const { pool } = require('../../../db');
 const { sendEmail } = require('../../email');
 const { sendSMS, normalizePhone } = require('../../sms');
@@ -22,10 +30,22 @@ const { proposalUrl: buildProposalUrl } = require('../../urls');
 // The proposal PATCH's legal-hold refusal (409 LEGAL_HOLD), so every path
 // answers a held proposal with one body.
 const { assertNotLegalHold } = require('../../../routes/proposals/patchGuards');
+const { resolveGvTarget: realResolveGvTarget } = require('../../gvPost/identity');
+const { routeProposalText: realRouteProposalText } = require('../../gvPost/queue');
+const { gvPostEnabled, GV_BODY_MAX } = require('../../gvPost/rules');
 
 const key = 'proposal_resend';
 const messageType = 'proposal_sent';
 const defaultChannels = { email: true, sms: true };
+
+// The toll-free text's ceiling: 4 GSM segments (spec 4.2). The one constant,
+// exported for server/routes/comms.js, whose /send enforces it for every
+// action. A relay client's GV post is capped at GV_BODY_MAX instead.
+const SMS_MAX_CHARS = 640;
+
+// Dependency seam for tests: the relay lookup, the router, and Sentry.
+let _deps = { resolveGvTarget: realResolveGvTarget, routeProposalText: realRouteProposalText, Sentry: realSentry };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 // The active, already-sent-and-not-yet-paid window the legacy route enforced.
 // Draft is not sent yet; archived is shelved; paid/confirmed/completed are past
@@ -111,8 +131,35 @@ function resolveFromRow(row) {
   };
 }
 
+/**
+ * The Text row's route for the SendModal: via 'thumbtack' (a GV post into the
+ * relay client's Thumbtack thread, capped at GV_BODY_MAX, with the number's
+ * last 4) only when the kill switch is on and the identity rule resolves;
+ * otherwise via 'twilio', today's text. A throwing lookup fails open to
+ * 'twilio' with a Sentry event, so the preview and the send never 500.
+ */
+async function smsRoute(proposalId) {
+  const twilioRoute = { via: 'twilio', max_chars: SMS_MAX_CHARS };
+  if (!gvPostEnabled()) return twilioRoute;
+  try {
+    const target = await _deps.resolveGvTarget(proposalId);
+    if (!target.ok) return twilioRoute;
+    return { via: 'thumbtack', max_chars: GV_BODY_MAX, phone_last4: target.phone.slice(-4) };
+  } catch (err) {
+    _deps.Sentry.captureException(new Error('gv_post relay lookup failed'), {
+      tags: { feature: 'gv_post', stage: 'resolve_recipient' },
+      extra: { proposalId, cause: (err && (err.code || err.name)) || 'unknown' },
+    });
+    return twilioRoute;
+  }
+}
+
+// resolveFromRow stays sync and unchanged; the relay fields ride under
+// channels.sms, which /api/comms passes to the modal whole.
 async function resolveRecipient(proposalId) {
-  return resolveFromRow(await load(proposalId));
+  const recipient = resolveFromRow(await load(proposalId));
+  recipient.channels.sms = { ...recipient.channels.sms, ...(await smsRoute(proposalId)) };
+  return recipient;
 }
 
 function defaultParts(row) {
@@ -219,28 +266,67 @@ async function dispatch(proposalId, message, channels, ctx = {}) {
 
   if (wantSms && recipient.channels.sms.available) {
     const body = (message?.sms?.body ?? defaults.sms.body).trim();
-    const bodyEdited = body !== defaults.sms.body;
-    const entry = {
-      channel: 'sms', recipient: recipient.phone, subject: body.slice(0, 140),
-      proposalId: row.id, clientId: row.client_id || null,
-      messageType: `${messageType}_sms`, sentBy: ctx.sentBy || null, bodyEdited,
-    };
-    try {
-      const r = await sendSMS({ to: recipient.phone, body, meta: { skipLog: true } });
-      results.sms = 'sent';
-      if (r && !String(r.sid || '').startsWith('dev-skipped')) {
-        await logClientMessage({ ...entry, status: 'sent', providerId: r.sid });
-      }
-    } catch (err) {
-      results.sms = 'failed';
-      results.sms_error = err.message || 'SMS send failed.';
-      await logClientMessage({ ...entry, status: 'failed', error: String(err.message || err).slice(0, 500) });
+    if (await routedToGv(row, body, ctx)) {
+      // Queued for (or merged into) a GV post into the Thumbtack thread.
+      results.sms = 'queued';
+      results.sms_route = 'thumbtack';
+    } else {
+      const sent = await sendResendText({ row, phone: recipient.phone, body, ctx });
+      results.sms = sent.status;
+      if (sent.error) results.sms_error = sent.error;
     }
   }
 
   results.recipient_email = recipient.email;
   results.recipient_phone = recipient.phone;
   return results;
+}
+
+// True when the router queued a GV post or merged into the open one. The
+// router never throws; if it ever did, this falls open to today's text.
+async function routedToGv(row, body, ctx) {
+  try {
+    const routed = await _deps.routeProposalText({
+      proposalId: row.id, token: row.token, body, sentBy: ctx.sentBy || null, sendPath: 'compose',
+    });
+    return routed.route === 'gv' || routed.route === 'merged';
+  } catch (routeErr) {
+    console.error('GV routing threw for proposal', row.id,
+      (routeErr && (routeErr.code || routeErr.name)) || 'unknown', '; texting as today');
+    return false;
+  }
+}
+
+/**
+ * The toll-free proposal text and its one message_log entry (sent or failed),
+ * used by dispatch and by the GV sender's fallback for a 'compose' post. The
+ * provider send skips its own log so this entry is authoritative (sent_by,
+ * body_edited, the exact error); a dev-skipped send is not ledgered.
+ *
+ * @param {Object} args
+ * @param {Object} args.row - the load() row
+ * @param {string} args.phone - E.164 number to text
+ * @param {string} args.body - the text
+ * @param {{sentBy?:number|null}} [args.ctx]
+ * @returns {Promise<{status:'sent'} | {status:'failed', error:string}>}
+ */
+async function sendResendText({ row, phone, body, ctx = {} }) {
+  const bodyEdited = body !== defaultParts(row).sms.body;
+  const entry = {
+    channel: 'sms', recipient: phone, subject: body.slice(0, 140),
+    proposalId: row.id, clientId: row.client_id || null,
+    messageType: `${messageType}_sms`, sentBy: ctx.sentBy || null, bodyEdited,
+  };
+  try {
+    const r = await sendSMS({ to: phone, body, meta: { skipLog: true } });
+    if (r && !String(r.sid || '').startsWith('dev-skipped')) {
+      await logClientMessage({ ...entry, status: 'sent', providerId: r.sid });
+    }
+    return { status: 'sent' };
+  } catch (err) {
+    await logClientMessage({ ...entry, status: 'failed', error: String(err.message || err).slice(0, 500) });
+    return { status: 'failed', error: err.message || 'SMS send failed.' };
+  }
 }
 
 // dispatchWithoutSideEffects: resend-type action — ensureSideEffects is
@@ -251,8 +337,14 @@ async function dispatch(proposalId, message, channels, ctx = {}) {
 // resolveFromRow is exported for the action-level unit tests (token/placeholder
 // guards) — proposals.token is NOT NULL so the guard can only be exercised on a
 // synthetic row.
+// RESENDABLE is exported for one reader, the drift test that pins
+// server/utils/gvPost/rules.js GV_SENDABLE_STATUSES to it. load gives
+// /api/comms the token for a relay body's link check, and SMS_MAX_CHARS its
+// SMS cap; sendResendText is the GV sender's 'compose' fallback (spec
+// 2026-10-17).
 module.exports = {
   key, messageType, defaultChannels,
   resolveRecipient, resolveFromRow, buildMessages, ensureSideEffects, dispatch,
   dispatchWithoutSideEffects: true,
+  RESENDABLE, SMS_MAX_CHARS, load, sendResendText, __setDeps,
 };

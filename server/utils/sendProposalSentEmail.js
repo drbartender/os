@@ -17,6 +17,7 @@ const { shouldSendImmediate } = require('./messageSuppression');
 
 const { proposalUrl: buildProposalUrl } = require('./urls');
 const { formatEventDateForSms } = require('./smsEventDate');
+const { routeProposalText: realRouteProposalText } = require('./gvPost/queue');
 
 // Dependency seam for tests.
 let _deps = {
@@ -24,6 +25,7 @@ let _deps = {
   emailTemplates: realEmailTemplates,
   sendAndLogSms: realSendAndLogSms,
   Sentry: realSentry,
+  routeProposalText: realRouteProposalText,
 };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
@@ -32,7 +34,6 @@ function __setDeps(d) { _deps = { ..._deps, ...d }; }
 // ledgers sent_by NULL and never counts as a reply.
 async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = null } = {}) {
   let emailSent = false;
-  let smsSent = false;
   // ── Email half (existing behavior) ──
   try {
     if (!proposal || !proposal.client_email) {
@@ -70,10 +71,34 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
       proposal && proposal.id);
   }
 
-  // ── SMS half (Phase 3, spec 1.2) — separate try/catch so an SMS failure
-  // never masks a successful email and never throws into the request path. ──
+  // ── SMS half (Phase 3, spec 1.2). Never throws: an SMS failure never masks
+  // a successful email and never reaches the request path. ──
+  // 'sent' is a text Twilio took. A queued GV post is not a text (only an
+  // admin send routes, and its callers ignore this value); 'skipped' is an
+  // unparseable or missing phone: nothing went out.
+  const smsSent = (await sendInitialProposalText(proposal, { sentBy, actorType })) === 'sent';
+  return { emailSent, smsSent };
+}
+
+/**
+ * The initial-proposal text (Phase 3, spec 1.2), and since 2026-10-17 its GV
+ * routing (spec docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md):
+ * after today's suppression passes, an admin send (the lifecycle and crud
+ * sends, via 'auto') asks routeProposalText first, and a queued or merged GV
+ * post into the Thumbtack thread replaces the toll-free text. The website
+ * wizard (actorType 'client') never routes. The GV sender's toll-free fallback
+ * calls back in with via 'twilio', which skips the router, so this stays the
+ * one writer of the initial_proposal type. NEVER throws.
+ *
+ * @param {Object} proposal - the joined proposal row (token, event_type*, event_date, status,
+ *   client_id, client_name, client_phone, communication_preferences, email_status, phone_status)
+ * @param {{sentBy?:number|null, actorType?:'admin'|'client', via?:'auto'|'twilio'}} [opts]
+ * @returns {Promise<'queued'|'sent'|'suppressed'|'skipped'|'failed'>} 'skipped' is no
+ *   usable phone; 'failed' is a caught send throw
+ */
+async function sendInitialProposalText(proposal, { sentBy = null, actorType = 'admin', via = 'auto' } = {}) {
   try {
-    if (!proposal) return { emailSent, smsSent };
+    if (!proposal) return 'skipped';
     const sendCheck = await shouldSendImmediate({
       proposal: { id: proposal.id, status: proposal.status },
       client: {
@@ -85,7 +110,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
     });
     if (!sendCheck.ok) {
       console.log(`[initialProposalSms] suppressed for proposal ${proposal.id}: ${sendCheck.reason}`);
-      return { emailSent, smsSent };
+      return 'suppressed';
     }
     const eventTypeLabel = getEventTypeLabel({
       event_type: proposal.event_type,
@@ -96,7 +121,10 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
       eventDate: formatEventDateForSms(proposal.event_date),
       link: buildProposalUrl(proposal.token),
     });
-    const sms = await _deps.sendAndLogSms({
+    if (via === 'auto' && actorType === 'admin' && await routedToGv(proposal, body, sentBy)) {
+      return 'queued';
+    }
+    const result = await _deps.sendAndLogSms({
       to: proposal.client_phone,
       body,
       clientId: proposal.client_id || null,
@@ -105,8 +133,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
       recipientName: proposal.client_name || null,
       sentBy,
     });
-    // 'skipped' is an unparseable or missing phone: nothing went out.
-    smsSent = Boolean(sms && sms.status === 'sent');
+    return result && result.status === 'skipped' ? 'skipped' : 'sent';
   } catch (smsErr) {
     if (process.env.SENTRY_DSN_SERVER) {
       _deps.Sentry.captureException(new Error('initialProposalSms failed'), {
@@ -120,8 +147,23 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
     }
     console.error('Initial-proposal SMS failed (non-blocking) for proposal',
       proposal && proposal.id);
+    return 'failed';
   }
-  return { emailSent, smsSent };
 }
 
-module.exports = { sendProposalSentEmail, __setDeps };
+// True when the router queued a GV post or merged into the open one. The
+// router never throws; if it ever did, this falls open to today's text.
+async function routedToGv(proposal, body, sentBy) {
+  try {
+    const routed = await _deps.routeProposalText({
+      proposalId: proposal.id, token: proposal.token, body, sentBy, sendPath: 'auto',
+    });
+    return routed.route === 'gv' || routed.route === 'merged';
+  } catch (routeErr) {
+    console.error('GV routing threw for proposal', proposal.id,
+      (routeErr && (routeErr.code || routeErr.name)) || 'unknown', '; texting as today');
+    return false;
+  }
+}
+
+module.exports = { sendProposalSentEmail, sendInitialProposalText, __setDeps };
