@@ -1,7 +1,7 @@
 ---
 spec: docs/superpowers/specs/2026-11-19-duet-connector-design.md   # revision 3
 format: lane map without code (spec 2026-10-19 D12)
-revision: 2 (2026-11-19): the plan review folded in; the body's last section is the record.
+revision: "2 (2026-11-19), the plan review folded in; the body's last section is the record"
 lanes:
   - id: connector-shared-reads
     scope: >
@@ -35,7 +35,8 @@ lanes:
       - README.md   # generated tree lines only
       - ARCHITECTURE.md   # generated sections only
     blockedBy: []
-    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
     laws: >
       Spec laws 1, 4 and 10. Money law 15 (the hold; every new exclusion fails closed and binds the
       held ids as parameters). Money law 8 is untouched: no price or paid flag is written. The amount
@@ -65,7 +66,8 @@ lanes:
       reports none and sorts last; days overdue is computed on the Chicago date. Upcoming events: a
       hand-made shift with no proposal carries the shift's client name; a cancelled shift is absent;
       a filled one is present with the flag off.
-    revert: revert the one squash commit. No data is written and no schema changes.
+    revert: >
+      revert the one squash commit. No data is written and no schema changes.
   - id: connector-text-guards
     scope: >
       The two text guards of spec 7.6 as pure functions with no database and no network: the
@@ -80,9 +82,12 @@ lanes:
       - server/utils/inbox/aiRedact.js   # export the link replacer only
       - README.md   # generated tree lines only
     blockedBy: []
-    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify. Reviewed at this tier by declaration, whether or not the sensitive list names its files yet, because these functions are the defense of spec 7.6.
-    laws: Spec law 3 and section 7.6 guards 1 and 2. No AI call in the screening (the spec's reason, it cannot be talked around). The Inbox redaction invariant holds as written: aiRedact's own output is unchanged.
-    seams: aiRedact.js's existing callers and its suite (aiRedact.test.js must pass untouched).
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify. Reviewed at this tier by declaration, whether or not the sensitive list names its files yet, because these functions are the defense of spec 7.6.
+    laws: >
+      Spec law 3 and section 7.6 guards 1 and 2. No AI call in the screening (the spec's reason, it cannot be talked around). The Inbox redaction invariant holds as written: aiRedact's own output is unchanged.
+    seams: >
+      aiRedact.js's existing callers and its suite (aiRedact.test.js must pass untouched).
     acceptance: >
       The new suite passes and aiRedact.test.js passes unchanged. The suite holds a table of real
       shapes: at least ten attack wordings that must be withheld (orders about instructions, role
@@ -95,7 +100,8 @@ lanes:
       inside punctuation, an email address, "name dot com" and "name at domain dot com" spellings,
       and text with none of these returned unchanged. Screening: the two tables above, plus mixed
       case, extra whitespace and a command split across lines.
-    revert: revert the one squash commit.
+    revert: >
+      revert the one squash commit.
   - id: connector-signin-server
     scope: >
       The connector exists, dark and with no tools. Behind an environment flag that is off by
@@ -155,7 +161,8 @@ lanes:
       - README.md
       - ARCHITECTURE.md   # the concept section and the generated route table
     blockedBy: []
-    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus schema-data and whatever the review skill computes; verify; the externals; the money smoke.
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus schema-data and whatever the review skill computes; verify; the externals; the money smoke.
     laws: >
       Spec laws 5, 8, 9 and 10 and sections 7.1, 7.2, 7.4 and 7.5. The auth invariants: the passkey
       check reuses the existing verification and mints no device session (webauthn.js stays the only
@@ -193,7 +200,8 @@ lanes:
       and is not enforced outside production. Call log: a failed insert does not fail the call.
       Cleanup: old log rows, expired requests, used codes and dead tokens go; live ones stay.
       Disconnect leaves the log rows. Emails and audit entries are asserted through injected stubs.
-    revert: revert the one squash commit; the tables stay (idempotent, unused with the flag off).
+    revert: >
+      revert the one squash commit; the tables stay (idempotent, unused with the flag off).
   - id: connector-signin-ui
     scope: >
       The owner can approve and manage the connection. A consent page in the admin app behind
@@ -215,7 +223,8 @@ lanes:
       - client/src/utils/connectReturn.test.js
       - README.md   # generated tree lines only
     blockedBy: [connector-signin-server]
-    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus client, and whatever the review skill computes; verify; captures at 320 and 390 wide of the consent page in each state and of the settings block.
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus client, and whatever the review skill computes; verify; captures at 320 and 390 wide of the consent page in each state and of the settings block.
     laws: >
       Spec 7.2 (consent page, Allow, Cancel). API calls through client/src/utils/api.js. The return
       path accepts only the consent route with a well-formed request id, never an arbitrary URL (an
@@ -237,7 +246,8 @@ lanes:
       path with a valid id; rejects an absolute URL, a protocol-relative one, another admin path and
       a malformed id. ClaudeConnection: no connection, a live one, the call list, a withheld row,
       Disconnect.
-    revert: revert the one squash commit.
+    revert: >
+      revert the one squash commit.
   - id: connector-tools
     scope: >
       The seven read tools of spec 7.3 and the bulk-read tripwire, registered on the endpoint. Each
@@ -264,7 +274,8 @@ lanes:
       - README.md
       - ARCHITECTURE.md
     blockedBy: [connector-shared-reads, connector-text-guards, connector-signin-server]
-    lenses: the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
     laws: >
       The call log already has the client id column the tripwire counts on (the sign-in server lane
       provides it); needing a schema change here is a stop, not a quiet edit.
@@ -301,9 +312,12 @@ lanes:
       trip, the window rolls (clock injected), list tools are not counted. Hold list unreadable:
       every tool errors and returns nothing. A database snapshot of the business tables before and
       after the whole suite's tool calls is identical (the read-only proof).
-    revert: revert the one squash commit; with the tools gone the endpoint lists none.
-mergeOrder: connector-signin-server first (it carries the sensitive-list lines and the project-rules invariant, so everything after it is tiered correctly and the smaller lanes, not the largest, pay for the overlap pass); then connector-shared-reads; then connector-text-guards; then connector-signin-ui; then connector-tools.
-revertOrder: the reverse of the merge order. connector-tools and connector-signin-ui are reverted before connector-signin-server, and connector-tools before connector-shared-reads and connector-text-guards.
+    revert: >
+      revert the one squash commit; with the tools gone the endpoint lists none.
+mergeOrder: >
+  connector-signin-server first (it carries the sensitive-list lines and the project-rules invariant, so everything after it is tiered correctly and the smaller lanes, not the largest, pay for the overlap pass); then connector-shared-reads; then connector-text-guards; then connector-signin-ui; then connector-tools.
+revertOrder: >
+  the reverse of the merge order. connector-tools and connector-signin-ui are reverted before connector-signin-server, and connector-tools before connector-shared-reads and connector-text-guards.
 pushGate: >
   Every lane ships alone and dark: the first two change nothing a user sees and the rest sit behind
   the connector flag, which is unset in Render. The flag is turned on by the owner in Render after all
