@@ -110,7 +110,7 @@ The procedure a session follows to review one change and write its receipt, in t
 ### 12. Externals
 
 - On tier A, record the externals with `<rr> externals <name>` and the two fixed lines /second-opinion ends with, verbatim, each as one shell argument, or with codex=run:<output file> or codex=not_run:<reason> and the same for gemini. [Claude default]
-- Codex is out of credits since 2026-10-20, so record codex as not run (no credits) until Dallas adds some. [Claude default]
+- Codex is off (Dallas 2026-11-04, "no codex for now": its workspace is deactivated), so record codex as not run (off) until he turns it back on; /second-opinion carries the same line. [Claude default]
 - An external that fails (a 429, a timeout, an auth failure) is recorded as not run and never blocks; the Claude lenses remain the gate and the externals are optional second opinions. [Dallas 2026-07-02]
 - Below tier A record nothing: finalize writes externals/not-run.txt with not required at tier <t> for both. [Claude default]
 
@@ -137,9 +137,9 @@ The procedure a session follows to review one change and write its receipt, in t
 - That is because a commit review's tests are stored only while the checkout's HEAD is the commit; it finalizes with `--kind commit --base <sha>^ --reviewed-against <sha>^` and refuses --stale-base. [Claude default]
 - comment-only: run the pre-step first (`cd <wt> && node scripts/static-checks.js --base <base> --tip <tip> > <work>/static.json`, or `--staged` for a quick fix; a blocking finding stops here as in section 3, since the PII shapes must scan prose that no lens reads), then `node <wt>/scripts/review-select.js --base <base> --tip <tip> > <work>/select.json` (or `--staged`) for the tier alone, since no lens runs; finalize takes `--tier <that tier> --base <base> --reviewed-against <base>` as every other kind does, and a quick fix whose tier is A is a lane (tier A is never a quick fix), then `node <wt>/scripts/comment-only-proof.js --base <base> --tip <tip> --out <work>/proof.json` (for a quick fix `--staged`), then `finalize --kind comment-only --proof <work>/proof.json`, which runs no lens, no test, no verify and no externals, the proof being the receipt's body (spec 3.7); a proof that says no means the change is reviewed at its tier like any other. [Claude default]
 - stale-base, when main moved under a lane after its reports were stored: rebase the lane onto main first, run select and the pre-step again on the rebased range (<base> is now the new main), then the brief with --overlap <main sha> and without --tests, --smoke and --build, which ran on the earlier tip, with new captures for a designed surface (the brief runs position itself; never run position --overlap by hand, since a snapshot without a new diff.patch would pin a verdict to a diff the lens never read), re-pass every lens whose files the rebase changed (finalize's stale line names them), with seams as the overlap pass (money and access-egress too at tier A, and seams gives every diff file a verdict when a sensitive path landed on main), run the tests on the rebased tip, and finalize with --stale-base --base <main sha> --reviewed-against <main sha>. [Claude default]
-- stale-base is documented now and exercised in step 5, where merge-lane.sh check invokes it. [Claude default]
+- `merge-lane.sh check` invokes stale-base when main moved under a lane's files. [Claude default]
 
-### What stands until later steps
+### Merge and ship
 
-- The receipt is the record of the review; merge-lane.sh reads it from step 5 on, and until then the session runs this skill by hand before every merge and the squash message stays one line. [Claude default]
+- The receipt is the record of the review; `merge-lane.sh` refuses a lane without one, and the pre-push gate refuses a range without one. [Claude default]
 - This skill never merges, pushes or ships; a merge is `scripts/merge-lane.sh` and a push is `npm run ship` (or the merge script's ship phase, which runs the same flow). [Claude default]
