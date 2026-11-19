@@ -18,6 +18,7 @@ const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods'
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
 const { clawbackTip } = require('../../utils/payrollClawback');
+const { captureTipFeesForProposal } = require('../../utils/payrollTips');
 const { retryDeferredTips, MAX_DEFER_ATTEMPTS } = require('../../utils/payrollDeferredRetry');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
@@ -209,6 +210,21 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   );
   if (!updated.rows[0]) {
     throw new ConflictError('tip was placed or refunded by another request; reload and try again', 'TIP_ALREADY_PLACED');
+  }
+
+  // An unplaced tip has no fee on file yet (only the accrual's capture writes
+  // it, for tips already on a shift). Capture it now the tip sits on the
+  // shift, before either path reads it: the roll-forward nets it on a frozen
+  // event, the claw nets its share of the refund, and the accrual on an open
+  // event finds it already stored. Best-effort per tip (a failed Stripe read
+  // leaves the fee NULL, as before); a failed lookup is reported and the
+  // placement goes on (payouts follow-up review, money M1 and verify H1).
+  if (proposalId) {
+    try {
+      await captureTipFeesForProposal(proposalId);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { route: 'tip_assign', step: 'fee_capture' } });
+    }
   }
 
   // The claw for the cents refunded before placement. clawbackTip takes its

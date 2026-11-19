@@ -76,7 +76,13 @@ router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(asyn
     );
     const row = cur.rows[0] || {};
     const method = touchesMethod ? fields.preferred_payment_method : (row.preferred_payment_method || null);
-    if (method && !isPreferredEligible(method, { ...row, ...fields })) {
+    // A stored method the request leaves out is cleared only when THIS edit
+    // takes away what could pay it: a row that could not pay it before (its
+    // handle only in payment_username, the import shape) keeps it when another
+    // handle is edited (verify pass 2 of the payouts lane, L7). A method the
+    // request resends is judged on the row as it will be, as before.
+    const storedUnpayableBefore = !touchesMethod && !isPreferredEligible(method, row);
+    if (method && !storedUnpayableBefore && !isPreferredEligible(method, { ...row, ...fields })) {
       if (method !== row.preferred_payment_method) {
         const msg = preferredIneligibleMessage(method);
         throw new ValidationError({ preferred_payment_method: msg }, msg);

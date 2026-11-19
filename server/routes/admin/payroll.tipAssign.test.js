@@ -137,6 +137,12 @@ function answer(text, params = []) {
     return { rows: [], rowCount: 1 };
   }
   // payrollClawback.clawbackTip, on its own client.
+  // payrollTips.captureTipFeesForProposal: no fee-less tip on file here, so
+  // no Stripe call; the log records that the capture ran, and when.
+  if (sql.startsWith('SELECT t.id, t.stripe_payment_intent_id')) {
+    log.push('fee-capture');
+    return { rows: [], rowCount: 0 };
+  }
   if (sql.startsWith('SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents')) {
     log.push('claw:read');
     return {
@@ -304,6 +310,12 @@ test('a tip partly refunded while unplaced is placed, its marker reset in the sa
   assert.equal(clawLines[0][2], -580, 'the refunded cents net of their fee share');
   assert.deepEqual(markerWrites.map((p) => p[0]), [600], 'the cumulative marker is back at the refunded total');
   assert.equal(r.body.refund_clawed_cents, 600);
+  // L8 of verify pass 2: the fee is captured before the claw reads it, so the
+  // claw nets the fee share instead of clawing the gross refunded cents.
+  assert.ok(log.indexOf('fee-capture') > -1 && log.indexOf('fee-capture') < log.indexOf('claw:read'),
+    'the fee capture runs before the clawback reads the tip');
+  assert.equal(log.indexOf('fee-capture'), log.indexOf('assign') + 1,
+    'the fee is captured right after placement, before either path reads it');
 });
 
 test('a partly refunded tip on a frozen event is refused while today period EXISTS and is frozen, with the reason named, and nothing moves', async () => {
@@ -353,7 +365,7 @@ test('on the frozen path the clawback deferral is re-armed after the roll-forwar
   periodStatus = 'paid';
   const r = await patch(PATH, { shift_id: SHIFT_ID });
   assert.equal(r.status, 200, r.raw);
-  assert.deepEqual(log, ['assign', 'rollforward:read', 'rollforward:success', 'rearm', 'claw:read', 'claw:final'],
+  assert.deepEqual(log, ['assign', 'fee-capture', 'rollforward:read', 'rollforward:success', 'rearm', 'claw:read', 'claw:final'],
     'the marker is re-armed between the roll-forward success and the claw, and the claw clears it');
   const rearm = markerWrites.find((w) => w && w.rearm);
   assert.deepEqual(rearm.rearm, [TIP_ID, 600], 'defer_target_cents is the refunded total');

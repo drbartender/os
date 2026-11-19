@@ -219,3 +219,15 @@ test('admin PATCH electing a method with nothing on file is refused with a messa
   assert.match(r.body.error, /bank routing and account numbers/, 'the reason is the message, not the generic banner');
   assert.deepEqual(writes, []);
 });
+
+// L7 of verify pass 2: a row whose handle lives only in payment_username (the
+// import shape) could not pay its method before this edit either, so adding
+// another handle leaves the stored method alone.
+test('admin PATCH adding another handle keeps a stored method this row could not pay before the edit', async () => {
+  profileRow = { preferred_payment_method: 'venmo', venmo_handle: null, payment_username: 'imported' };
+  const r = await patch(PATH, tokenFor(ADMIN_ID), { paypal_url: 'https://paypal.me/added-link' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.preferred_cleared, false);
+  const upserts = writes.filter((w) => w.sql.startsWith('INSERT INTO payment_profiles'));
+  assert.ok(!upserts[0].sql.includes('preferred_payment_method'), 'the method column is not touched');
+});

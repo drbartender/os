@@ -371,3 +371,14 @@ test('PATCH /api/me/tip-page leaves a legacy stored label alone when a handle is
   const upsert = paymentWrites()[0];
   assert.ok(!upsert.sql.includes('preferred_payment_method'), 'the method column is not touched');
 });
+
+// L7 of verify pass 2: the import shape (handle only in payment_username)
+// could not pay its method before the edit, so adding another handle keeps it.
+test('PATCH /api/me/tip-page adding another handle keeps a stored method the row could not pay before', async () => {
+  paymentRow.preferred_payment_method = 'venmo';
+  paymentRow.payment_username = 'imported';
+  const r = await req('PATCH', '/api/me/tip-page', tokenFor(STAFF_ID), { cashapp_handle: '$imported' });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, false);
+  assert.ok(!paymentWrites()[0].sql.includes('preferred_payment_method'), 'the method column is not touched');
+});
