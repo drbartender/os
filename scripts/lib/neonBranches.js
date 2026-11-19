@@ -3,7 +3,9 @@
 /*
  * neonBranches.js: the Neon REST calls behind run-suites' parallel workers
  * (2026-11-08): find or create a ci-suites-<n> branch off the dev branch,
- * reset it to dev, and fetch its pooled connection URI.
+ * reset it to dev, and fetch its pooled connection URI. Slot 1 uses
+ * ci-suites-1..4 and slot 2 ci-suites-5..8 (2026-11-19), so two runs, each
+ * under its own slot lock, never reset each other's branches.
  *
  * Every branch this module creates or resets is named ci-suites-<n>; a reset or
  * a URI read of any other name throws, so production and dev are never touched
@@ -134,15 +136,28 @@ async function connectionUri(key, name, branchId) {
   return resp.uri;
 }
 
-// n fresh worker databases: ci-suites-1..n, each reset to dev, as pooled URIs
-// in order. Throws (masked) when any step fails.
-async function workerDatabases(key, n) {
+// Branches per slot: a slot's run uses at most this many workers.
+const SLOT_WIDTH = 4;
+
+// The branch names of slot `slot` (1 or 2) for n workers: slot 1 is
+// ci-suites-1..n, slot 2 ci-suites-5..(4+n). Throws on any other slot or an n
+// outside 1..SLOT_WIDTH, so two slots can never share a branch.
+function workerBranchNames(n, slot = 1) {
+  if (slot !== 1 && slot !== 2) throw new Error(`neonBranches: unknown slot ${slot}`);
+  if (!Number.isInteger(n) || n < 1 || n > SLOT_WIDTH) throw new Error(`neonBranches: ${n} workers is outside 1..${SLOT_WIDTH}`);
+  const first = (slot - 1) * SLOT_WIDTH + 1;
+  return Array.from({ length: n }, (_, i) => `ci-suites-${first + i}`);
+}
+
+// n fresh worker databases for `slot`, each reset to dev, as pooled URIs in
+// order. Throws (masked) when any step fails.
+async function workerDatabases(key, n, slot = 1) {
+  const names = workerBranchNames(n, slot);
   const parent = await branchByName(key, PARENT_NAME);
   if (!parent) throw new Error(`Neon branch "${PARENT_NAME}" not found`);
-  const names = Array.from({ length: n }, (_, i) => `ci-suites-${i + 1}`);
   const ids = await Promise.all(names.map((nm) => ensureBranch(key, nm, parent.id)));
   await Promise.all(names.map((nm, i) => resetToParent(key, nm, ids[i], parent.id)));
   return Promise.all(names.map((nm, i) => connectionUri(key, nm, ids[i])));
 }
 
-module.exports = { discoverApiKey, workerDatabases, mask, registerSecret, guardName, NAME_RE };
+module.exports = { discoverApiKey, workerDatabases, workerBranchNames, SLOT_WIDTH, mask, registerSecret, guardName, NAME_RE };

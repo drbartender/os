@@ -38,6 +38,25 @@
  * ends, not between suites. No Neon key, a failed Neon step or initDb, or one
  * worker runs the serial path below on the dev database.
  *
+ * Two slots (2026-11-19): the lock above is slot 1 and guards the dev
+ * database and ci-suites-1..4; drb-devdb-2.lock (beside it) is slot 2 and
+ * guards ci-suites-5..8. A run that will go parallel on Neon branches (two or
+ * more workers and server suites, a Neon key, no RUN_SUITES_ROOT,
+ * DRB_DEVDB_LOCK_FILE or RUN_SUITES_DB_URLS) takes whichever slot is free, or
+ * waits on the slot with the shorter line (slot 1 on a tie); every other run
+ * takes slot 1. The launcher names its slot to the re-exec in RUN_SUITES_SLOT.
+ * A slot-2 run whose branches or initDb fail refuses (did_not_run) instead of
+ * going serial, since slot 1 may be on the dev database at that moment. The
+ * slot-1 holder writes drb-devdb-slot1.json beside the locks ({pid, mode}:
+ * "no-dev" on its ci-suites branches or a serial run of no server suite,
+ * "dev" before a serial server suite),
+ * and a slot-2 run resets its branches from dev only while slot 1 is free or
+ * its live holder said "no-dev", so a branch never starts with a serial
+ * run's half-written fixtures. Anything else on slot 1 (an older lane's
+ * runner, which writes no marker, a run still preparing) makes slot 2 wait.
+ * A stated limit: slot 1 changing hands in the second between that check and
+ * the reset is not seen.
+ *
  * Each suite runs as `node -r dotenv/config --test-reporter=tap
  * --test-reporter-destination=<log> <file>` (tapSummary.suiteArgv, the argv
  * testdb-smoke uses too) with cwd at the repo root. Its log,
@@ -122,7 +141,7 @@ const { spawnSync, execFileSync, spawn, fork } = require('child_process');
 // diff options from the environment (review-tooling security, run-suites L4).
 const SM = require('./sensitive-match');
 const { parse, logName, outName, suiteArgv, suiteEnv, smokeSummary, didNotRun, claimRunDir, joinRunDir, releaseRunDir } = require('./lib/tapSummary');
-const { underLock, parentGone, looksLikeReexec, exitOnStopSignals, yieldToSignals, sweepSession, gnuTimeout, boundedNodeSync, NO_GNU_TIMEOUT } = require('./lib/flockExec');
+const { underLock, parentGone, flockHolders, looksLikeReexec, exitOnStopSignals, yieldToSignals, sweepSession, gnuTimeout, boundedNodeSync, NO_GNU_TIMEOUT } = require('./lib/flockExec');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ROOTS = ['server/', 'scripts/'];
@@ -137,7 +156,10 @@ const SUITE_TIMEOUT_MS = 300_000;
 // touches the dev database the local server uses. The default is 4; --workers
 // 1, RUN_SUITES_WORKERS=1, no Neon key, fewer than two server suites, or a
 // Neon step that fails runs the serial path on the dev database, as before.
+// At most 4 (one slot's branches, neonBranches.SLOT_WIDTH) since 2026-11-19.
 const DEFAULT_WORKERS = 4;
+const MAX_WORKERS = 4;
+const SLOT_ENV = 'RUN_SUITES_SLOT';
 const INITDB_TIMEOUT_MS = 180_000;
 
 function norm(root, p) {
@@ -298,7 +320,7 @@ function parseArgs(argv) {
     if (a === '--workers') {
       if (opts.workers !== null) throw usage('--workers given twice');
       const n = Number(value(a, argv[++i]));
-      if (!Number.isInteger(n) || n < 1 || n > 8) throw usage('--workers takes a whole number from 1 to 8');
+      if (!Number.isInteger(n) || n < 1 || n > MAX_WORKERS) throw usage(`--workers takes a whole number from 1 to ${MAX_WORKERS}`);
       opts.workers = n;
     } else if (a === '--log-dir') {
       if (opts.logDir !== null) throw usage('--log-dir given twice');
@@ -389,6 +411,7 @@ function runnerFreeEnv(env) {
   delete env.RUN_SUITES_WORKERS;
   delete env.RUN_SUITES_DB_URLS;
   delete env.RUN_SUITES_WORKER_LOCK_FD;
+  delete env[SLOT_ENV];
   return env;
 }
 
@@ -421,9 +444,18 @@ function writeDurations(root, results) {
     const m = /^# duration_ms ([\d.]+)/m.exec(r.text || '');
     if (m) d[r.file] = Math.round(Number(m[1]));
   }
+  // Written aside and renamed in, since two slots' runs can end together: a
+  // reader sees the old record or the new one, never half of one.
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(file, `${JSON.stringify(d, null, 2)}\n`);
+    fs.writeFileSync(tmp, `${JSON.stringify(d, null, 2)}\n`);
+    fs.renameSync(tmp, file);
   } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (rmErr) {
+      console.error(`run-suites: could not remove ${tmp} (${rmErr.code || rmErr.message})`);
+    }
     // a record we cannot write only costs ordering next time
     console.error(`run-suites: could not record suite durations (${err.code || err.message}); the next run orders its queue without them`);
   }
@@ -441,17 +473,25 @@ function workerCount(opts, env = process.env) {
   if (opts.workers !== null) return opts.workers;
   if (env.RUN_SUITES_ROOT) return 1;
   const n = Number(env.RUN_SUITES_WORKERS);
-  return Number.isInteger(n) && n >= 1 && n <= 8 ? n : DEFAULT_WORKERS;
+  return Number.isInteger(n) && n >= 1 && n <= MAX_WORKERS ? n : DEFAULT_WORKERS;
 }
 
 // The worker databases: RUN_SUITES_DB_URLS (comma-separated, a test and a
-// hand override) or n fresh ci-suites branches; null with one stderr line
-// when there is no Neon key or a Neon step fails, so the run goes serial.
-async function workerDbUrls(n) {
+// hand override) or n fresh ci-suites branches of `slot`; null with one stderr
+// line when there is no Neon key or a Neon step fails, so the run goes serial
+// (a slot-2 run refuses instead, in cli).
+async function workerDbUrls(n, slot = 1, why = {}) {
+  // Slot 2 never goes serial (cli refuses), so its lines say so and the
+  // reason is handed back in why.reason for the refusal to carry.
+  const tail = slot === 2 ? 'the second slot refuses rather than run serially on the dev database' : 'running serially on the dev database';
+  const say = (line) => {
+    why.reason = line;
+    console.error(`run-suites: ${line}; ${tail}`);
+  };
   if (process.env.RUN_SUITES_DB_URLS) {
     const urls = process.env.RUN_SUITES_DB_URLS.split(',').filter(Boolean).slice(0, n);
     if (urls.length < 2) {
-      console.error(`run-suites: RUN_SUITES_DB_URLS names ${urls.length} database(s), and a parallel run needs two or more; running serially on the dev database`);
+      say(`RUN_SUITES_DB_URLS names ${urls.length} database(s), and a parallel run needs two or more`);
       return null;
     }
     return urls;
@@ -459,13 +499,14 @@ async function workerDbUrls(n) {
   const NB = require('./lib/neonBranches');
   const key = NB.discoverApiKey();
   if (!key) {
-    console.error('run-suites: no Neon key (NEON_API_KEY or ~/.secrets/neon_api_key); running serially on the dev database');
+    say('no Neon key (NEON_API_KEY or ~/.secrets/neon_api_key)');
     return null;
   }
   try {
-    return await NB.workerDatabases(key, n);
+    if (slot === 2) await waitForSlot1Quiet(REPO_ROOT);
+    return await NB.workerDatabases(key, n, slot);
   } catch (err) {
-    console.error(`run-suites: the worker branches could not be prepared (${NB.mask(err.message)}); running serially on the dev database`);
+    say(`the worker branches could not be prepared (${NB.mask(err.message)})`);
     return null;
   }
 }
@@ -563,11 +604,157 @@ function writeSummary(logDir, summary) {
   fs.writeFileSync(path.join(logDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 }
 
-// The dev-suite lock file: DRB_DEVDB_LOCK_FILE, else drb-devdb.lock in the
-// git common dir (throws when git cannot name it).
-function devdbLockFile(root) {
-  return process.env.DRB_DEVDB_LOCK_FILE ? path.resolve(process.env.DRB_DEVDB_LOCK_FILE) : path.join(gitCommonDir(root), 'drb-devdb.lock');
+// The dev-suite lock file of `slot`: DRB_DEVDB_LOCK_FILE (one slot only),
+// else drb-devdb.lock (slot 1) or drb-devdb-2.lock (slot 2) in the git common
+// dir (throws when git cannot name it).
+function devdbLockFile(root, slot = 1) {
+  if (process.env.DRB_DEVDB_LOCK_FILE) return path.resolve(process.env.DRB_DEVDB_LOCK_FILE);
+  return path.join(gitCommonDir(root), slot === 2 ? 'drb-devdb-2.lock' : 'drb-devdb.lock');
 }
+
+// The slot the re-exec was launched for: 2 only when the launcher said so.
+function slotFromEnv(env = process.env) {
+  return env[SLOT_ENV] === '2' && !env.DRB_DEVDB_LOCK_FILE ? 2 : 1;
+}
+
+// Holders plus waiters on lockFile's inode in /proc/locks (0 when the file
+// or the table cannot be read: a guess here only picks a line to wait in).
+function lockLine(lockFile, locksPath = '/proc/locks') {
+  let ino;
+  let raw;
+  try {
+    ino = String(fs.statSync(lockFile, { bigint: true }).ino);
+    raw = fs.readFileSync(locksPath, 'utf8');
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const line of raw.split('\n')) {
+    const m = /\bFLOCK\s+\S+\s+\S+\s+\d+\s+[0-9a-f]+:[0-9a-f]+:(\d+)\s/.exec(line);
+    if (m && m[1] === ino) n++;
+  }
+  return n;
+}
+
+// Pure: the slot a parallel-eligible run takes. A free slot 1, else a free
+// slot 2, else the shorter line, slot 1 on a tie.
+function pickSlot({ free1, free2, line1, line2 }) {
+  if (free1) return 1;
+  if (free2) return 2;
+  return line2 < line1 ? 2 : 1;
+}
+
+// The launcher's slot for this run: 2 is possible only for a run that will go
+// parallel on Neon branches; everything else (a serial run on the dev
+// database, a fixture root, a lock override, named databases) is slot 1.
+function chooseSlot(root, nWorkers, serverSuites, env = process.env) {
+  if (env.DRB_DEVDB_LOCK_FILE || env.RUN_SUITES_ROOT || env.RUN_SUITES_DB_URLS) return 1;
+  if (nWorkers < 2 || serverSuites < 2) return 1;
+  if (!require('./lib/neonBranches').discoverApiKey()) return 1;
+  const [l1, l2] = [devdbLockFile(root, 1), devdbLockFile(root, 2)];
+  const free = (f) => spawnSync('flock', ['-n', f, 'true']).status === 0;
+  const free1 = free(l1);
+  const free2 = !free1 && free(l2);
+  return pickSlot({ free1, free2, line1: lockLine(l1), line2: lockLine(l2) });
+}
+
+// The slot-1 marker: drb-devdb-slot1.json in the git common dir,
+// {pid, mode}, written by the run holding slot 1: mode "no-dev" once it runs
+// on its own ci-suites branches, or serially with no server suite (neither
+// touches the dev database's server fixtures), "dev" before it runs a server
+// suite serially on the dev database (null when the root has no
+// git dir). Slot 2 cuts its branches from dev only while slot 1 is free or its
+// holder has said "no-dev"; a held slot 1 with no such word (an older lane's
+// runner writes none, a run still preparing, a serial run) means wait.
+function slot1MarkerFile(root) {
+  try {
+    return path.join(gitCommonDir(root), 'drb-devdb-slot1.json');
+  } catch {
+    return null;
+  }
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+function ppidOf(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+  } catch {
+    return null;
+  }
+}
+// The marker's {pid, mode}, or null (missing, unreadable, malformed).
+function readSlot1Marker(file) {
+  if (!file) return null;
+  try {
+    const m = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const pid = Number(m && m.pid);
+    return Number.isInteger(pid) && pid > 1 && (m.mode === 'no-dev' || m.mode === 'dev') ? { pid, mode: m.mode } : null;
+  } catch {
+    return null;
+  }
+}
+// Pure: may slot 2 cut its branches from dev now? Yes when slot 1 is free, or
+// when the marker says "no-dev" and its pid (or its flock parent) holds
+// slot 1's lock and is alive; anything unknown is no.
+function slot1Quiet({ free, marker, alive, holders, ppid }) {
+  if (free) return true;
+  if (!marker || marker.mode !== 'no-dev' || !alive || !holders) return false;
+  return holders.has(marker.pid) || (ppid !== null && holders.has(ppid));
+}
+// The slot-1 run's word on what it touches, replacing its earlier word; the
+// marker goes when this run ends, if it still names this run.
+let slot1Cleanup = false;
+function markSlot1(root, mode) {
+  const file = slot1MarkerFile(root);
+  if (!file) return;
+  try {
+    fs.writeFileSync(file, `${JSON.stringify({ pid: process.pid, mode })}\n`);
+  } catch (err) {
+    // A missing word only makes a slot-2 run wait for slot 1 to end.
+    console.error(`run-suites: could not write the slot-1 marker ${file} (${err.code || err.message}); a slot-2 run waits for this run to end`);
+    return;
+  }
+  if (slot1Cleanup) return;
+  slot1Cleanup = true;
+  process.on('exit', () => {
+    try {
+      const m = readSlot1Marker(file);
+      if (m && m.pid === process.pid) fs.rmSync(file, { force: true });
+    } catch (err) {
+      console.error(`run-suites: could not remove the slot-1 marker ${file} (${err.code || err.message})`);
+    }
+  });
+}
+// Slot 2, before its reset: wait until slot1Quiet, one stderr line when it
+// waits. The knobs are for tests.
+async function waitForSlot1Quiet(root, { pollMs = 5000, lockFile = devdbLockFile(root, 1), file = slot1MarkerFile(root), locksPath = '/proc/locks' } = {}) {
+  let said = false;
+  for (;;) {
+    const free = spawnSync('flock', ['-n', lockFile, 'true']).status === 0;
+    const marker = free ? null : readSlot1Marker(file);
+    const quiet = slot1Quiet({
+      free,
+      marker,
+      alive: marker ? pidAlive(marker.pid) : false,
+      holders: free ? null : flockHolders(lockFile, locksPath),
+      ppid: marker ? ppidOf(marker.pid) : null,
+    });
+    if (quiet) return;
+    if (!said) console.error('run-suites: slot 1 is held by a run that may be on the dev database; waiting for it before resetting the second slot\'s branches from dev');
+    said = true;
+    await yieldToSignals();
+    if (lockParentGone()) throw new Error('the process that launched this run is gone');
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+let lockParentGone = () => false;
 
 // One line for an error, git's own first line when git said something.
 function oneLine(err) {
@@ -629,7 +816,7 @@ async function cli(argv) {
   if (looksLikeReexec(GUARD)) {
     let lockFile;
     try {
-      lockFile = devdbLockFile(root);
+      lockFile = devdbLockFile(root, slotFromEnv());
     } catch (err) {
       console.error(`run-suites: ${oneLine(err)}`);
       process.exit(1);
@@ -684,7 +871,10 @@ async function cli(argv) {
   if (!lock) {
     let lockFile;
     try {
-      lockFile = devdbLockFile(root);
+      const slot = chooseSlot(root, Math.min(workerCount(opts), suites.length), suites.filter((f) => f.startsWith('server/')).length);
+      // The re-exec inherits this and takes the same lock file.
+      process.env[SLOT_ENV] = String(slot);
+      lockFile = devdbLockFile(root, slot);
     } catch (err) {
       refuse(oneLine(err));
     }
@@ -704,13 +894,19 @@ async function cli(argv) {
 
   const nWorkers = Math.min(workerCount(opts), suites.length);
   const serverSuites = suites.filter((f) => f.startsWith('server/')).length;
-  let urls = nWorkers > 1 && serverSuites >= 2 ? await workerDbUrls(nWorkers) : null;
+  const slot = slotFromEnv();
+  lockParentGone = () => parentGone(lock.parentPid);
+  const why = {};
+  let urls = nWorkers > 1 && serverSuites >= 2 ? await workerDbUrls(nWorkers, slot, why) : null;
+  // Slot 2 never goes serial: slot 1 may be on the dev database right now.
+  if (slot === 2 && !urls) refuse(`the second slot cannot run serially on the dev database: ${why.reason || 'this run no longer reaches two server suites (the staged set changed while it waited)'}; run again`);
   if (urls) {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'drb-initdb-'));
     const res = await Promise.all(urls.map((u, i) => initWorkerDb(root, u, i + 1, outDir, lock.lockFd)));
     const unexpected = res.find((r) => r.unexpected);
     const failed = res.find((r) => r.failed);
     if (unexpected) refuse(unexpected.unexpected);
+    if (failed && slot === 2) refuse(`${failed.failed}; the second slot never runs serially on the dev database, run again`);
     if (failed) {
       console.error(`run-suites: ${failed.failed}; running serially on the dev database`);
       urls = null;
@@ -719,11 +915,12 @@ async function cli(argv) {
     }
   }
   if (urls && urls.length > 1) {
+    if (slot === 1) markSlot1(root, 'no-dev');
     // A sweep between suites would kill the other workers' suites, so the
     // session is swept once, after every worker has ended (a stated limit: a
     // stray child a suite leaves lives until the run ends).
     process.on('exit', () => sweepSession(lock.session));
-    console.log(`run-suites: ${suites.length} suite(s) across ${urls.length} workers, each on its own ci-suites branch`);
+    console.log(`run-suites: ${suites.length} suite(s) across ${urls.length} workers, each on its own ci-suites branch (slot ${slot})`);
     const gone = () => parentGone(lock.parentPid);
     let results;
     try {
@@ -745,6 +942,7 @@ async function cli(argv) {
     process.exit(failed ? 1 : 0);
   }
 
+  if (slot === 1) markSlot1(root, serverSuites > 0 ? 'dev' : 'no-dev');
   const results = [];
   for (const f of suites) {
     await yieldToSignals();
@@ -766,4 +964,4 @@ async function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2));
 
-module.exports = { reachedSuites, stagedPaths, parseArgs, runSuite, queueOrder, workerCount, SUITE_TIMEOUT_MS };
+module.exports = { reachedSuites, stagedPaths, parseArgs, runSuite, queueOrder, workerCount, pickSlot, lockLine, slotFromEnv, devdbLockFile, readSlot1Marker, slot1Quiet, waitForSlot1Quiet, SUITE_TIMEOUT_MS };

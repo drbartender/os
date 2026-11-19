@@ -887,10 +887,10 @@ test('stagedPaths reads HEAD under an env that ignores replace refs: a replaced 
 
 // ---- Parallel workers (2026-11-08) ----
 
-test('parseArgs takes --workers 1 to 8; workerCount reads the flag, then RUN_SUITES_WORKERS, and stays 1 under a root override', () => {
+test('parseArgs takes --workers 1 to 4; workerCount reads the flag, then RUN_SUITES_WORKERS, and stays 1 under a root override', () => {
   const { workerCount } = require(RUNNER);
   assert.strictEqual(parseArgs(['--workers', '3', 'x.test.js']).workers, 3);
-  for (const bad of [['--workers'], ['--workers', '0', 'x.test.js'], ['--workers', '9', 'x.test.js'], ['--workers', '2.5', 'x.test.js'], ['--workers', '2', '--workers', '2', 'x.test.js']]) {
+  for (const bad of [['--workers'], ['--workers', '0', 'x.test.js'], ['--workers', '5', 'x.test.js'], ['--workers', '2.5', 'x.test.js'], ['--workers', '2', '--workers', '2', 'x.test.js']]) {
     assert.throws(() => parseArgs(bad), /usage/, JSON.stringify(bad));
   }
   assert.strictEqual(workerCount({ workers: 2 }, { RUN_SUITES_ROOT: '/x' }), 2, 'the flag wins');
@@ -944,7 +944,7 @@ test('a worker database whose initDb fails sends the run to the serial path', ()
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8')).total_pass, 4);
 });
 
-const SEEN_DB = "const { test } = require('node:test');\ntest('db', () => { console.log('DB=' + process.env.DATABASE_URL + ' W=' + (process.env.RUN_SUITES_WORKERS || '') + ' U=' + (process.env.RUN_SUITES_DB_URLS || '')); });\n";
+const SEEN_DB = "const { test } = require('node:test');\ntest('db', () => { console.log('DB=' + process.env.DATABASE_URL + ' W=' + (process.env.RUN_SUITES_WORKERS || '') + ' U=' + (process.env.RUN_SUITES_DB_URLS || '') + ' S=' + (process.env.RUN_SUITES_SLOT || '')); });\n";
 const OK_INITDB = "module.exports = { initDb: async () => {} };\n";
 
 test('a second run into the same --log-dir after a parallel run is not refused, and a suite never sees the worker knobs', () => {
@@ -959,7 +959,7 @@ test('a second run into the same --log-dir after a parallel run is not refused, 
   const second = runIn(root, args, env);
   assert.strictEqual(second.status, 0, second.stdout + second.stderr);
   const out = fs.readFileSync(path.join(logDir, outName('server/a.test.js')), 'utf8');
-  assert.match(out, /DB=db-(one|two) W= U=\n/, 'the suite got its worker database and none of the knobs');
+  assert.match(out, /DB=db-(one|two) W= U= S=\n/, 'the suite got its worker database and none of the knobs');
 });
 
 test('an initDb that logs an UNEXPECTED schema failure refuses the run with did_not_run', () => {
@@ -994,4 +994,130 @@ test('a root with no git dir still writes its summary (no durations record to ke
   assert.strictEqual(r.status, 0, r.stdout + r.stderr);
   assert.doesNotMatch(r.stderr, /durations/);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8')).total_pass, 2);
+});
+
+// ---- Two slots (2026-11-19) ----
+
+test('pickSlot takes a free slot 1, else a free slot 2, else the shorter line with slot 1 on a tie', () => {
+  const { pickSlot } = require(RUNNER);
+  assert.strictEqual(pickSlot({ free1: true, free2: true, line1: 0, line2: 0 }), 1);
+  assert.strictEqual(pickSlot({ free1: false, free2: true, line1: 3, line2: 0 }), 2);
+  assert.strictEqual(pickSlot({ free1: false, free2: false, line1: 3, line2: 2 }), 2);
+  assert.strictEqual(pickSlot({ free1: false, free2: false, line1: 2, line2: 2 }), 1);
+  assert.strictEqual(pickSlot({ free1: false, free2: false, line1: 1, line2: 4 }), 1);
+});
+
+test('slotFromEnv is 2 only when the launcher said 2 and no lock override is set; devdbLockFile names one file per slot', () => {
+  const { slotFromEnv, devdbLockFile } = require(RUNNER);
+  assert.strictEqual(slotFromEnv({ RUN_SUITES_SLOT: '2' }), 2);
+  assert.strictEqual(slotFromEnv({ RUN_SUITES_SLOT: '2', DRB_DEVDB_LOCK_FILE: '/x.lock' }), 1, 'an override is one slot');
+  for (const v of [undefined, '1', '3', '02', ' 2']) assert.strictEqual(slotFromEnv({ RUN_SUITES_SLOT: v }), 1, String(v));
+  const root = gitRepo('rs-slot-', { 'a.txt': 'a\n' });
+  const saved = process.env.DRB_DEVDB_LOCK_FILE;
+  delete process.env.DRB_DEVDB_LOCK_FILE;
+  try {
+    assert.strictEqual(path.basename(devdbLockFile(root, 1)), 'drb-devdb.lock');
+    assert.strictEqual(path.basename(devdbLockFile(root, 2)), 'drb-devdb-2.lock');
+    assert.strictEqual(path.dirname(devdbLockFile(root, 2)), path.dirname(devdbLockFile(root, 1)));
+  } finally {
+    if (saved !== undefined) process.env.DRB_DEVDB_LOCK_FILE = saved;
+  }
+});
+
+test('lockLine counts holders and waiters on the lock file inode only', () => {
+  const { lockLine } = require(RUNNER);
+  const dir = tmp('rs-line-');
+  const lock = path.join(dir, 'x.lock');
+  fs.writeFileSync(lock, '');
+  const ino = String(fs.statSync(lock, { bigint: true }).ino);
+  const table = path.join(dir, 'locks');
+  fs.writeFileSync(table, [
+    `1: FLOCK  ADVISORY  WRITE 100 08:02:${ino} 0 EOF`,
+    `1: -> FLOCK  ADVISORY  WRITE 101 08:02:${ino} 0 EOF`,
+    `1: -> FLOCK  ADVISORY  WRITE 102 08:02:${ino} 0 EOF`,
+    `2: FLOCK  ADVISORY  WRITE 103 08:02:${ino}9 0 EOF`,
+    `3: POSIX  ADVISORY  WRITE 104 08:02:${ino} 0 EOF`,
+  ].join('\n'));
+  assert.strictEqual(lockLine(lock, table), 3);
+  assert.strictEqual(lockLine(path.join(dir, 'missing.lock'), table), 0);
+});
+
+test('workerBranchNames: slot 1 is ci-suites-1..4, slot 2 ci-suites-5..8, never shared, every name passes the guard', () => {
+  const NB = require('./lib/neonBranches');
+  assert.deepStrictEqual(NB.workerBranchNames(4, 1), ['ci-suites-1', 'ci-suites-2', 'ci-suites-3', 'ci-suites-4']);
+  assert.deepStrictEqual(NB.workerBranchNames(4, 2), ['ci-suites-5', 'ci-suites-6', 'ci-suites-7', 'ci-suites-8']);
+  assert.deepStrictEqual(NB.workerBranchNames(2, 2), ['ci-suites-5', 'ci-suites-6']);
+  for (const nm of [...NB.workerBranchNames(4, 1), ...NB.workerBranchNames(4, 2)]) assert.doesNotThrow(() => NB.guardName(nm));
+  for (const [n, slot] of [[5, 1], [0, 1], [2, 3], [2, 0], [1.5, 1]]) assert.throws(() => NB.workerBranchNames(n, slot), /neonBranches/, `${n}/${slot}`);
+});
+
+test('a forged RUN_SUITES_SLOT=2 under a lock override still takes the override lock and runs', () => {
+  const root = gitRepo('rs-slot-forge-', { 'server/db/index.js': OK_INITDB, 'server/a.test.js': SEEN_DB, 'server/b.test.js': SEEN_DB });
+  const logDir = path.join(tmp('rs-slot-forge-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'], { RUN_SUITES_DB_URLS: 'db-one,db-two', RUN_SUITES_SLOT: '2' });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /across 2 workers.*\(slot 1\)/);
+  assert.match(fs.readFileSync(path.join(logDir, outName('server/a.test.js')), 'utf8'), / S=\n/, 'a suite never sees the slot');
+});
+
+test('slot1Quiet lets slot 2 cut from dev only while slot 1 is free or its live holder said no-dev', () => {
+  const { slot1Quiet } = require(RUNNER);
+  const holders = new Set([500]);
+  assert.strictEqual(slot1Quiet({ free: true, marker: null, alive: false, holders: null, ppid: null }), true, 'slot 1 free');
+  assert.strictEqual(slot1Quiet({ free: false, marker: null, alive: false, holders, ppid: null }), false, 'held, no word: an older runner or a run still preparing');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 501, mode: 'no-dev' }, alive: true, holders, ppid: 500 }), true, 'the holder (under its flock parent) said no-dev');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 500, mode: 'no-dev' }, alive: true, holders, ppid: 1 }), true, 'the holder itself said no-dev');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 501, mode: 'dev' }, alive: true, holders, ppid: 500 }), false, 'serial on dev');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 501, mode: 'no-dev' }, alive: false, holders, ppid: 500 }), false, 'a dead pid');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 777, mode: 'no-dev' }, alive: true, holders, ppid: 778 }), false, 'a stale word from a run that no longer holds slot 1');
+  assert.strictEqual(slot1Quiet({ free: false, marker: { pid: 501, mode: 'no-dev' }, alive: true, holders: null, ppid: 500 }), false, 'the lock table unreadable');
+});
+
+test('readSlot1Marker takes only a well-formed {pid, mode}', () => {
+  const { readSlot1Marker } = require(RUNNER);
+  const dir = tmp('rs-marker-');
+  const file = path.join(dir, 'drb-devdb-slot1.json');
+  assert.strictEqual(readSlot1Marker(file), null, 'no marker');
+  assert.strictEqual(readSlot1Marker(null), null);
+  for (const bad of ['not json', '{"pid":1,"mode":"dev"}', '{"pid":42,"mode":"maybe"}', '{"mode":"dev"}']) {
+    fs.writeFileSync(file, bad);
+    assert.strictEqual(readSlot1Marker(file), null, bad);
+  }
+  fs.writeFileSync(file, '{"pid":42,"mode":"no-dev"}');
+  assert.deepStrictEqual(readSlot1Marker(file), { pid: 42, mode: 'no-dev' });
+});
+
+test('waitForSlot1Quiet returns at once on a free slot 1 and waits while a holder with no word holds it', async () => {
+  const { waitForSlot1Quiet } = require(RUNNER);
+  const dir = tmp('rs-wait-');
+  const lockFile = path.join(dir, 'slot1.lock');
+  const file = path.join(dir, 'drb-devdb-slot1.json');
+  fs.writeFileSync(lockFile, '');
+  await waitForSlot1Quiet(dir, { pollMs: 20, lockFile, file });
+  const holder = spawn('flock', [lockFile, 'sleep', '0.4'], { stdio: 'ignore' });
+  children.push(holder);
+  for (let i = 0; i < 50 && spawnSync('flock', ['-n', lockFile, 'true']).status === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  const start = Date.now();
+  await waitForSlot1Quiet(dir, { pollMs: 20, lockFile, file });
+  assert.ok(Date.now() - start >= 200, 'it waited for the holder to let go');
+});
+
+test('a serial run with a server suite marks slot 1 dev while its suites run and removes the marker after', () => {
+  const PEEK = "const { test } = require('node:test');\nconst fs = require('fs');\ntest('peek', () => { console.log('MARK=' + fs.readFileSync(require('path').join(__dirname, '..', '.git', 'drb-devdb-slot1.json'), 'utf8').trim()); });\n";
+  const root = gitRepo('rs-serial-mark-', { 'server/a.test.js': PEEK });
+  const logDir = path.join(tmp('rs-serial-mark-logs-'), 'run');
+  const r = runIn(root, ['--log-dir', logDir, 'server/a.test.js']);
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(fs.readFileSync(path.join(logDir, outName('server/a.test.js')), 'utf8'), /MARK=\{"pid":\d+,"mode":"dev"\}/);
+  assert.ok(!fs.existsSync(path.join(root, '.git', 'drb-devdb-slot1.json')), 'the marker goes when the run ends');
+});
+
+test('a parallel run marks slot 1 no-dev while its workers run', () => {
+  const PEEK = "const { test } = require('node:test');\nconst fs = require('fs');\ntest('peek', () => { console.log('MARK=' + fs.readFileSync(require('path').join(__dirname, '..', '.git', 'drb-devdb-slot1.json'), 'utf8').trim()); });\n";
+  const root = gitRepo('rs-par-mark-', { 'server/db/index.js': OK_INITDB, 'server/a.test.js': PEEK, 'server/b.test.js': PEEK });
+  const logDir = path.join(tmp('rs-par-mark-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'], { RUN_SUITES_DB_URLS: 'db-one,db-two' });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(fs.readFileSync(path.join(logDir, outName('server/a.test.js')), 'utf8'), /MARK=\{"pid":\d+,"mode":"no-dev"\}/);
+  assert.ok(!fs.existsSync(path.join(root, '.git', 'drb-devdb-slot1.json')));
 });
