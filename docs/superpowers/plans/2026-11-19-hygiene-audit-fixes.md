@@ -1,7 +1,7 @@
 ---
 spec: none. The findings come from the read-only hygiene audit of 2026-11-16 (rule drift, dead endpoints, contracts and swallowed errors, env parity), each re-checked in the code; the owner asked on 2026-11-19 for them to be done ("would like to get these things done"). The lane split and every design choice below are Claude's.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 1 (2026-11-19)
+revision: 2 (2026-11-19): the cover-swap-approve lane is superseded. Its review found that the one-click page reached /api/admin/cover-swaps, which skips the staffing permission and the claimer's confirmation, and that the approve paths most admins use (the event page, the phone sheet, auto-assign) approve a cover claim through the assign upsert without the cover cascade, so the covered staffer stays approved and payroll pays both. The email link fix moves into the new cover-claim-cascade lane, which fixes that root; the unused cover-swaps router moves into audit-dead-routes. The cover-swap-approve branch stays unmerged until its scrap is approved.
 dropped: the client deposit literal (already fixed on the open audit-payments lane, commit 489cc1ea); the review skill's two-way proportion text (machinery change, left for its own decision).
 lanes:
   - id: audit-small-fixes
@@ -53,7 +53,7 @@ lanes:
     lenses: tier A floor (auth and webhook paths); verify.
     laws: the boot refusal ships only after the owner confirms NODE_ENV=production in Render, since a wrong value there would turn this into an outage; no secret gains a fallback.
     acceptance: a test boots the guard with RENDER set and NODE_ENV unset and sees it refuse; a reset URL in a production-env test never contains localhost; an unsubscribe token signed with JWT_SECRET still verifies when UNSUBSCRIBE_SECRET is set.
-  - id: cover-swap-approve
+  - id: cover-swap-approve  (superseded by cover-claim-cascade, revision 2)
     scope: >
       The cover-swap email links to ADMIN_URL/admin/shifts/cover-swaps/<token>; client/vercel.json strips
       /admin and the admin app has no such route, so the link lands on the home page. The server routes exist
@@ -80,6 +80,21 @@ lanes:
     blockedBy: [the owner's yes to deleting whole tracked files]
     lenses: whatever the review skill computes.
     acceptance: grep finds no caller for any removed path before removal; the reached suites pass.
+  - id: cover-claim-cascade
+    scope: >
+      Approving a pending cover claim (a shift_request whose replaced_by_request_id points at an approved
+      original with cover_requested_at set) through the assign upsert (server/routes/shifts.approval.js
+      ~line 283, used by the event page's shift drawer and the phone sheet) or auto-assign
+      (server/utils/autoAssign.js ~line 344) sets the claimer approved but never runs the cover cascade, so
+      the original stays approved and undropped, the cover stays claimable, and payroll accrues both. Each
+      of those paths runs the shared cascade (deny and drop the original, move the out-of-area lock,
+      re-accrue on a completed event) when the row it approves is such a claim. The cascade also suppresses
+      the covered staffer's pending shift_reminder and staff_thank_you rows, as the drop and emergency-drop
+      routes do. The claim email (server/routes/staffShiftActions.js) links to the event page, as the
+      claim's push already does, and says to approve the claim there.
+    blockedBy: [audit-payouts-followup merged, since it rewrites shifts.approval.js and coverApprovalCascade.js]
+    lenses: tier A.
+    acceptance: a test approves a cover claim through the assign route and through auto-assign and finds the original denied and dropped, one payout line after accrual, and the original's reminder rows suppressed; each fails on main.
   - id: payroll-accrual-surface
     scope: >
       A failed payroll accrual is reported as success: proposals/lifecycle.js (mark completed), the tip
