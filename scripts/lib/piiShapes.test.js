@@ -1097,3 +1097,18 @@ test('a bearer rule matches a token-shaped value, never the prose after the word
   const lettersOnly = 'QxZqXzQxZqXzQxZqXzQxZqXz';
   assert.strictEqual(mask(`Authorization: Bearer ${lettersOnly}`, { path: SPEC }), 'Authorization: <TOKEN>');
 });
+
+test('a lockfile exempts its integrity hashes and nothing else', () => {
+  const { pathClass, pathAllowed } = require(MOD);
+  const hash = 'sha512-' + rep('Zq9/Ab+', 12) + 'Q==';
+  const line = `      "integrity": "${hash}",`;
+  for (const p of ['package-lock.json', 'client/package-lock.json', 'thumbtack-agent/package-lock.json']) {
+    assert.strictEqual(pathClass(p), 'lockfile', p);
+    assert.strictEqual(mask(line, { path: p }), line, `${p}: an integrity hash passes`);
+    assert.strictEqual(mask(`k ${SK_LIVE} e`, { path: p }), 'k <TOKEN> e', `${p}: a live key still masks`);
+    assert.strictEqual(mask(`call ${UNASSIGNABLE}`, { path: p }), 'call <PHONE>', `${p}: a phone is judged as on a code path`);
+  }
+  assert.strictEqual(mask(line, { path: ROUTE }).includes('<TOKEN>'), true, 'the same hash on a code path masks');
+  assert.strictEqual(pathClass('server/package-lock.json'), 'code', 'only the three tracked lockfiles');
+  assert.strictEqual(pathAllowed('package-lock.json'), false, 'a lockfile is not a fixture path');
+});

@@ -29,12 +29,15 @@
 //                       (sk_live_, rk_live_, whsec_, every sk- key, AIza,
 //                       gh*_, github_pat_, napi_, a Stripe client secret, a
 //                       Telegram pair), which is never exempt anywhere.
+//             lockfile  the three tracked package-lock.json files: a TOKEN
+//                       that is not a live key (npm's integrity hashes);
+//                       every other shape judged as on a code path.
 //             code      every other path, and no path: the business lines, the
 //                       555 fixture exchange and the business email domain.
 //           In a diff, a removed line of a rename or a copy, and the funcname
 //           copy in its hunk headers, lived in the old file: it is judged under
-//           the stricter of the old and new paths' classes (code beats test,
-//           test beats registry), so a rename never turns real ids into
+//           the stricter of the old and new paths' classes (code beats lockfile,
+//           lockfile beats test, test beats registry), so a rename never turns real ids into
 //           fixtures.
 //
 // Shapes (each a list of forms, below): EMAIL (an at sign or %40), PHONE (the
@@ -199,6 +202,10 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const TEST_PATHS = Object.freeze(['**/*.test.js', 'server/db/seedTestData.js']);
 const REGISTRY_PATHS = Object.freeze(['server/utils/smsLines.js', 'server/utils/companyPhone.js']);
+// npm's lockfiles: every added dependency carries an "integrity" hash (base64
+// sha512), which reads as a TOKEN. A lockfile exempts a TOKEN that is not a
+// live key and nothing else; every other shape is judged as on a code path.
+const LOCKFILE_PATHS = Object.freeze(['package-lock.json', 'client/package-lock.json', 'thumbtack-agent/package-lock.json']);
 
 // Every registry that failed to load, as one line each (file and error code), so
 // the CLI can print why a business line masked instead of swallowing the cause. Declared
@@ -219,6 +226,8 @@ const ALLOWLIST = Object.freeze({
   // unassignable (area code or exchange starting 0 or 1); any other shape
   // unless it is a live key, which is never exempt anywhere.
   testPaths: TEST_PATHS,
+  // lockfiles: a TOKEN that is not a live key (the integrity hashes)
+  lockfilePaths: LOCKFILE_PATHS,
   testEmailDomains: Object.freeze(['example.com', 'example.org', 'example.net', 'example.edu', 'test.com', 'drbartender.com']),
   testEmailSuffixes: Object.freeze(['.test', '.invalid', '.example', '.localhost']),
   // by literal, on every allowlisted path: the business lines (read from the
@@ -306,13 +315,15 @@ function globToRegex(glob) {
 
 const TEST_GLOBS = TEST_PATHS.map(globToRegex);
 const REGISTRY_GLOBS = REGISTRY_PATHS.map(globToRegex);
+const LOCKFILE_GLOBS = LOCKFILE_PATHS.map(globToRegex);
 
 function normalizePath(p) {
   return String(p || '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
 }
 
 // 'registry' (phones and emails exempt, the rest as a fixture path), 'test'
-// (fixtures exempt) or 'code' (any other path, and no path at all). A path is
+// (fixtures exempt), 'lockfile' (a TOKEN that is not a live key exempt, the
+// rest as code) or 'code' (any other path, and no path at all). A path is
 // classified exactly as git names it: a spelling normalization would change
 // (literal backslashes, a trailing space, a leading ./) is another file and
 // takes the code class, so no spelling of a registry or fixture path exempts
@@ -323,12 +334,14 @@ function pathClass(p) {
   if (normalizePath(s) !== s) return 'code';
   if (REGISTRY_GLOBS.some((re) => re.test(s))) return 'registry';
   if (TEST_GLOBS.some((re) => re.test(s))) return 'test';
+  if (LOCKFILE_GLOBS.some((re) => re.test(s))) return 'lockfile';
   return 'code';
 }
 
 /** True for a path on the allowlist: a line registry or a fixture path. */
 function pathAllowed(p) {
-  return pathClass(p) !== 'code';
+  const cls = pathClass(p);
+  return cls === 'registry' || cls === 'test';
 }
 
 function nanpLocal(match) {
@@ -476,7 +489,14 @@ function lineAt(starts, index) {
   return lo + 1;
 }
 
-const ALLOWED_BY_CLASS = Object.freeze({ registry: registryAllowed, test: testAllowed, code: literalAllowed, strict: () => false });
+// True when a hit is allowed on a lockfile: a TOKEN that is not a live key
+// (an integrity hash), else what a code path allows.
+function lockfileAllowed(hit) {
+  if (hit.shape === 'TOKEN') return !LIVE_KEY.test(hit.match);
+  return literalAllowed(hit);
+}
+
+const ALLOWED_BY_CLASS = Object.freeze({ registry: registryAllowed, test: testAllowed, lockfile: lockfileAllowed, code: literalAllowed, strict: () => false });
 
 /**
  * Find PII shapes in `text`. `path` (repo-relative) applies the path allowlist;
@@ -629,7 +649,7 @@ function parseFromPath(rest) {
 // Path classes from the most exempt to the strictest: each one's exempt set
 // holds the next one's (a registry exempts every phone and email, a fixture
 // path only fixtures, a code path only the business literals).
-const STRICTNESS = Object.freeze({ registry: 0, test: 1, code: 2 });
+const STRICTNESS = Object.freeze({ registry: 0, test: 1, lockfile: 2, code: 3 });
 
 // The mask options for a line that lived in the old file of a rename or a copy
 // (a removed line, a hunk header's funcname copy): the stricter of the two
