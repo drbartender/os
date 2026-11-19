@@ -18,8 +18,21 @@
 // so a ")" inside a quoted local part can close the comment early and smuggle
 // in a result ("dkim=pass header.i=@zola.com" ahead of Google's real dmarc),
 // and an unclosed "(" can swallow Google's own dmarc result into a comment.
-// The gate therefore refuses a line that holds a quote at all (a real Zola
-// line has none: the envelope sender is Mandrill's bounce address), refuses a
+// The gate therefore refuses a line that holds a quote, with one exception,
+// read off the live mailbox on 2026-11-19: Google quotes a value that is not
+// a plain token, and real Zola mail carries two. The envelope sender of the
+// HubSpot platform (the inquiry, booked and marketing mail) always holds an
+// "=", so smtp.mailfrom is quoted on every one of those; a DKIM b= tag is
+// quoted whenever it holds a "/" (seen on the Mandrill platform's message
+// notices). The first rule, a quote anywhere, refused every new inquiry. So a
+// quoted smtp.mailfrom or header.b whose text is plain (letters, digits and
+// . _ + = / @ - only: no quote, whitespace, ";", parenthesis or backslash)
+// and that ends at whitespace, a ";" or the end of the line is replaced by a
+// fixed word before anything is read; the gate reads neither property. Any
+// other quote still refuses the line. What a quoted local part can still do
+// is close the quote early and write results of its own in the open, and the
+// rules below are what hold then, as they always did for an unquoted value.
+// The gate also refuses a
 // line that does not end balanced (outside every comment), requires exactly
 // ONE dmarc result (Google writes one, last, and nothing the sender controls
 // follows it), reads the FIRST value of a repeated property, and reads an
@@ -39,6 +52,11 @@ const AUTHSERV_ID = 'mx.google.com';
 const ZOLA_DOMAIN = 'zola.com';
 const LABEL_MAX = 120;
 const AUTH_LINE_MAX = 4096;
+
+// The two properties Google quotes on real Zola mail, with a plain value. The
+// lookbehind keeps a longer property name from matching by its tail, and the
+// lookahead refuses a quoted local part ("x"@host) and text glued to the quote.
+const PLAIN_QUOTED_RE = /(?<![a-z0-9_.-])(smtp\.mailfrom|header\.b)="[a-z0-9._+=/@-]*"(?=[\s;]|$)/gi;
 
 const RESULT_RE = /^([a-z0-9_-]+)\s*=\s*([a-z0-9_-]+)/;
 const PROP_RE = /(?<![a-z0-9_-])([a-z0-9_-]+\.[a-z0-9_-]+)\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/g;
@@ -75,12 +93,14 @@ function segmentsOf(value) {
 }
 
 // [{ method, result, props }] from one Authentication-Results value, or null
-// when mx.google.com did not write it, it holds a quote, it runs past
-// AUTH_LINE_MAX, or it does not end balanced.
+// when mx.google.com did not write it, it runs past AUTH_LINE_MAX, it holds a
+// quote other than a plain quoted smtp.mailfrom or header.b, or it does not
+// end balanced. The length cap comes first, so no pattern runs on a long line.
 function authResultsOf(value) {
-  const line = String(value || '');
+  const raw = String(value || '');
+  if (raw.length > AUTH_LINE_MAX) return null;
+  const line = raw.replace(PLAIN_QUOTED_RE, '$1=quoted');
   if (line.includes('"')) return null;
-  if (line.length > AUTH_LINE_MAX) return null;
   const { parts, balanced } = segmentsOf(line.toLowerCase());
   if (!balanced) return null;
   const [head, ...rest] = parts;

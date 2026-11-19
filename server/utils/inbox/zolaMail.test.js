@@ -145,3 +145,72 @@ test('the auth-line reader is linear on a long run of name characters, and a lin
     assert.ok(t < 50, `${line.length} characters took ${t.toFixed(0)} ms`);
   }
 });
+
+// 2026-11-19: read off the live mailbox, every new-inquiry notice was refused.
+// Zola sends through two platforms, and Google quotes a value that is not a
+// plain token: the envelope sender of the HubSpot one always (its local part
+// holds an "="), and a DKIM b= tag whenever it holds a "/". These lines keep
+// Google's shape with invented selectors, signatures, hashes and addresses
+// (the envelope senders sit on a reserved domain; the gate never reads them).
+const HUBSPOT_LINE = [
+  'mx.google.com;',
+  '       dkim=pass header.i=@20623097t.zola.com header.s=hs1 header.b=AbCd1234;',
+  '       dkim=pass header.i=@zola.com header.s=hs1-20623097 header.b=xqEs+kM1;',
+  '       spf=pass (google.com: domain of 1axb9c-contact=vendor.example@bounce.example.net designates 192.0.2.10 as permitted sender)'
+    + ' smtp.mailfrom="1axb9c-contact=vendor.example@bounce.example.net";',
+  '       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=zola.com',
+].join('\r\n');
+const MANDRILL_LINE = 'mx.google.com; dkim=pass header.i=@mandrillapp.com header.s=mte1 header.b="Ab/d12+4"; '
+  + 'dkim=pass header.i=@zola.com header.s=mte1 header.b="Ef/h5678"; '
+  + 'spf=pass (google.com: domain of bounce-md_1.abc123.v1-0f0f@mail.example.net designates 192.0.2.11 as permitted sender) '
+  + 'smtp.mailfrom=bounce-md_1.abc123.v1-0f0f@mail.example.net; dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=zola.com';
+
+test('gate passes the two real line shapes that carry a quoted value', () => {
+  const gate = (v) => zolaAuthPasses(headers(v));
+  assert.equal(gate(HUBSPOT_LINE), true, 'a quoted envelope sender (the inquiry, booked and marketing mail)');
+  assert.equal(gate(MANDRILL_LINE), true, 'a quoted DKIM b= tag (a message or closed notice)');
+  assert.equal(gate(HUBSPOT_LINE.replace('dmarc=pass', 'dmarc=fail')), false, 'the dmarc anchor still decides');
+  assert.equal(gate(HUBSPOT_LINE.replace('header.i=@zola.com', 'header.i=@zola.com.example.net')), false, 'and so does the DKIM domain');
+  assert.equal(gate(`${HUBSPOT_LINE.slice(0, -1)}m; smtp.mailfrom="a@b.example"`), true, 'a plain quoted value last on the line');
+});
+
+test('gate probes: only a plain quoted envelope sender or b= tag is let through', () => {
+  const gate = (v) => zolaAuthPasses(headers(v));
+  const line = (spf, dmarc = 'dmarc=fail (p=REJECT sp=REJECT dis=NONE) header.from=zola.com') => (
+    `mx.google.com; dkim=pass header.i=@evil.example header.s=s1 header.b=AbCd1234; ${spf}; ${dmarc}`);
+  // A quoted local part that closes the quote and writes its own results:
+  // every quote pair is plain, so the line is read, and Google's own dmarc
+  // (last, after everything the sender shaped) makes two.
+  assert.equal(gate(line('spf=pass smtp.mailfrom="x"; dkim=pass header.i=@zola.com; dmarc=pass header.from=zola.com; smtp.mailfrom="y@evil.example"')), false,
+    'a forged dmarc beside Google\'s own: two dmarc results');
+  // The same break-out with no forged dmarc: Google's own dmarc decides.
+  assert.equal(gate(line('spf=pass smtp.mailfrom="x"; dkim=pass header.i=@zola.com; smtp.mailfrom="y@evil.example"')), false,
+    'a forged DKIM pass alone never beats Google\'s dmarc=fail');
+  // A break-out that tries to swallow Google's dmarc into a comment.
+  assert.equal(gate(line('spf=pass smtp.mailfrom="x"; dkim=pass header.i=@zola.com; dmarc=pass header.from=zola.com (@evil.example"')), false,
+    'an unclosed comment, and a quote left over');
+  assert.equal(gate(line('spf=pass smtp.mailfrom="x"; dkim=pass header.i=@zola.com; dmarc=pass header.from=zola.com; smtp.mailfrom="y(@evil.example"')), false,
+    'a "(" inside the quoted value is not plain');
+  // Shapes that stay refused whole.
+  const ok = 'dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=zola.com';
+  const zola = (spf) => `mx.google.com; dkim=pass header.i=@zola.com header.s=s1; ${spf}; ${ok}`;
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x y@evil.example"')), false, 'whitespace inside');
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x;y@evil.example"')), false, 'a ";" inside');
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x\\"y@evil.example"')), false, 'a backslash inside');
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x"@evil.example')), false, 'a quoted local part, not a quoted value');
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x@evil.example"y')), false, 'text right after the closing quote');
+  assert.equal(gate(zola('spf=pass smtp.helo="mail.evil.example"')), false, 'any other property quoted');
+  assert.equal(gate(zola('spf=pass xsmtp.mailfrom="x@evil.example"')), false, 'a longer property name ending the same way');
+  assert.equal(gate('mx.google.com; dkim=pass header.i="@zola.com" header.s=s1; dmarc=pass header.from=zola.com'), false, 'a quoted DKIM identity');
+  assert.equal(gate('mx.google.com; dkim=pass header.i=@zola.com header.s=s1; dmarc=pass header.from="zola.com"'), false, 'a quoted header.from');
+  assert.equal(gate(zola('spf=pass smtp.mailfrom="x@evil.example')), false, 'an unclosed quote');
+});
+
+test('gate stays linear on a long run of quoted values', () => {
+  const started = Date.now();
+  const many = `mx.google.com; ${'smtp.mailfrom="a" '.repeat(200)}; dmarc=pass header.from=zola.com`;
+  assert.ok(many.length < 4096);
+  assert.equal(zolaAuthPasses(headers(many)), false, 'no DKIM pass for zola.com');
+  assert.equal(zolaAuthPasses(headers(`mx.google.com; ${'header.b="'.repeat(20000)}`)), false, 'past the length cap');
+  assert.ok(Date.now() - started < 500);
+});
