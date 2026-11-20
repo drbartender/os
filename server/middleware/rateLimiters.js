@@ -371,11 +371,17 @@ const connectorGrantLimiter = rateLimit({
 });
 // The per-address ceiling in front of everything on /mcp and /oauth/token,
 // ahead of the address check, the token lookup and any call-log write, so no
-// caller gets an unbounded database read or write. Generous: it counts the
-// owner's authenticated calls too, and Claude's calls spread over its range.
+// caller gets an unbounded database read or write. It counts only the calls
+// that FAIL (skipSuccessfulRequests: a response under 400 is taken back off
+// the count when it finishes): refused, unauthenticated and bad-token calls,
+// and failed token requests. The owner's served tool calls and successful
+// refreshes are bounded by the per-grant limiter instead, so a busy Claude
+// session (120 a minute is allowed there) never fills this bucket and blocks
+// its own refresh (tools lane, 2026-11-19).
 const connectorAddressCeilingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
+  skipSuccessfulRequests: true,
   message: { error: 'Too many requests. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,

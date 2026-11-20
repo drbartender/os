@@ -12,11 +12,12 @@
 // Writing a row never fails the call it records: a failed insert goes to
 // Sentry (the outcome and the error descriptor only) and the call goes on.
 //
-// For the tools lane: recordCall writes one row; recordWithheldOnce writes the
-// withheld row for one piece of text at most once ever (the unique
-// withheld_ref) and says whether this call wrote it, which is the "email the
-// owner once per message" switch; a detail tool's call is counted by its
-// client_id among this grant's rows of the last hour (countRecentClients).
+// recordCall writes one row (the tools write each call's own row through it).
+// The tools' withheld rows are written by server/utils/connector/withheld.js
+// with its own insert, which tells a failed insert from a piece already
+// logged; recordWithheldOnce here is an older helper that no tool path calls.
+// countRecentClients counts the clients a grant's detail calls read in the
+// last hour; the tripwire (tripwire.js) reads the log with its own query.
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
@@ -111,7 +112,8 @@ async function recordRefusal({ callerAddress, method = null, outcome }, { now = 
 /**
  * The withheld row for one piece of client-written text, written at most once
  * (withheld_ref unique among withheld rows). Resolves true only for the call
- * that wrote it, so the caller emails the owner exactly once per piece.
+ * that wrote it. No tool path calls it: withheld.js writes the tools' withheld
+ * rows with its own insert.
  */
 async function recordWithheldOnce({ grantId, toolName, withheldRef, recordIds, clientId, callerAddress }, db = pool) {
   if (!withheldRef) return false;

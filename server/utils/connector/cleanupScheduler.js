@@ -20,8 +20,9 @@ const SCHEDULER_NAME = 'connector_cleanup';
 const INTERVAL_SECONDS = 86400;
 const LOG_RETENTION_DAYS = 90;
 
-// Withheld rows are kept: each one is the "once ever" record that
-// callLog.recordWithheldOnce rests on (spec 7.6, emailed once).
+// Withheld rows are kept: each one is the "once ever" record that the tools'
+// withheld log (server/utils/connector/withheld.js) rests on (spec 7.6,
+// emailed once).
 const DELETE_OLD_CALLS = `DELETE FROM connector_calls
    WHERE called_at < NOW() - make_interval(days => $1) AND outcome <> 'withheld'`;
 const DELETE_OLD_REQUESTS = 'DELETE FROM connector_auth_requests WHERE expires_at < NOW()';

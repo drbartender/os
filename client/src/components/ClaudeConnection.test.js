@@ -30,9 +30,9 @@ const NO_CALLS = { calls: [], has_more: false };
 const CALLS = {
   calls: [
     { id: 9, called_at: '2026-11-19T14:30:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'upcoming_events', record_ids: [], outcome: 'ok' },
-    { id: 8, called_at: '2026-11-19T14:29:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'client_detail', record_ids: ['50201'], outcome: 'withheld', withheld_ref: 'made-up-ref' },
+    { id: 8, called_at: '2026-11-19T14:29:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'client', record_ids: ['50201'], outcome: 'withheld', withheld_ref: 'made-up-ref' },
     { id: 7, called_at: '2026-11-19T14:28:00.000Z', caller_address: '198.51.100.7', method: 'tools/call', tool_name: null, record_ids: [], outcome: 'refused_address' },
-    { id: 6, called_at: '2026-11-19T14:27:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'client_detail', record_ids: ['50202', '50203', '50204', '50205', '50206'], outcome: 'refused_tripwire' },
+    { id: 6, called_at: '2026-11-19T14:27:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'client', record_ids: ['50202', '50203', '50204', '50205', '50206'], outcome: 'refused_tripwire' },
   ],
   has_more: true,
 };
@@ -106,7 +106,7 @@ test.each([
   expect(await screen.findByRole('note')).toHaveTextContent(text);
 });
 
-test('the call list: tool calls, refusals named as such, a withheld row marked as a message held back, and more not shown', async () => {
+test('the call list: tool calls, refusals named as such, a withheld row marked as text held back, and more not shown', async () => {
   routeApi({ ...STATUS_NONE, connection: LIVE }, CALLS);
   const { container } = render(<ClaudeConnection />);
   await screen.findByText('Recent calls');
@@ -118,8 +118,8 @@ test('the call list: tool calls, refusals named as such, a withheld row marked a
   expect(rows[0]).toHaveTextContent('from 192.0.2.20');
 
   expect(rows[1]).toHaveClass('claude-conn__row--withheld');
-  expect(within(rows[1]).getByText('Message held back')).toBeInTheDocument();
-  expect(rows[1]).toHaveTextContent('A client-written message was held back from Claude.');
+  expect(within(rows[1]).getByText('Text held back')).toBeInTheDocument();
+  expect(rows[1]).toHaveTextContent('A piece of client-written text (a message, a name, a note or a contact field) was held back from Claude.');
   expect(within(rows[1]).getByText('Client details')).toBeInTheDocument();
   expect(within(rows[1]).getByText('Records: 50201')).toBeInTheDocument();
 
@@ -128,7 +128,7 @@ test('the call list: tool calls, refusals named as such, a withheld row marked a
   expect(within(rows[2]).getByText('Used a tool')).toBeInTheDocument();
   expect(rows[2]).toHaveTextContent('from 198.51.100.7');
 
-  expect(within(rows[3]).getByText('Refused: too many clients read in an hour')).toBeInTheDocument();
+  expect(within(rows[3]).getByText('Refused: read limit reached for the hour')).toBeInTheDocument();
   expect(within(rows[3]).getByText('Records: 50202, 50203, 50204 and 2 more')).toBeInTheDocument();
 
   expect(screen.getByText('More not shown.')).toBeInTheDocument();
@@ -137,6 +137,9 @@ test('the call list: tool calls, refusals named as such, a withheld row marked a
 test('every tool name and method reads in plain words, and an unknown slug never shows raw', () => {
   expect(callLabel({ tool_name: 'waiting_on_you' })).toBe('Waiting on you');
   expect(callLabel({ tool_name: 'money_owed' })).toBe('Money owed');
+  // The seven tools the server registers (server/utils/connector/tools/index.js), each in plain words.
+  expect(['upcoming_events', 'search', 'client', 'proposal_or_event', 'thread'].map((name) => callLabel({ tool_name: name })))
+    .toEqual(['Upcoming events', 'Search', 'Client details', 'Proposal or event details', 'Message thread']);
   expect(callLabel({ tool_name: 'some_new_tool' })).toBe('Some new tool');
   expect(callLabel({ tool_name: null, method: 'tools/list' })).toBe('Listed the tools');
   expect(callLabel({ tool_name: null, method: 'initialize' })).toBe('Started a session');

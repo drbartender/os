@@ -45,7 +45,10 @@ before(async () => {
     if (g) req.connector = { grantId: Number(g) };
     next();
   }, connectorGrantLimiter, (req, res) => res.json({ ok: true }));
-  app.get('/connector-ceiling', connectorAddressCeilingLimiter, (req, res) => res.json({ ok: true }));
+  // The ceiling counts failed calls only: this route fails (401, as an
+  // unauthenticated /mcp call does) unless the shim header asks it to serve.
+  app.get('/connector-ceiling', connectorAddressCeilingLimiter, (req, res) => (
+    req.headers['x-test-ok'] ? res.json({ ok: true }) : res.status(401).json({ error: 'unauthorized' })));
   app.get('/connector-mcp', connectorMcpAddressLimiter, (req, res) => res.json({ ok: true }));
   app.get('/connector-authorize', connectorAuthorizeLimiter, (req, res) => res.json({ ok: true }));
   app.get('/connector-token', connectorTokenLimiter, (req, res) => res.json({ ok: true }));
@@ -147,23 +150,35 @@ test('connectorGrantLimiter: 120 a minute per grant, one grant never spends anot
   });
 });
 
-for (const [route, max, envelope] of [
-  ['/connector-ceiling', 300, { error: 'Too many requests. Please try again later.' }],
-  ['/connector-mcp', 60, { error: 'Too many requests. Please try again later.' }],
-  ['/connector-authorize', 30, { error: 'Too many sign-in attempts. Please try again later.' }],
-  ['/connector-token', 60, { error: 'Too many token requests. Please try again later.' }],
+// Served calls never fill the ceiling: a busy session (the per-grant limiter
+// allows 120 a minute) must not block its own refresh. Runs before the
+// ceiling's failure count below, on the same address bucket.
+test('connectorAddressCeilingLimiter: served calls are not counted, so 400 in a row all pass', async () => {
+  await withLimitersLive(async () => {
+    for (let i = 0; i < 400; i++) {
+      const r = await hit('/connector-ceiling', { 'x-test-ok': '1' });
+      assert.equal(r.status, 200, `served call ${i + 1} of 400 should pass, got ${r.status}`);
+    }
+  });
+});
+
+for (const [route, max, envelope, passStatus] of [
+  ['/connector-ceiling', 300, { error: 'Too many requests. Please try again later.' }, 401],
+  ['/connector-mcp', 60, { error: 'Too many requests. Please try again later.' }, 200],
+  ['/connector-authorize', 30, { error: 'Too many sign-in attempts. Please try again later.' }, 200],
+  ['/connector-token', 60, { error: 'Too many token requests. Please try again later.' }, 200],
 ]) {
   test(`${route} limiter: ${max} per address in 15 minutes, then 429; skipped under NODE_ENV=test`, async () => {
     await withLimitersLive(async () => {
       for (let i = 0; i < max; i++) {
         const r = await hit(route);
-        assert.equal(r.status, 200, `request ${i + 1} of ${max} should pass, got ${r.status}`);
+        assert.equal(r.status, passStatus, `request ${i + 1} of ${max} should pass the limiter, got ${r.status}`);
       }
       const over = await hit(route);
       assert.equal(over.status, 429, `request ${max + 1} trips it`);
       assert.deepEqual(JSON.parse(over.body), envelope);
       process.env.NODE_ENV = 'test';
-      assert.equal((await hit(route)).status, 200, 'NODE_ENV=test skips it at request time');
+      assert.equal((await hit(route)).status, passStatus, 'NODE_ENV=test skips it at request time');
     });
   });
 }

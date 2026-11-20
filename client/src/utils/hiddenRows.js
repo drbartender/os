@@ -1,5 +1,6 @@
 // Which rows of an admin pricing breakdown are hidden from the client (spec
-// 2026-10-16 section 4.5). The admin views (components/PricingBreakdown.js on
+// 2026-10-16 section 4.5). Its server twin is server/utils/connector/tools/priceLines.js hiddenFlags
+// (the Claude connector's price lines); priceLines.test.js runs both on one fixture set. The admin views (components/PricingBreakdown.js on
 // the desktop, financialsOf in utils/eventDetailView.js on the phone) draw
 // snapshot.breakdown, which lists every adjustment, shown or hidden, so each
 // hidden line gets a "hidden from client" tag.

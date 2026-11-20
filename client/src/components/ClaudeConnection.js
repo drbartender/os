@@ -43,10 +43,10 @@ const OUTCOME_TEXT = {
   ok: 'Read',
   not_found: 'Nothing found',
   error: 'Failed',
-  withheld: 'Message held back',
+  withheld: 'Text held back',
   refused_token: 'Refused: not signed in',
   refused_address: 'Refused: unknown address',
-  refused_tripwire: 'Refused: too many clients read in an hour',
+  refused_tripwire: 'Refused: read limit reached for the hour',
 };
 
 function when(value) {
@@ -60,24 +60,17 @@ function ids(recordIds) {
   return `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
 }
 
-// A tool (spec 7.3) or protocol method in plain words. The tools lane names
-// the tools; a name not listed here is shown with its underscores as spaces,
-// never as the raw slug.
+// A tool (spec 7.3) or protocol method in plain words: the seven names the
+// server registers (server/utils/connector/tools/index.js). A name not listed
+// here is shown with its underscores as spaces, never as the raw slug.
 const TOOL_TEXT = {
   waiting_on_you: 'Waiting on you',
   upcoming_events: 'Upcoming events',
   money_owed: 'Money owed',
   search: 'Search',
   client: 'Client details',
-  client_detail: 'Client details',
-  get_client: 'Client details',
-  proposal: 'Proposal or event details',
   proposal_or_event: 'Proposal or event details',
-  proposal_detail: 'Proposal or event details',
-  get_proposal: 'Proposal or event details',
   thread: 'Message thread',
-  message_thread: 'Message thread',
-  get_thread: 'Message thread',
 };
 const METHOD_TEXT = {
   initialize: 'Started a session',
@@ -285,7 +278,7 @@ function CallList({ calls }) {
                 </div>
                 {ids(c.record_ids) && <div className="claude-conn__row-meta">Records: {ids(c.record_ids)}</div>}
                 {withheld && (
-                  <div className="claude-conn__row-note">A client-written message was held back from Claude.</div>
+                  <div className="claude-conn__row-note">A piece of client-written text (a message, a name, a note or a contact field) was held back from Claude.</div>
                 )}
               </li>
             );

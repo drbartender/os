@@ -26,6 +26,7 @@ const { AppError } = require('../utils/errors');
 const grants = require('../utils/connector/grants');
 const tokens = require('../utils/connector/tokens');
 const callLog = require('../utils/connector/callLog');
+const { TOOL_NAMES } = require('../utils/connector/tools');
 const { connectorAddressCeilingLimiter, connectorMcpAddressLimiter } = require('../middleware/rateLimiters');
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -298,11 +299,11 @@ test('the full sign-in through the SDK client: authorize, approve, PKCE exchange
   assert.ok(tokens.hasShape(provider.saved.access_token, tokens.ACCESS_PREFIX));
   assert.ok(tokens.hasShape(provider.saved.refresh_token, tokens.REFRESH_PREFIX));
 
-  // 5. Connected: the tool list is empty in this release's first lane.
+  // 5. Connected: the tool list is release 1's seven read tools.
   const second = new Client({ name: 'flow-test', version: '1.0.0' });
   await second.connect(new StreamableHTTPClientTransport(mcpUrl, { authProvider: provider }));
   const listed = await second.listTools();
-  assert.deepEqual(listed.tools, []);
+  assert.deepEqual(listed.tools.map((t) => t.name), TOOL_NAMES);
   await second.close();
 
   // 6. A refresh rotates the pair, and the new access token works.
@@ -317,7 +318,7 @@ test('the full sign-in through the SDK client: authorize, approve, PKCE exchange
   provider.saveTokens(refreshed);
   const third = new Client({ name: 'flow-test', version: '1.0.0' });
   await third.connect(new StreamableHTTPClientTransport(mcpUrl, { authProvider: provider }));
-  assert.deepEqual((await third.listTools()).tools, []);
+  assert.deepEqual((await third.listTools()).tools.map((t) => t.name), TOOL_NAMES);
   await third.close();
 
   // The call log holds the calls, each with the caller's address.
