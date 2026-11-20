@@ -28,6 +28,11 @@
 // before its first write, so a missing list, or an id it cannot bind as a
 // Postgres integer, stops the run before it touches a row. A per-id check
 // stays isLegalHold.
+//
+// heldClientIds() is the held proposals' clients and holdExclusion() both
+// lists together (spec 2026-11-19 law 1): what a Claude connector read binds
+// to leave out the held booking, its client and that client's every other
+// booking. Both read the list through heldProposalIds and fail closed alike.
 
 const PLAIN_DIGITS = /^[0-9]+$/;
 const PG_INT_MAX = 2147483647; // proposals.id is a Postgres integer
@@ -82,6 +87,47 @@ function heldProposalIds() {
   return [...new Set(ids)];
 }
 
+// The held proposals' clients (spec 2026-11-19 law 1), as the Inbox hold
+// derives them (inbox/engine.js HELD_KEYS_SQL, its `held` arm).
+const HELD_CLIENT_IDS_SQL = `
+  SELECT DISTINCT client_id FROM proposals
+   WHERE id = ANY($1::int[]) AND client_id IS NOT NULL
+   ORDER BY client_id`;
+
+/**
+ * The client ids of the held proposals (spec 2026-11-19 law 1): every booking
+ * of such a client is held from a connector answer. Reads the held list
+ * through heldProposalIds, so a missing or malformed list throws before any
+ * query; a failed query throws; and a client id the database hands back that
+ * does not read as a positive integer throws (fails closed, as its siblings
+ * do). A held id with no proposals row has no client to hold. `db` is any
+ * object with pg's query(); the pool when none is given (required at call
+ * time, so this file adds nothing to the sweep's load-time graph).
+ */
+async function heldClientIds(db) {
+  const ids = heldProposalIds();
+  if (ids.length === 0) return [];
+  const conn = db || require('../db').pool;
+  const { rows } = await conn.query(HELD_CLIENT_IDS_SQL, [ids]);
+  if (!Array.isArray(rows)) throw new Error('legalHold: the held clients could not be read');
+  const clients = rows.map((r) => readId(r && r.client_id));
+  if (clients.some((n) => n === null || n > PG_INT_MAX)) {
+    throw new Error('legalHold: a held proposal names a client id that is not a positive integer');
+  }
+  return [...new Set(clients)];
+}
+
+/**
+ * The exclusion a connector read binds (spec 2026-11-19 law 1): the held
+ * proposal ids and the held client ids, each a list of positive integers, read
+ * at call time through the two fail-closed functions above. Throws as they do.
+ */
+async function holdExclusion(db) {
+  const proposalIds = heldProposalIds();
+  const clientIds = await heldClientIds(db);
+  return { proposalIds, clientIds };
+}
+
 /**
  * Test-only: ADD these ids to the real held list (each call replaces the ids
  * a previous call added), or clear them with null. Each id must read the way
@@ -105,4 +151,6 @@ function __setLegalHoldIdsForTest(ids) {
   testIds = Object.freeze(read);
 }
 
-module.exports = { isLegalHold, heldProposalIds, __setLegalHoldIdsForTest };
+module.exports = {
+  isLegalHold, heldProposalIds, heldClientIds, holdExclusion, HELD_CLIENT_IDS_SQL, __setLegalHoldIdsForTest,
+};

@@ -5,7 +5,7 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
-const { consultCallsForClient } = require('../utils/consultCallLookups');
+const { getClientDetail } = require('../utils/reads/clientDetail');
 
 const router = express.Router();
 
@@ -93,43 +93,13 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   res.status(201).json(result.rows[0]);
 }));
 
-/** GET /api/clients/:id — get client detail with proposals */
+/** GET /api/clients/:id — get client detail with proposals. The read is
+ *  shared with the Claude connector (server/utils/reads/clientDetail.js); the
+ *  admin page passes no hold exclusion and gets the body it always did. */
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  // Client and proposals are independent lookups — Promise.all saves one round-trip.
-  // Explicit column allowlist on proposals excludes pricing_snapshot blob.
-  const [client, proposals, lead, consultCalls] = await Promise.all([
-    pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]),
-    pool.query(`
-      SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
-             p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, p.cc_id,
-             p.group_id, sp.name AS package_name, sp.slug AS package_slug
-      FROM proposals p
-      LEFT JOIN service_packages sp ON sp.id = p.package_id
-      WHERE p.client_id = $1
-      ORDER BY p.created_at DESC
-    `, [req.params.id]),
-    // Latest non-terminal Thumbtack lead — drives the manual email-harvest affordance.
-    pool.query(
-      `SELECT negotiation_id FROM thumbtack_leads
-        WHERE client_id = $1 AND status NOT IN ('converted','lost')
-        ORDER BY created_at DESC LIMIT 1`,
-      [req.params.id]
-    ),
-    // Consult call bridge outcomes (spec 2026-08-25 section 5.3): the latest ring
-    // chain per consult this client has booked, newest slot first. Empty for a
-    // client who never booked one. What keeps it cheap on that common case is
-    // idx_consults_client_id, not the shape of the join: see the header of
-    // consultCallLookups.js.
-    consultCallsForClient(req.params.id),
-  ]);
-  if (!client.rows[0]) throw new NotFoundError('Client not found.');
-
-  res.json({
-    ...client.rows[0],
-    proposals: proposals.rows,
-    thumbtack_negotiation_id: lead.rows[0]?.negotiation_id || null,
-    consult_calls: consultCalls,
-  });
+  const detail = await getClientDetail(req.params.id);
+  if (!detail) throw new NotFoundError('Client not found.');
+  res.json(detail);
 }));
 
 /** PUT /api/clients/:id — update client */

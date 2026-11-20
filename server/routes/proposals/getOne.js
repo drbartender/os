@@ -4,157 +4,21 @@
 // proposals composition router (see index.js): `/:id` is greedy, so every static
 // GET path (`/financials`, `/dashboard-stats`, `/packages`, ...) must win first.
 const express = require('express');
-const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError } = require('../../utils/errors');
-const { setupTimeDisplay } = require('../../utils/setupTime');
-const { getMessageLogForProposal } = require('../../utils/messageLog');
-const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
-const {
-  nettedOverpaymentCents, offContractPaidCents, loadPaymentsWithRemaining,
-  contractInvoiceSlackCents,
-} = require('../../utils/refundHelpers');
-const { latestConsultCallForProposal } = require('../../utils/consultCallLookups');
-const { isLegalHold } = require('../../utils/legalHold');
+const { getProposalDetail } = require('../../utils/reads/proposalDetail');
 
 const router = express.Router();
 
-/** GET /api/proposals/:id — get single proposal */
+/** GET /api/proposals/:id — get single proposal. The read is shared with the
+ *  Claude connector (server/utils/reads/proposalDetail.js); the detail page
+ *  and its phone twin pass no hold exclusion and get the body they always
+ *  did, a held proposal included and marked legal_hold. */
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(`
-    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
-           c.cc_id AS client_cc_id,
-           sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
-           u.email AS created_by_email, u.cc_id AS user_cc_id,
-           tb.budget_min, tb.budget_max, tb.budget_raw,
-           -- The editor's staleness token (spec 2026-10-16 section 5.1): the PATCH
-           -- computes the same expression on its locked row (crud.js, patchGuards.js).
-           md5(COALESCE(p.adjustments, '[]'::jsonb)::text) AS adjustments_token
-    FROM proposals p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN service_packages sp ON sp.id = p.package_id
-    LEFT JOIN users u ON u.id = p.created_by
-    LEFT JOIN LATERAL (
-      -- Stated budget of the TT lead auto-drafted into this proposal: context for
-      -- the admin over-budget badge. Newest lead wins, matching /lead-cost.
-      SELECT tl.budget_min, tl.budget_max, tl.budget_raw
-        FROM thumbtack_leads tl
-       WHERE tl.proposal_id = p.id
-       ORDER BY tl.id DESC
-       LIMIT 1
-    ) tb ON true
-    WHERE p.id = $1
-  `, [req.params.id]);
-
-  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
-
-  // Fetch addons + activity log in parallel — both depend only on proposal id.
-  // Cap activity log fetch at 100 entries (most recent) — an old proposal can
-  // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack, settledExt, consultCall] = await Promise.all([
-    pool.query(
-      'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-      [req.params.id]
-    ),
-    pool.query(
-      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
-      [req.params.id]
-    ),
-    getMessageLogForProposal(req.params.id),
-    // Lead call bridge outcome for TT-drafted proposals (newest lead wins,
-    // matching the budget lateral above). NULL for pre-feature / non-TT
-    // proposals; the detail view renders nothing then.
-    pool.query(
-      `SELECT a.status, a.answered_by, a.bridge_duration_sec, a.created_at
-         FROM lead_call_attempts a
-         JOIN thumbtack_leads l ON l.id = a.lead_id
-        WHERE l.proposal_id = $1
-        ORDER BY a.id DESC
-        LIMIT 1`,
-      [req.params.id]
-    ),
-    // Auto first-reply outcome for TT-drafted proposals (newest lead wins,
-    // matching the laterals above). `not_needed` collapses to null below —
-    // the detail view renders a line only when a reply was actually queued.
-    pool.query(
-      `SELECT l.first_reply_status, l.first_reply_template, l.first_reply_sent_at
-         FROM thumbtack_leads l
-        WHERE l.proposal_id = $1
-        ORDER BY l.id DESC
-        LIMIT 1`,
-      [req.params.id]
-    ),
-    // Refund-side derived money (spec 2026-09-15). THE overpaid figure for
-    // every admin surface: the raw amount_paid - total_price difference counts
-    // a paid Drink Plan Extras or manual invoice as excess, which is why prod
-    // 599 reads overpaid on three screens today and is not.
-    offContractPaidCents(req.params.id),
-    loadPaymentsWithRemaining(req.params.id),
-    contractInvoiceSlackCents(req.params.id),
-    loadSettledExtensions(pool, req.params.id),
-    // Consult call bridge outcome (spec 2026-08-25 section 5.3): the newest ring
-    // chain across this proposal's consults. NULL for a proposal that never had
-    // a consult, which is the common case, so the detail view renders nothing.
-    // What keeps it cheap on that common case is idx_consults_proposal_id, not
-    // the shape of the join: see the header of consultCallLookups.js.
-    latestConsultCallForProposal(req.params.id),
-  ]);
-
-  const fr = firstReply.rows[0];
-
-  // setup_time_display: server-derived clock time (service start − effective
-  // minutes) for back-of-house display. Raw setup_minutes_before already flows
-  // via SELECT p.* (NULL until an admin overrides; null display when unparseable
-  // start time). Back-of-house only — never added to the public token response.
-  const row = result.rows[0];
-  res.json({
-    ...row,
-    setup_time_display: setupTimeDisplay(row),
-    // Legal hold (spec 2026-10-16 section 5.3): the editor and the phone sheet
-    // open read-only. Bound on the loaded row's id, never the raw param.
-    legal_hold: isLegalHold(row.id),
-    // Hours a settled on-site extension added to the row, ALWAYS a number (0
-    // when none). The editor subtracts it to invert stored add-on quantities
-    // at the contract's hours (contractDuration.js); a missing field would
-    // read as NaN and reset every stepper. It is row minus contract hours, so
-    // after a hand-reverted row it can be NEGATIVE (the clamp held the
-    // contract above the row); the subtraction stays consistent either way.
-    // contract_floor_hours is the clamp's floor (null when no extension), so
-    // the editor's hint can show what the server will price.
-    settled_extension_hours: contractHoursFrom(row.event_duration_hours, settledExt).settled,
-    contract_floor_hours: settledExt.length
-      ? Math.min(...settledExt.map((e) => Number(e.contracted_duration_hours)).filter(Number.isFinite))
-      : null,
-    // Netted overpayment, the same figure and the same key the cancel-line
-    // preview returns. off_contract_paid_cents is the netting term, so the
-    // editor can net a HYPOTHETICAL new total without a second round trip.
-    // max_refundable_cents is the largest single Stripe charge still
-    // refundable: no refund spans charges, and a positive overpayment can be
-    // external money with no charge behind it, which the panel must say
-    // before the admin fills in a form the server will refuse.
-    // max_overpayment_refundable_cents is the largest UNCREDITED headroom on any
-    // one charge. An overpayment refund must come off money no invoice was
-    // credited, so this, not max_refundable_cents, is what a positive
-    // overpayment can actually be returned through Stripe.
-    overpayment_cents: nettedOverpaymentCents(row.amount_paid, row.total_price, offContract),
-    off_contract_paid_cents: offContract,
-    max_refundable_cents: refundable.reduce((m, p) => Math.max(m, p.remainingCents), 0),
-    max_overpayment_refundable_cents: refundable.reduce(
-      (m, p) => Math.max(m, Math.min(p.remainingCents, p.uncreditedCents + invoiceSlack)), 0
-    ),
-    // SERVER-15: pg returns the now-NUMERIC quantity as a string; coerce to a number.
-    addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),
-    activity: activity.rows,
-    messageLog,
-    lead_call: leadCall.rows[0] || null,
-    consult_call: consultCall || null,
-    first_reply: (!fr || fr.first_reply_status === 'not_needed') ? null : {
-      status: fr.first_reply_status,
-      template: fr.first_reply_template,
-      sent_at: fr.first_reply_sent_at,
-    },
-  });
+  const detail = await getProposalDetail(req.params.id);
+  if (!detail) throw new NotFoundError('Proposal not found');
+  res.json(detail);
 }));
 
 module.exports = router;

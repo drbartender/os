@@ -20,6 +20,7 @@ const { pool } = require('../../db');
 const { chicagoYmdOf } = require('../businessTime');
 const { isBooked } = require('../proposalStatus');
 const { LEGAL_HOLD_PROPOSAL_IDS } = require('../staleProposalSweep');
+const { heldProposalIds } = require('../legalHold');
 const cache = require('./cache');
 const {
   INBOX_HISTORY_START, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS, HEADER_WARN_ROWS, PERSONAL_MAILBOX_OWNER_USER_ID,
@@ -110,10 +111,12 @@ function warnHeaderRows(headerRows) {
 
 // Reads are never narrowed by person_key: the rules match a read by its
 // subject_ref, so a read written before a re-key still counts (amendment 22).
-function assembleSnapshot({ now, index, events, actions, seen, reads, proposals, feeds, fullKeys, heldKeys = new Set() }) {
+// holdIds: the held proposal ids the snapshot's hold flags were built from
+// (the connector path checks they cover the fail-closed list; holdPredicate).
+function assembleSnapshot({ now, index, events, actions, seen, reads, proposals, feeds, fullKeys, heldKeys = new Set(), holdIds }) {
   const keep = (rows) => rows.filter((r) => fullKeys.has(r.person_key));
   return {
-    now, index, feeds, fullKeys, heldKeys,
+    now, index, feeds, fullKeys, heldKeys, holdIds,
     eventsByPerson: groupBy(events, (e) => e.personKey),
     inputs: { actions, seen, reads, proposals, users: index.users },
     sInputs: { actions: keep(actions), seen: keep(seen), reads, proposals: keep(proposals), users: index.users },
@@ -372,6 +375,7 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const events = [...headers.filter((e) => !fullKeys.has(e.personKey)), ...full];
   return assembleSnapshot({
     now, index, events, actions: taps.actions, seen: taps.seen, reads: reads.rows, proposals, feeds, fullKeys, heldKeys: allHeld,
+    holdIds: [...holds],
   });
 }
 
@@ -599,19 +603,116 @@ async function getWaitingCount({ timeoutMs = BADGE_TIMEOUT_MS, viewerId } = {}) 
 async function getReadSubjects({ fresh = false, maxAgeMs } = {}) {
   if (fresh) cache.invalidate();
   const snap = await getSnapshot({ maxAgeMs });
-  // buildSubjects already skips a personal person; the second check keeps
-  // their words from the AI even if that ever changes. A subject whose slice
-  // holds a mail that reached the held client (its own event or a line of
-  // context, meta.legalHold: markHeldSiblings, markHeldAddresses) is never
-  // read either: the words written to the held client stay in the OS under
-  // any key, whatever the read job's own checks know.
-  const heldMail = (s) => {
-    const held = new Set((snap.eventsByPerson.get(s.personKey) || []).filter((e) => e.meta && e.meta.legalHold).map((e) => e.ref));
-    return held.has(s.subjectRef) || (Array.isArray(s.slice) && s.slice.some((line) => held.has(line.ref)));
-  };
+  // buildSubjects already skips a personal person; the predicate's personal
+  // drop keeps their words from the AI even if that ever changes. A subject
+  // whose slice holds a mail that reached the held client is never read
+  // either (holdPredicate.keepsSubject).
+  return runRules(snap, null, directoryFor(snap).realNameOf).subjects.filter(holdPredicate(snap, { dropPersonal: true }).keepsSubject);
+}
+
+// ─── The hold predicate (spec 2026-11-19 law 1) ───
+// One predicate for every reader that must never see the legal hold: the AI
+// read job's subjects (above) and the Claude connector's Inbox reads (below).
+// Its three checks: a person the rules flag legalHold (the held client, by
+// the proposals' legal_hold), a person under any key in the held key set
+// (snap.heldKeys: an address or number on record that forms its own person),
+// and a held mail line inside anyone else's thread (meta.legalHold, set by
+// markHeldSiblings and markHeldAddresses on that mail only). With
+// dropPersonal, a personal person (personal mail, the owner's alone) is
+// dropped too. Pure over the snapshot.
+//   keepsPerson(personKey, flagged): the person may be shown;
+//   keepsEvent(event): the event is not a held mail line;
+//   keepsSubject(subject): a read job subject may be read: its person is kept
+//     and neither the subject nor a line of its slice is a held mail.
+function holdPredicate(snap, { dropPersonal = false } = {}) {
   const heldKeys = snap.heldKeys || new Set();
-  return runRules(snap, null, directoryFor(snap).realNameOf).subjects
-    .filter((s) => !s.legalHold && !heldKeys.has(s.personKey) && !heldMail(s) && !isPersonal(snap.eventsByPerson.get(s.personKey) || []));
+  const eventsOf = (personKey) => snap.eventsByPerson.get(personKey) || [];
+  const keepsEvent = (e) => !(e && e.meta && e.meta.legalHold);
+  const keepsPerson = (personKey, flagged = false) => !flagged && !heldKeys.has(personKey)
+    && !(dropPersonal && isPersonal(eventsOf(personKey)));
+  const keepsSubject = (s) => {
+    if (!keepsPerson(s.personKey, s.legalHold)) return false;
+    const held = new Set(eventsOf(s.personKey).filter((e) => !keepsEvent(e)).map((e) => e.ref));
+    return !held.has(s.subjectRef) && !(Array.isArray(s.slice) && s.slice.some((line) => held.has(line.ref)));
+  };
+  return { keepsPerson, keepsEvent, keepsSubject };
+}
+
+// The connector path reads the hold list through the fail-closed function
+// (legalHold.heldProposalIds: a missing or malformed list throws), never the
+// constant, and refuses a snapshot whose hold flags were built from a list
+// that does not cover it: the call fails rather than answer without the hold.
+function connectorPredicate(snap) {
+  const ids = heldProposalIds();
+  const covered = new Set(Array.isArray(snap.holdIds) ? snap.holdIds.map(Number) : []);
+  if (!Array.isArray(snap.holdIds) || ids.some((id) => !covered.has(id))) {
+    throw new Error('inbox: the snapshot was not built under the whole legal-hold list');
+  }
+  return { ids, keep: holdPredicate(snap, { dropPersonal: true }) };
+}
+
+// The snapshot as the connector reads see it: every person's events with the
+// held mail lines removed, so a name, an address or a number the directory
+// draws (a mail's From name, the newest phone) never comes from a held line.
+function heldOutView(snap, keep) {
+  const eventsByPerson = new Map();
+  for (const [key, events] of snap.eventsByPerson) eventsByPerson.set(key, events.filter(keep.keepsEvent));
+  return { ...snap, eventsByPerson };
+}
+
+// The Claude connector's Waiting on you: getInbox's body for this viewer as
+// though no held person and no held mail line existed (the rules run over the
+// kept people's events with the held lines removed, so no need, summary or
+// claim is drawn from one), personal rows dropped. getInbox is untouched.
+async function getInboxExcludingHold({ viewerId }) {
+  const [snap, aiStatus] = await Promise.all([getSnapshot(), aiReadStatus()]);
+  const { keep } = connectorPredicate(snap);
+  const events = [];
+  for (const key of snap.fullKeys) if (keep.keepsPerson(key)) events.push(...(snap.eventsByPerson.get(key) || []).filter(keep.keepsEvent));
+  const result = forViewer(computeInbox({ events, ...snap.sInputs, now: snap.now, viewerId }), viewerId);
+  const kept = (rows) => rows.filter((p) => keep.keepsPerson(p.personKey, p.legalHold));
+  return listPayload({
+    result: { ...result, waiting: kept(result.waiting), snoozed: kept(result.snoozed), handled: kept(result.handled) },
+    directory: directoryFor(heldOutView(snap, keep)), feeds: snap.feeds, aiStatus, generatedAt: snap.now,
+  });
+}
+
+// The Claude connector's Thread: getItem's body with the held mail lines
+// removed. A held person, a held key, a personal person, a key that moved to a
+// held one, a missing key and a key hidden from this viewer all get the one
+// not-found (NOT_IN_INBOX), so the answer never tells them apart. The key is
+// resolved against the held-out view, as though no held line existed: an e-
+// person made only of held lines (the held client writing from another form
+// of their address, counsel writing with them copied) is missing exactly as
+// an unused address is, and a client, staffer or lead whose only lines are
+// held answers the quiet body one with no lines gets, so the read never tells
+// either apart from the untouched case. The name and every other field come
+// from the held-out view, never a held line. Never marks anything seen.
+// getItem is untouched.
+async function getItemExcludingHold({ personKey, viewerId }) {
+  const snap = await getSnapshot();
+  const { ids, keep } = connectorPredicate(snap);
+  if (hiddenFrom(snap, personKey, viewerId) || !keep.keepsPerson(personKey)) throw new NotFoundError(NOT_IN_INBOX);
+  const view = heldOutView(snap, keep);
+  const where = await resolveKey(personKey, view);
+  if (where.movedTo) {
+    if (!keep.keepsPerson(where.movedTo) || hiddenFrom(snap, where.movedTo, viewerId)) throw new NotFoundError(NOT_IN_INBOX);
+    throw new InboxMovedError(where.movedTo);
+  }
+  if (where.missing) throw new NotFoundError(NOT_IN_INBOX);
+  const events = (await fullEventsFor(view, personKey)).filter(keep.keepsEvent);
+  const inputs = inputsFor(snap, personKey);
+  const state = computeInbox({ events, ...inputs, now: snap.now, viewerId }).people.get(personKey) || null;
+  if (state && state.legalHold) throw new NotFoundError(NOT_IN_INBOX);
+  const [ctx, reply] = await Promise.all([
+    loadContext({ personKey, index: snap.index, events, todayYmd: chicagoYmdOf(snap.now), legalHoldIds: ids }),
+    buildReplyBlock({ personKey, events, index: snap.index, viewerId }),
+  ]);
+  if (ctx.legalHold) throw new NotFoundError(NOT_IN_INBOX);
+  return itemPayload({
+    personKey, state, events, actions: inputs.actions, reads: inputs.reads, now: snap.now, viewerId,
+    users: snap.index.users, directory: directoryFor(view), context: ctx.context, legalHold: false, reply,
+  });
 }
 
 // The seen, actions and text routes' check (spec 2026-10-14 section 8): true
@@ -639,7 +740,8 @@ async function getPersonEvents(personKey, { fresh = false } = {}) {
 
 // Test seam: a snapshot built from invented, already-full events, no DB.
 // index overrides any part of the empty people index.
-function __fakeSnapshot({ now = new Date(), events = [], index: overrides = {}, actions = [] } = {}) {
+// heldKeys and holdIds stand in for what computeSnapshot derives from the hold.
+function __fakeSnapshot({ now = new Date(), events = [], index: overrides = {}, actions = [], proposals = [], heldKeys, holdIds } = {}) {
   const normalized = normalizeEvents(events);
   const index = {
     users: [], clients: new Map(), staff: new Map(), staffEligible: new Set(), leadsByNegotiation: new Map(),
@@ -649,13 +751,14 @@ function __fakeSnapshot({ now = new Date(), events = [], index: overrides = {}, 
     ...overrides,
   };
   return assembleSnapshot({
-    now, index, events: normalized, actions, seen: [], reads: [], proposals: [], feeds: [],
-    fullKeys: new Set(normalized.map((e) => e.personKey)),
+    now, index, events: normalized, actions, seen: [], reads: [], proposals, feeds: [],
+    fullKeys: new Set(normalized.map((e) => e.personKey)), heldKeys, holdIds,
   });
 }
 
 module.exports = {
   getInbox, getItem, getWaitingCount, getReadSubjects, getPersonEvents, isHiddenKey, computeSnapshot, resolveKey,
+  getInboxExcludingHold, getItemExcludingHold, holdPredicate,
   directoryFor, legalHoldPersonKeys, loadLegalHold, canonicalAddress,
   invalidate: () => cache.invalidate(), InboxMovedError, NOT_IN_INBOX, __setEngineDeps, __resetEngine, __fakeSnapshot,
 };

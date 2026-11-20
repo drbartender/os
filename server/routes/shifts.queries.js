@@ -11,7 +11,9 @@
  * read), and adminScopedShiftsSql, the scoped, event-paged builder behind
  * GET /shifts?scope=upcoming|past that the phone Events list reads. The scoped
  * builder splices its window keys into the same projection text rather than
- * restating it, so the two feeds cannot drift a column apart.
+ * restating it, so the two feeds cannot drift a column apart. Its opt-in date
+ * window is the upcoming-events read the Claude connector calls
+ * (server/utils/reads/upcomingEvents.js), the same query rather than a copy.
  */
 
 const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
@@ -433,7 +435,25 @@ const NEEDS_STAFF_SQL = `COALESCE((${shiftNotFinishedSql('s', 'p')}
       AND s.status = 'open'
       AND ${openSlotsSql('s')} > 0), false)`;
 
-function adminScopedShiftsSql(scope) {
+// The opt-in date window (lane connector-shared-reads, spec 2026-11-19 law 4):
+// the upcoming-events read the Claude connector calls
+// (server/utils/reads/upcomingEvents.js) is this query, not a copy of it, with
+// four more parameters: $4 and $5 the first and last event day (dates,
+// inclusive), $6 and $7 the held proposal ids and the held client ids (int[],
+// legalHold.holdExclusion(); empty lists exclude nothing). A held proposal's
+// shifts and every shift of a held client's other bookings drop out of base,
+// so the totals and the event paging never show a gap. It also projects
+// open_slots, the openSlotsSql count behind needs_staff. Without the option
+// the text is byte for byte what it was (shifts.queries.pin.test.js), so the
+// phone Events list and the badge pin read exactly what they always read.
+const WINDOW_WHERE = `
+        AND s.event_date >= $4::date AND s.event_date <= $5::date
+        AND (s.proposal_id IS NULL OR NOT (s.proposal_id = ANY($6::int[])))
+        AND (p.client_id IS NULL OR NOT (p.client_id = ANY($7::int[])))`;
+const WINDOW_COLUMNS = `
+        ${openSlotsSql('s')} AS open_slots,`;
+
+function adminScopedShiftsSql(scope, { window = false } = {}) {
   const upcoming = scope === 'upcoming';
   // COALESCE on BOTH statuses: a bare s.status <> 'cancelled' is NULL, not
   // true, on a NULL-status shift, so such a row would fall out of Upcoming and
@@ -463,11 +483,11 @@ function adminScopedShiftsSql(scope) {
         -- proposal's structured venue. Spliced here, not into the base
         -- projection, so the legacy bare array stays pinned without them.
         p.venue_city,
-        p.venue_state,`;
+        p.venue_state,${window ? WINDOW_COLUMNS : ''}`;
   return `
     WITH base AS (
       ${adminShiftsSelectSql(extra)}
-      WHERE ${scopeWhere}
+      WHERE ${scopeWhere}${window ? WINDOW_WHERE : ''}
     ), scoped AS (
       SELECT base.*,
              MIN(event_date) OVER (PARTITION BY event_key) AS event_first_date,
@@ -505,5 +525,5 @@ function adminScopedShiftsSql(scope) {
 
 module.exports = {
   STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql,
-  adminShiftsSelectSql, adminScopedShiftsSql,
+  adminShiftsSelectSql, adminScopedShiftsSql, NEEDS_STAFF_SQL,
 };

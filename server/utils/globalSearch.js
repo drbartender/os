@@ -5,6 +5,7 @@
 
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
+const { readExclusion } = require('./reads/exclusion');
 
 const GROUP_LIMIT = 6;
 
@@ -70,67 +71,62 @@ function phoneFields(row) {
   };
 }
 
-// Run the global search. `rawQuery` is the user's typed string. Returns four
-// capped, most-recent-first result groups. A query shorter than 2 characters
-// or longer than 100 short-circuits to empty groups without touching the
-// database; the upper bound caps the cost of the unindexed LIKE scans.
-async function runGlobalSearch(rawQuery) {
-  const q = String(rawQuery === null || rawQuery === undefined ? '' : rawQuery).trim();
-  const empty = { clients: [], proposals: [], events: [], staff: [] };
-  if (q.length < 2 || q.length > 100) return empty;
+// The four group queries. $1 the LIKE term, $2 the phone digits term (or
+// NULL), $3 the group limit. The *_EXCLUDING variants add the legal-hold
+// exclusion (spec 2026-11-19 law 1) as int[] parameters in the WHERE that
+// picks the rows, BEFORE the LIMIT, so a group still fills to GROUP_LIMIT when
+// a held row would have been among the newest: clients take $4 the held client
+// ids; proposals and events take $4 the held proposal ids and $5 the held
+// client ids (a held client's every booking). The staff group has no held
+// rows. The plain texts are the ones the admin search always ran.
+const CLIENT_MATCH = `LOWER(c.name) LIKE $1 ESCAPE '\\'
+       OR LOWER(c.email) LIKE $1 ESCAPE '\\'
+       OR ($2::text IS NOT NULL AND regexp_replace(c.phone, '[^0-9]', '', 'g') LIKE $2)`;
 
-  const likeTerm = '%' + escapeLikePattern(q.toLowerCase()) + '%';
-  const digits = extractDigits(q);
-  // Only match phone columns once at least 3 digits are typed, otherwise a
-  // one- or two-digit fragment matches nearly every stored number.
-  const phoneTerm = digits.length >= 3 ? '%' + digits + '%' : null;
-  const params = [likeTerm, phoneTerm, GROUP_LIMIT];
-
-  const clientsSql = `
+const CLIENTS_SQL = `
     SELECT c.id, c.name, c.email, c.phone, c.cc_id
     FROM clients c
-    WHERE LOWER(c.name) LIKE $1 ESCAPE '\\'
-       OR LOWER(c.email) LIKE $1 ESCAPE '\\'
-       OR ($2::text IS NOT NULL AND regexp_replace(c.phone, '[^0-9]', '', 'g') LIKE $2)
+    WHERE ${CLIENT_MATCH}
+    ORDER BY c.created_at DESC
+    LIMIT $3
+  `;
+const CLIENTS_EXCLUDING_SQL = `
+    SELECT c.id, c.name, c.email, c.phone, c.cc_id
+    FROM clients c
+    WHERE (${CLIENT_MATCH})
+      AND NOT (c.id = ANY($4::int[]))
     ORDER BY c.created_at DESC
     LIMIT $3
   `;
 
-  const proposalsSql = `
+// One proposal-side query for the two booking groups: `statusWhere` picks
+// proposals (not yet booked, not archived) or events (booked).
+const bookingSql = (statusWhere, excluding) => `
     SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
            p.status, to_char(p.event_date, 'YYYY-MM-DD') AS event_ymd,
            to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
            p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
     FROM proposals p
     JOIN clients c ON c.id = p.client_id
-    WHERE p.status NOT IN ('deposit_paid','balance_paid','confirmed','completed','archived')
+    WHERE ${statusWhere}
       AND (
         LOWER(c.name) LIKE $1 ESCAPE '\\'
         OR LOWER(c.email) LIKE $1 ESCAPE '\\'
         OR ($2::text IS NOT NULL AND regexp_replace(c.phone, '[^0-9]', '', 'g') LIKE $2)
-      )
+      )${excluding ? `
+      AND NOT (p.id = ANY($4::int[]))
+      AND NOT (p.client_id = ANY($5::int[]))` : ''}
     ORDER BY p.created_at DESC
     LIMIT $3
   `;
+const NOT_BOOKED = "p.status NOT IN ('deposit_paid','balance_paid','confirmed','completed','archived')";
+const BOOKED = "p.status IN ('deposit_paid','balance_paid','confirmed','completed')";
+const PROPOSALS_SQL = bookingSql(NOT_BOOKED, false);
+const PROPOSALS_EXCLUDING_SQL = bookingSql(NOT_BOOKED, true);
+const EVENTS_SQL = bookingSql(BOOKED, false);
+const EVENTS_EXCLUDING_SQL = bookingSql(BOOKED, true);
 
-  const eventsSql = `
-    SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
-           p.status, to_char(p.event_date, 'YYYY-MM-DD') AS event_ymd,
-           to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
-           p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
-    FROM proposals p
-    JOIN clients c ON c.id = p.client_id
-    WHERE p.status IN ('deposit_paid','balance_paid','confirmed','completed')
-      AND (
-        LOWER(c.name) LIKE $1 ESCAPE '\\'
-        OR LOWER(c.email) LIKE $1 ESCAPE '\\'
-        OR ($2::text IS NOT NULL AND regexp_replace(c.phone, '[^0-9]', '', 'g') LIKE $2)
-      )
-    ORDER BY p.created_at DESC
-    LIMIT $3
-  `;
-
-  const staffSql = `
+const STAFF_SQL = `
     SELECT u.id,
            COALESCE(cp.display_name, cp.preferred_name, a.full_name, u.email) AS name,
            u.onboarding_status, u.cc_id
@@ -151,11 +147,39 @@ async function runGlobalSearch(rawQuery) {
     LIMIT $3
   `;
 
-  const [clients, proposals, events, staff] = await Promise.all([
-    pool.query(clientsSql, params),
-    pool.query(proposalsSql, params),
-    pool.query(eventsSql, params),
-    pool.query(staffSql, params),
+// Run the global search. `rawQuery` is the user's typed string. Returns four
+// capped, most-recent-first result groups. A query shorter than 2 characters
+// or longer than 100 short-circuits to empty groups without touching the
+// database; the upper bound caps the cost of the unindexed LIKE scans.
+//
+// `exclude` (optional, legalHold.holdExclusion(): { proposalIds, clientIds })
+// leaves out the held proposals, the held clients and their every booking, in
+// SQL (above). The admin search (GET /api/admin/search, the command palette)
+// passes none and runs the plain texts. A malformed exclusion throws
+// (reads/exclusion.js) rather than excluding nothing.
+async function runGlobalSearch(rawQuery, { exclude } = {}) {
+  const hold = readExclusion(exclude);
+  const q = String(rawQuery === null || rawQuery === undefined ? '' : rawQuery).trim();
+  const empty = { clients: [], proposals: [], events: [], staff: [] };
+  if (q.length < 2 || q.length > 100) return empty;
+
+  const likeTerm = '%' + escapeLikePattern(q.toLowerCase()) + '%';
+  const digits = extractDigits(q);
+  // Only match phone columns once at least 3 digits are typed, otherwise a
+  // one- or two-digit fragment matches nearly every stored number.
+  const phoneTerm = digits.length >= 3 ? '%' + digits + '%' : null;
+  const params = [likeTerm, phoneTerm, GROUP_LIMIT];
+
+  const [clients, proposals, events, staff] = await Promise.all(hold ? [
+    pool.query(CLIENTS_EXCLUDING_SQL, [...params, hold.clientIds]),
+    pool.query(PROPOSALS_EXCLUDING_SQL, [...params, hold.proposalIds, hold.clientIds]),
+    pool.query(EVENTS_EXCLUDING_SQL, [...params, hold.proposalIds, hold.clientIds]),
+    pool.query(STAFF_SQL, params),
+  ] : [
+    pool.query(CLIENTS_SQL, params),
+    pool.query(PROPOSALS_SQL, params),
+    pool.query(EVENTS_SQL, params),
+    pool.query(STAFF_SQL, params),
   ]);
 
   return {

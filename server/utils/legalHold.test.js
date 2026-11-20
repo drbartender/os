@@ -6,7 +6,9 @@
 // no suite reads or writes a real held booking, and no test list can unhold one.
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { isLegalHold, heldProposalIds, __setLegalHoldIdsForTest } = require('./legalHold');
+const {
+  isLegalHold, heldProposalIds, heldClientIds, holdExclusion, HELD_CLIENT_IDS_SQL, __setLegalHoldIdsForTest,
+} = require('./legalHold');
 const sweep = require('./staleProposalSweep');
 const { LEGAL_HOLD_PROPOSAL_IDS } = sweep;
 
@@ -133,4 +135,61 @@ test('isLegalHold fails closed on a malformed list exactly as heldProposalIds do
     sweep.LEGAL_HOLD_PROPOSAL_IDS = real;
   }
   assert.equal(isLegalHold(600), true);
+});
+
+// ─── heldClientIds and holdExclusion (spec 2026-11-19 law 1) ───
+// Pure: a stub db stands in for the pool, so no suite queries a real held row.
+function stubDb(answer) {
+  const calls = [];
+  return {
+    calls,
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (answer instanceof Error) throw answer;
+      return { rows: typeof answer === 'function' ? answer(params) : answer };
+    },
+  };
+}
+
+test('heldClientIds: the held proposals\' clients, one query with the held list bound as one int[]', async () => {
+  __setLegalHoldIdsForTest([424242]);
+  const db = stubDb([{ client_id: 31337 }, { client_id: '31338' }, { client_id: 31337 }]);
+  assert.deepEqual(await heldClientIds(db), [31337, 31338]);
+  assert.equal(db.calls.length, 1);
+  assert.equal(db.calls[0].sql, HELD_CLIENT_IDS_SQL);
+  assert.deepEqual(db.calls[0].params, [heldProposalIds()]);
+  assert.ok(db.calls[0].params[0].includes(424242) && LEGAL_HOLD_PROPOSAL_IDS.every((id) => db.calls[0].params[0].includes(Number(id))));
+  assert.match(HELD_CLIENT_IDS_SQL, /FROM proposals\s+WHERE id = ANY\(\$1::int\[\]\) AND client_id IS NOT NULL/);
+  assert.deepEqual(await heldClientIds(stubDb([])), [], 'a held id with no proposals row holds no client');
+});
+
+test('heldClientIds fails closed: a missing or malformed list throws before any query', async () => {
+  const real = sweep.LEGAL_HOLD_PROPOSAL_IDS;
+  try {
+    for (const bad of [undefined, null, 'nope', [600, 'x'], [600, -1], [0]]) {
+      sweep.LEGAL_HOLD_PROPOSAL_IDS = bad;
+      const db = stubDb([{ client_id: 31337 }]);
+      await assert.rejects(heldClientIds(db), /LEGAL_HOLD_PROPOSAL_IDS/, JSON.stringify(bad));
+      await assert.rejects(holdExclusion(db), /LEGAL_HOLD_PROPOSAL_IDS/, JSON.stringify(bad));
+      assert.equal(db.calls.length, 0, 'nothing is read under a list it cannot read');
+    }
+  } finally {
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = real;
+  }
+});
+
+test('heldClientIds fails closed: a failed read or a client id that is not a positive integer throws', async () => {
+  await assert.rejects(heldClientIds(stubDb(new Error('connection reset'))), /connection reset/);
+  for (const bad of [null, 0, -4, '7_0', 'x', 2 ** 31, 1.5]) {
+    await assert.rejects(heldClientIds(stubDb([{ client_id: 31337 }, { client_id: bad }])), /not a positive integer/, String(bad));
+  }
+  await assert.rejects(heldClientIds({ query: async () => ({}) }), /could not be read/);
+});
+
+test('holdExclusion: both lists, read at call time', async () => {
+  __setLegalHoldIdsForTest([424242]);
+  const db = stubDb((params) => (params[0].includes(424242) ? [{ client_id: 31337 }] : []));
+  assert.deepEqual(await holdExclusion(db), { proposalIds: heldProposalIds(), clientIds: [31337] });
+  __setLegalHoldIdsForTest(null);
+  assert.deepEqual(await holdExclusion(db), { proposalIds: LEGAL_HOLD_PROPOSAL_IDS.map(Number), clientIds: [] });
 });
