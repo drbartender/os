@@ -5954,3 +5954,141 @@ CREATE TABLE IF NOT EXISTS gv_sender_state (
 );
 INSERT INTO gv_sender_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- ─── end GV proposal posts ───
+
+-- ─── Claude connector (spec 2026-11-19-duet-connector-design.md, section 7) ───
+-- The OS is the sign-in authority for its own read-only MCP connector. Five
+-- tables, written only by server/utils/connector/ and its two route files:
+-- the pending sign-in request a browser carries to the consent page, the
+-- grant the owner approves with a passkey, the single-use code, the access and
+-- refresh tokens (stored as SHA-256 hashes only, never the token), and the call
+-- log. A grant is revoked by a timestamp and never deleted, so its call log
+-- survives; the daily cleanup job (connector/cleanupScheduler.js) deletes old
+-- log rows, expired requests, used codes and dead tokens.
+
+-- A pending authorize request, good for 10 minutes. Only its id travels to the
+-- consent page; the approve route reads everything else from here. state is
+-- optional (PKCE carries the CSRF protection) and echoed when present.
+CREATE TABLE IF NOT EXISTS connector_auth_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id VARCHAR(100) NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  code_challenge VARCHAR(128) NOT NULL,
+  state TEXT,
+  resource TEXT,
+  caller_address VARCHAR(64),
+  user_agent VARCHAR(300),
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  outcome VARCHAR(16) CHECK (outcome IN ('approved', 'cancelled')),
+  grant_id INTEGER,
+  CHECK ((used_at IS NULL) = (outcome IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_connector_auth_requests_expires ON connector_auth_requests (expires_at);
+-- state became optional after an earlier lane checkpoint created it NOT NULL.
+ALTER TABLE connector_auth_requests ALTER COLUMN state DROP NOT NULL;
+
+-- One approval by the owner. token_version is the admin's at approval: a later
+-- bump (a password reset, a passkey revoke) kills the grant at the next call.
+-- Lapses after 30 days unused (last_used_at) and ends at expires_at (180 days).
+CREATE TABLE IF NOT EXISTS connector_grants (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  token_version INTEGER NOT NULL,
+  client_id VARCHAR(100) NOT NULL,
+  request_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ,
+  revoked_reason VARCHAR(32),
+  activated_at TIMESTAMPTZ,
+  CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL))
+);
+-- activated_at: NULL while the approval waits for its code exchange (a
+-- pending grant: no tokens, not the connection); the exchange stamps it and
+-- revokes the earlier connection in the same transaction.
+ALTER TABLE connector_grants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
+-- The reasons, as one named constraint (unredeemed: the daily cleanup's
+-- revocation of an approval whose code never made it live). The inline check
+-- an earlier lane checkpoint created is dropped first.
+ALTER TABLE connector_grants DROP CONSTRAINT IF EXISTS connector_grants_revoked_reason_check;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'connector_grants_revoked_reason_values'
+       AND conrelid = 'connector_grants'::regclass
+  ) THEN
+    ALTER TABLE connector_grants ADD CONSTRAINT connector_grants_revoked_reason_values
+      CHECK (revoked_reason IN ('replaced', 'disconnected', 'code_replay', 'refresh_replay', 'unredeemed'));
+  END IF;
+END $$;
+-- At most one live grant: the exchange revokes the old one in the same
+-- transaction, and this index is the backstop against two exchanges racing.
+-- Pending approvals are not counted. CRITICAL_INDEXES alerts at boot if it is
+-- missing. It replaces an earlier checkpoint's index over every unrevoked row.
+DROP INDEX IF EXISTS uq_connector_grants_one_unrevoked;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_grants_one_live
+  ON connector_grants ((true)) WHERE revoked_at IS NULL AND activated_at IS NOT NULL;
+
+-- The single-use authorization code, good for 60 seconds, bound to the client
+-- id, return address, PKCE challenge and resource of its request.
+CREATE TABLE IF NOT EXISTS connector_codes (
+  id SERIAL PRIMARY KEY,
+  code_hash CHAR(64) NOT NULL UNIQUE,
+  grant_id INTEGER NOT NULL REFERENCES connector_grants(id),
+  client_id VARCHAR(100) NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  code_challenge VARCHAR(128) NOT NULL,
+  resource TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_connector_codes_grant ON connector_codes (grant_id);
+
+-- Access tokens (one hour) and refresh tokens (to the grant's end). A refresh
+-- token is spent by stamping rotated_at; presented again inside 30 seconds it
+-- is refused harmlessly, later it revokes the grant (spec 7.2).
+CREATE TABLE IF NOT EXISTS connector_tokens (
+  id SERIAL PRIMARY KEY,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  kind VARCHAR(8) NOT NULL CHECK (kind IN ('access', 'refresh')),
+  grant_id INTEGER NOT NULL REFERENCES connector_grants(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  rotated_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  CHECK (kind = 'refresh' OR rotated_at IS NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_connector_tokens_grant ON connector_tokens (grant_id);
+
+-- The call log (spec 7.4): one row per authenticated MCP request, one per
+-- address, outcome and route per ten minutes for refusals (bad token, outside
+-- the address range; no grant), and one per withheld piece of client-written
+-- text (spec 7.6). No search text and no results are stored.
+-- client_id is the client a detail tool read, which the bulk-read tripwire
+-- counts per grant per rolling hour on idx_connector_calls_grant_time.
+-- withheld_ref names the withheld piece, unique among withheld rows, so the
+-- tools record and email each piece once however often it is read.
+CREATE TABLE IF NOT EXISTS connector_calls (
+  id BIGSERIAL PRIMARY KEY,
+  grant_id INTEGER REFERENCES connector_grants(id),
+  called_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  caller_address VARCHAR(64),
+  method VARCHAR(64),
+  tool_name VARCHAR(64),
+  record_ids TEXT[] NOT NULL DEFAULT '{}',
+  client_id INTEGER,
+  result_count INTEGER,
+  duration_ms INTEGER,
+  outcome VARCHAR(24) NOT NULL CHECK (outcome IN ('ok', 'not_found', 'error', 'withheld', 'refused_token', 'refused_address', 'refused_tripwire')),
+  withheld_ref VARCHAR(128),
+  CHECK (outcome IN ('refused_token', 'refused_address') OR grant_id IS NOT NULL),
+  CHECK ((outcome = 'withheld') = (withheld_ref IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_connector_calls_grant_time ON connector_calls (grant_id, called_at);
+CREATE INDEX IF NOT EXISTS idx_connector_calls_time ON connector_calls (called_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_calls_withheld_ref
+  ON connector_calls (withheld_ref) WHERE outcome = 'withheld';
+-- ─── end Claude connector ───

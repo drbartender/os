@@ -26,6 +26,8 @@ router.use('/', require('./presence'));
 router.use('/', require('./leadCalls'));
 router.use('/', require('./nameNotices'));
 router.use('/', require('./inbox'));
+// The Claude connector's consent and settings routes, all under /connector.
+router.use('/', require('./connector'));
 // proposalActions lives in ccImport/ but mounts at /api/admin (not /cc-import/) so
 // the URLs read /api/admin/proposals/:id/... — these are proposal-level admin
 // actions whose "cc" nature is incidental.

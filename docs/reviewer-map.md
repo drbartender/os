@@ -21,6 +21,7 @@ Roughly 88k lines of server code in 394 files, 90k lines of client code, 93k lin
 | Payments: invoices, Stripe intents, webhooks, refunds | `server/routes/invoices.js`, `server/routes/stripeWebhook.js` |
 | Payroll: accrual, pay periods, gratuity, duty pay, paystubs | `server/utils/payroll*.js`, `server/routes/admin/payroll.js` |
 | Comms: two-way SMS, a voice tree, marketing email, scheduled sends | `server/utils/smsInbound.js`, `server/routes/voice.js` |
+| Claude connector: a read-only MCP server with its own OAuth sign-in, passkey consent and call log, dark behind a flag | `server/utils/connector/`, `server/routes/connectorOauth.js`, `server/routes/connectorMcp.js` |
 
 ## The menu
 

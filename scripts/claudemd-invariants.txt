@@ -120,3 +120,4 @@ ai-egress aiRedact\.js
 public-repo repo is public
 branches-stashes branches and stashes
 finished-commits finished work
+claude-connector Claude connector is read only.*legal hold

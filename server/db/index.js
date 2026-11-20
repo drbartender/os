@@ -200,6 +200,14 @@ const CRITICAL_INDEXES = [
   // absent, that INSERT raises 42P10 and every relay send falls back to the
   // toll-free text.
   'uq_gv_posts_open_per_proposal',
+  // The Claude connector (spec 2026-11-19 section 7.2): at most one live grant.
+  // The code exchange revokes the old grant first; this index is the backstop
+  // against two exchanges racing, so its absence would allow two live grants.
+  'uq_connector_grants_one_live',
+  // The call log's withheld-once guard: every call-log INSERT names it as its
+  // ON CONFLICT arbiter, so its absence would make every log write raise 42P10
+  // (swallowed by recordCall) and the tripwire count read zero.
+  'uq_connector_calls_withheld_ref',
 ];
 
 // Constraints whose VALUE LIST is load-bearing and which schema.sql defines more

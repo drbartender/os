@@ -465,3 +465,31 @@ test('a token path inside a message is redacted and the words after it are kept'
   assert.equal(scrubUrl(`link "/api/menu-proof/${UUID_A}" expired`), 'link "/api/menu-proof/[redacted]" expired');
   assert.equal(scrubUrl('see /x?token=abc123 then retry'), 'see /x?token=[redacted] then retry');
 });
+
+test('the connector\'s sign-in values are redacted on the /oauth paths: state, code_challenge, code and verifier', () => {
+  const state = 'Zm9vYmFyLXN0YXRlLXZhbHVl';
+  const challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+  const url = `https://api.drbartender.com/oauth/authorize?response_type=code&client_id=drbartender-os-claude&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  const back = `https://claude.ai/api/mcp/auth_callback?code=opaque-code-value&state=${state}`;
+  const form = 'grant_type=authorization_code&code=opaque-code-value&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+  for (const text of [url, back, form]) {
+    const out = scrubUrl(text);
+    for (const secret of [state, challenge, 'opaque-code-value', 'dBjftJeZ4CVP']) assert.equal(out.includes(secret), false, out);
+  }
+  assert.match(scrubUrl(url), /response_type=code&/, 'the other parameters stay readable');
+  assert.match(scrubUrl(url), /code_challenge_method=S256/);
+  const txn = scrubTransactionEvent({
+    transaction: `GET /oauth/authorize?state=${state}`,
+    request: { url, query_string: url.split('?')[1] },
+    contexts: { trace: { data: { 'url.full': url, 'http.query': `?state=${state}&code_challenge=${challenge}` } } },
+  });
+  const err = scrubErrorEvent({
+    request: { url, query_string: url.split('?')[1] },
+    tags: { route: `/oauth/authorize?state=${state}&code_challenge=${challenge}` },
+  });
+  for (const ev of [txn, err]) {
+    const json = JSON.stringify(ev);
+    assert.equal(json.includes(state), false, json);
+    assert.equal(json.includes(challenge), false, json);
+  }
+});

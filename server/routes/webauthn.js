@@ -1,5 +1,5 @@
 // Passkey unlock under /api/auth/webauthn (register/assert/credentials; the ONLY 12h-mint site;
-// SENSITIVE-LISTED)
+// SENSITIVE-LISTED), and the assertion check the Claude connector's Allow step reuses, minting nothing
 
 const express = require('express');
 const Sentry = require('@sentry/node');
@@ -93,6 +93,154 @@ async function consumeChallenge(kind, challenge, userId) {
     [challenge, kind, userId]
   );
   return r.rows.length > 0;
+}
+
+// The assertion check itself, shared by assert-verify below and the Claude
+// connector's Allow step (server/routes/admin/connector.js), and minting
+// nothing: assert-verify mints the 12h token after it, the connector mints no
+// session at all. Consumes the single-use challenge (bound to `boundUserId`,
+// or unbound for the phone unlock, so neither surface's challenge can be
+// spent at the other), finds the credential, cross-checks the userHandle and
+// verifies the signature. Every failure is the same uniform envelope (the
+// discriminating code goes to Sentry only). Resolves { row, newCounter }; the
+// counter claim is a separate step (claimCounter) so assert-verify keeps
+// running its account-state gates before it, as it always has.
+async function checkAssertion(response, { boundUserId = null, verify = verifyAuthenticationResponse } = {}) {
+  if (!response || !response.id || !response.response) {
+    throw new ValidationError({ response: 'Missing WebAuthn response' });
+  }
+  const challenge = challengeFromClientData(response);
+  if (!challenge || !(await consumeChallenge('assert', challenge, boundUserId))) {
+    throw new AppError('This unlock attempt expired. Try again.', 400, 'WEBAUTHN_CHALLENGE_INVALID');
+  }
+
+  // Uniform failure envelope for everything below: the endpoint must not be
+  // usable to enumerate credential ids or account states. The DISCRIMINATING
+  // code goes to Sentry only; the caller always sees the same status, message
+  // AND code (the global error middleware emits err.code, so a per-case code
+  // here would leak which branch fired: mid-lane security review, 2026-08-14).
+  // The branch rides on the error as `reason`, which no response ever writes
+  // (the global handler sends error, code and fieldErrors only), so the phone
+  // unlock's envelope stays uniform while the connector's authenticated Allow
+  // step can name the cause to its admin.
+  const fail = (code, extra) => {
+    captureWebauthnEvent('webauthn_assert_failed', { code, ...extra });
+    const err = new ConflictError('Unlock failed. Use your password.', 'WEBAUTHN_UNLOCK_FAILED');
+    err.reason = code;
+    return err;
+  };
+
+  const credRes = await pool.query(
+    `SELECT wc.id AS cred_row_id, wc.user_id, wc.credential_id, wc.public_key, wc.counter,
+            u.email, u.role, u.onboarding_status, u.can_hire, u.can_staff, u.token_version, u.pre_hired,
+            cp.preferred_name
+     FROM webauthn_credentials wc
+     JOIN users u ON u.id = wc.user_id
+     LEFT JOIN contractor_profiles cp ON cp.user_id = wc.user_id
+     WHERE wc.credential_id = $1`,
+    [response.id]
+  );
+  const row = credRes.rows[0];
+  if (!row) throw fail('WEBAUTHN_UNKNOWN_CREDENTIAL', {});
+
+  // userHandle, when the authenticator reports one, must decode to the
+  // account this credential belongs to. Type-guarded: Buffer.from throws on
+  // non-strings, which would break the uniform envelope with a 500.
+  const rawHandle = response.response.userHandle;
+  const userHandle = typeof rawHandle === 'string'
+    ? Buffer.from(rawHandle, 'base64').toString('utf8')
+    : null;
+  if (userHandle && userHandle !== String(row.user_id)) {
+    throw fail('WEBAUTHN_USERHANDLE_MISMATCH', { user_id: row.user_id });
+  }
+
+  let verification;
+  try {
+    verification = await verify({
+      response,
+      expectedChallenge: challenge,
+      expectedOrigin: expectedOrigins(),
+      expectedRPID: rpId(),
+      credential: {
+        id: row.credential_id,
+        publicKey: isoBase64URL.toBuffer(row.public_key),
+        counter: Number(row.counter),
+      },
+      requireUserVerification: true,
+    });
+  } catch (err) {
+    throw fail('WEBAUTHN_VERIFY_FAILED', { user_id: row.user_id, message: err.message });
+  }
+  if (!verification.verified) throw fail('WEBAUTHN_VERIFY_FAILED', { user_id: row.user_id });
+  return { row, newCounter: verification.authenticationInfo.newCounter, fail };
+}
+
+// Cloned-credential signal (spec section 8): a stored counter > 0 that
+// fails to advance. Android authenticators that always report 0 never
+// trip this (0 stays 0). The UPDATE is the claim (atomic, so two
+// concurrent assertions cannot interleave a read-then-write and store a
+// regressed counter): zero rows = regression.
+async function claimCounter(row, newCounter) {
+  const advanced = await pool.query(
+    `UPDATE webauthn_credentials SET counter = $1, last_used_at = NOW()
+     WHERE id = $2 AND (counter = 0 OR counter < $1) RETURNING id`,
+    [newCounter, row.cred_row_id]
+  );
+  if (!advanced.rows[0]) {
+    captureWebauthnEvent('webauthn_counter_regression',
+      { user_id: row.user_id, credential_row: row.cred_row_id }, 'error');
+    const err = new ConflictError('Unlock failed. Use your password.', 'WEBAUTHN_UNLOCK_FAILED');
+    err.reason = 'WEBAUTHN_COUNTER_REGRESSION';
+    throw err;
+  }
+}
+
+// The caller's own passkeys, for the connector's allowCredentials.
+async function credentialsFor(userId) {
+  const r = await pool.query('SELECT credential_id, transports FROM webauthn_credentials WHERE user_id = $1', [userId]);
+  return r.rows.map((c) => {
+    let transports;
+    try { transports = c.transports ? JSON.parse(c.transports) : undefined; } catch (_) { transports = undefined; }
+    return { id: c.credential_id, transports };
+  });
+}
+
+// Options for an assertion whose challenge is bound to `userId` (the Claude
+// connector's Allow step), naming only that user's own passkeys in
+// allowCredentials: the owner holds an admin and a staff account on one
+// device, and the browser must offer only the admin's. Null when the user has
+// no passkey. The phone unlock's assert-options stays unbound and usernameless.
+async function assertionOptionsForUser(userId) {
+  const allowCredentials = await credentialsFor(userId);
+  if (!allowCredentials.length) return null;
+  const options = await generateAuthenticationOptions({
+    rpID: rpId(),
+    userVerification: 'required',
+    allowCredentials,
+  });
+  await storeChallenge('assert', options.challenge, userId);
+  return options;
+}
+
+// A fresh passkey assertion by `userId` itself, through the shared check, on a
+// challenge bound to that user. Mints NOTHING: this file's assert-verify stays
+// the only site that mints the 12h device token. Resolves true or throws; a
+// refusal carries `reason` (WEBAUTHN_NO_CREDENTIAL when the user has no
+// passkey, WEBAUTHN_WRONG_ACCOUNT for another account's passkey, the shared
+// check's codes otherwise), and anything without one is unexpected.
+async function verifyAssertionForUser(response, userId, { verify } = {}) {
+  if (!(await credentialsFor(userId)).length) {
+    const err = new ConflictError('No passkey is registered for this account.', 'WEBAUTHN_UNLOCK_FAILED');
+    err.reason = 'WEBAUTHN_NO_CREDENTIAL';
+    throw err;
+  }
+  const { row, newCounter, fail } = await checkAssertion(response, {
+    boundUserId: userId,
+    ...(verify ? { verify } : {}),
+  });
+  if (row.user_id !== userId) throw fail('WEBAUTHN_WRONG_ACCOUNT', { user_id: row.user_id });
+  await claimCounter(row, newCounter);
+  return true;
 }
 
 function createWebauthnRouter(overrides = {}) {
@@ -248,66 +396,9 @@ function createWebauthnRouter(overrides = {}) {
   // gates), then mint the 12h token + login-shaped user payload
   router.post('/assert-verify', webauthnLimiter, asyncHandler(async (req, res) => {
     const { response } = req.body || {};
-    if (!response || !response.id || !response.response) {
-      throw new ValidationError({ response: 'Missing WebAuthn response' });
-    }
-    const challenge = challengeFromClientData(response);
-    if (!challenge || !(await consumeChallenge('assert', challenge, null))) {
-      throw new AppError('This unlock attempt expired. Try again.', 400, 'WEBAUTHN_CHALLENGE_INVALID');
-    }
-
-    // Uniform failure envelope for everything below: the endpoint must not be
-    // usable to enumerate credential ids or account states. The DISCRIMINATING
-    // code goes to Sentry only; the caller always sees the same status, message
-    // AND code (the global error middleware emits err.code, so a per-case code
-    // here would leak which branch fired: mid-lane security review, 2026-08-14).
-    const fail = (code, extra) => {
-      captureWebauthnEvent('webauthn_assert_failed', { code, ...extra });
-      return new ConflictError('Unlock failed. Use your password.', 'WEBAUTHN_UNLOCK_FAILED');
-    };
-
-    const credRes = await pool.query(
-      `SELECT wc.id AS cred_row_id, wc.user_id, wc.credential_id, wc.public_key, wc.counter,
-              u.email, u.role, u.onboarding_status, u.can_hire, u.can_staff, u.token_version, u.pre_hired,
-              cp.preferred_name
-       FROM webauthn_credentials wc
-       JOIN users u ON u.id = wc.user_id
-       LEFT JOIN contractor_profiles cp ON cp.user_id = wc.user_id
-       WHERE wc.credential_id = $1`,
-      [response.id]
-    );
-    const row = credRes.rows[0];
-    if (!row) throw fail('WEBAUTHN_UNKNOWN_CREDENTIAL', {});
-
-    // userHandle, when the authenticator reports one, must decode to the
-    // account this credential belongs to. Type-guarded: Buffer.from throws on
-    // non-strings, which would break the uniform envelope with a 500.
-    const rawHandle = response.response.userHandle;
-    const userHandle = typeof rawHandle === 'string'
-      ? Buffer.from(rawHandle, 'base64').toString('utf8')
-      : null;
-    if (userHandle && userHandle !== String(row.user_id)) {
-      throw fail('WEBAUTHN_USERHANDLE_MISMATCH', { user_id: row.user_id });
-    }
-
-    let verification;
-    try {
-      verification = await impl.verifyAuthenticationResponse({
-        response,
-        expectedChallenge: challenge,
-        expectedOrigin: expectedOrigins(),
-        expectedRPID: rpId(),
-        credential: {
-          id: row.credential_id,
-          publicKey: isoBase64URL.toBuffer(row.public_key),
-          counter: Number(row.counter),
-        },
-        requireUserVerification: true,
-      });
-    } catch (err) {
-      throw fail('WEBAUTHN_VERIFY_FAILED', { user_id: row.user_id, message: err.message });
-    }
-    if (!verification.verified) throw fail('WEBAUTHN_VERIFY_FAILED', { user_id: row.user_id });
+    const { row, newCounter } = await checkAssertion(response, {
+      verify: impl.verifyAuthenticationResponse,
+    });
 
     // Same account-state gates as password login (routes/auth.js login).
     // These stay distinguishable on purpose (login parity) and are only
@@ -319,22 +410,7 @@ function createWebauthnRouter(overrides = {}) {
       throw new ConflictError('Your application was not selected at this time. Questions? Contact contact@drbartender.com', 'APPLICATION_REJECTED');
     }
 
-    // Cloned-credential signal (spec section 8): a stored counter > 0 that
-    // fails to advance. Android authenticators that always report 0 never
-    // trip this (0 stays 0). The UPDATE is the claim (atomic, so two
-    // concurrent assertions cannot interleave a read-then-write and store a
-    // regressed counter): zero rows = regression.
-    const { newCounter } = verification.authenticationInfo;
-    const advanced = await pool.query(
-      `UPDATE webauthn_credentials SET counter = $1, last_used_at = NOW()
-       WHERE id = $2 AND (counter = 0 OR counter < $1) RETURNING id`,
-      [newCounter, row.cred_row_id]
-    );
-    if (!advanced.rows[0]) {
-      captureWebauthnEvent('webauthn_counter_regression',
-        { user_id: row.user_id, credential_row: row.cred_row_id }, 'error');
-      throw new ConflictError('Unlock failed. Use your password.', 'WEBAUTHN_UNLOCK_FAILED');
-    }
+    await claimCounter(row, newCounter);
     const appResult = await pool.query('SELECT id FROM applications WHERE user_id = $1', [row.user_id]);
 
     // The ONLY minting site for the phone-lifetime token (spec section 8):
@@ -367,3 +443,5 @@ function createWebauthnRouter(overrides = {}) {
 
 module.exports = createWebauthnRouter();
 module.exports.createWebauthnRouter = createWebauthnRouter;
+module.exports.assertionOptionsForUser = assertionOptionsForUser;
+module.exports.verifyAssertionForUser = verifyAssertionForUser;

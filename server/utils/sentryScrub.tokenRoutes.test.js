@@ -203,3 +203,77 @@ test('no listed route\'s token leaves either Sentry pipeline', () => {
     }
   }
 });
+
+// The Claude connector (spec 2026-11-19 law 8). Its credentials ride in no
+// path parameter, so the discovery above never sees them: a sign-in code goes
+// back to Claude in the return address's query (the approve route's
+// redirect_url), an access token rides in the Authorization header of POST
+// /mcp, and the token route's form body carries a code, a verifier or a
+// refresh token. Every one of them carries the fixed prefix of
+// server/utils/connector/tokens.js and is redacted by it. Each connector
+// route is listed here with where its credential rides, so a new connector
+// route fails until it says.
+const CONNECTOR_ROUTE_FILES = ['connectorMcp.js', 'connectorOauth.js', 'admin/connector.js'];
+const CONNECTOR_ROUTES = {
+  'admin/connector.js /connector': 'none',
+  'admin/connector.js /connector/assert-options': 'none',
+  'admin/connector.js /connector/calls': 'none',
+  'admin/connector.js /connector/disconnect': 'none',
+  'admin/connector.js /connector/requests/:id': 'none',
+  'admin/connector.js /connector/requests/:id/approve': 'query',
+  'admin/connector.js /connector/requests/:id/cancel': 'none',
+  'admin/connector.js /connector/status': 'none',
+  'connectorMcp.js /': 'header',
+  'connectorOauth.js /.well-known': 'none',
+  'connectorOauth.js /.well-known/oauth-authorization-server': 'none',
+  'connectorOauth.js /.well-known/oauth-protected-resource': 'none',
+  'connectorOauth.js /.well-known/oauth-protected-resource/mcp': 'none',
+  'connectorOauth.js /oauth': 'none',
+  'connectorOauth.js /oauth/authorize': 'none',
+  'connectorOauth.js /oauth/token': 'body',
+};
+
+test('every Claude connector route is listed with where its credential rides', () => {
+  const found = new Set();
+  for (const rel of CONNECTOR_ROUTE_FILES) {
+    const src = fs.readFileSync(path.join(ROUTES_DIR, rel), 'utf8');
+    for (const m of src.matchAll(ROUTE_CALL)) found.add(`${rel} ${m[2]}`);
+  }
+  const missing = [...found].filter((k) => !CONNECTOR_ROUTES[k]).sort();
+  assert.deepEqual(missing, [], `connector routes with no entry in CONNECTOR_ROUTES: ${missing.join('; ')}`);
+  const stale = Object.keys(CONNECTOR_ROUTES).filter((k) => !found.has(k));
+  assert.deepEqual(stale, [], `CONNECTOR_ROUTES entries that match no route any more: ${stale.join('; ')}`);
+});
+
+test('no Claude connector token or code leaves scrubUrl or either Sentry pipeline, wherever it rides', () => {
+  const tokens = require('./connector/tokens');
+  for (const prefix of [tokens.ACCESS_PREFIX, tokens.REFRESH_PREFIX, tokens.CODE_PREFIX]) {
+    for (let i = 0; i < 20; i += 1) {
+      const token = tokens.mint(prefix);
+      const back = `https://claude.ai/api/mcp/auth_callback?code=${token}&state=abc`;
+      const form = `grant_type=refresh_token&refresh_token=${token}&client_id=x`;
+      const bearer = `Authorization: Bearer ${token}`;
+      for (const text of [back, encodeURIComponent(back), form, bearer, `failed for ${token}.`]) {
+        assert.equal(leaks(scrubUrl(text), token), false, scrubUrl(text));
+      }
+      const err = scrubErrorEvent({
+        message: `token route failed: ${token}`,
+        request: { url: 'https://api.drbartender.com/oauth/token', query_string: `code=${token}`, data: form },
+        tags: { route: '/oauth/token' },
+        extra: { body: form, header: bearer },
+        breadcrumbs: [{ message: `GET ${back}`, data: { url: back } }],
+      });
+      assert.equal(leaks(JSON.stringify(err), token), false, 'an error event');
+      assert.equal(err.tags.scrub_failed, undefined, 'the error event failed closed');
+      const txn = scrubTransactionEvent({
+        transaction: 'POST /mcp',
+        request: { url: back },
+        contexts: { trace: { data: { url: back, 'http.request.body': form } } },
+        spans: [{ description: `GET ${back}`, data: { url: back } }],
+        breadcrumbs: [{ message: bearer }],
+      });
+      assert.equal(leaks(JSON.stringify(txn), token), false, 'a transaction');
+      assert.match(txn.request.url, /\[redacted-connector-token\]/, 'the transaction kept its URL');
+    }
+  }
+});

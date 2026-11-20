@@ -126,6 +126,21 @@ client/public/admin-sw.js
 client/public/admin-manifest.json
 client/src/utils/installAdminPwaMeta.js
 
+# The Claude connector (spec 2026-11-19-duet-connector-design.md; plan lane
+# connector-signin-server, 2026-11-19). The one place client data leaves the
+# OS unredacted, through its own sign-in authority (authorize, consent, token,
+# refresh rotation) and its own bearer token, checked on every MCP call. Its
+# files under server/utils/connector/ (sign-in, tokens, the per-call check, the
+# call log, the text guards and the tools), its three route files, and the
+# shared hold-safe reads its tools call (server/utils/reads/, lane
+# connector-shared-reads), so every later connector lane is tiered A by this
+# list and not by memory.
+server/utils/connector/**
+server/routes/connectorMcp.js
+server/routes/connectorOauth.js
+server/routes/admin/connector.js
+server/utils/reads/**
+
 # section: money
 # Payroll, pricing, Stripe, payouts, invoices, refunds, bank PII, webhooks,
 # external sends and paid providers, schema, and the gate machinery.

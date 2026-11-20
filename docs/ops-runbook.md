@@ -196,3 +196,26 @@ orchestration in the route anymore; never describe or rebuild one.
   INTERVAL '1 hour' WHERE id = <id> AND status = 'expired'`.
 - Never edit the event duration to "settle" any of these: a hand-moved hour
   is contract time and bills the client again on the next save.
+
+## Claude connector (connect, disconnect, re-approve, address range)
+
+The read-only connector Claude and Duet use (spec `docs/superpowers/specs/2026-11-19-duet-connector-design.md`). It is off unless `CLAUDE_CONNECTOR_ENABLED=true` in Render.
+
+### Connect
+
+1. In Render, set `CLAUDE_CONNECTOR_ENABLED=true` (and `CLAUDE_CONNECTOR_ALLOWED_CIDRS` only to change Anthropic's range from its default) and let the deploy finish.
+2. In Claude: Customize, Connectors, Add custom connector. The URL is `<API_URL>/mcp` exactly (admin Settings, the Claude connection block, shows it). Under the OAuth client, choose "Use your own OAuth client" and enter the client id `drbartender-os-claude`; leave the secret blank.
+3. Claude opens the OS consent page. Check when and from where the request started, press Allow and use your passkey. The browser goes back to Claude, and once Claude has finished signing in an email confirms the new connection. An approval Claude never finishes changes nothing: any earlier connection keeps working, and the next daily cleanup drops the unfinished one.
+4. After Claude's first calls, open the connection block's recent calls (refused calls are listed there with their address, one row per address every ten minutes) and check the recorded address falls inside `160.79.104.0/21`. If every call is refused instead, Render is reporting the wrong address: empty `CLAUDE_CONNECTOR_ALLOWED_CIDRS` in Render to switch the address check off, and get the fix shipped before setting it back.
+
+### Disconnect
+
+Settings, the Claude connection block, Disconnect. The grant and its tokens are revoked at once and an audit entry is written; the call log stays. Turning the flag off also stops every connector path (404). Resetting your password (the login page, "Forgot your password?", then the emailed link) or revoking a passkey (Settings, Security, Passkeys, Revoke) also kills the connection, because both sign every session out; then sign in again.
+
+### Re-approve
+
+A connection lapses after 30 days unused and ends 180 days after approval. Claude then asks to reconnect: start it from Claude and approve on the consent page with the passkey again. Approving always replaces the old connection, never adds a second one. A "connection was cut off" email means a spent token was presented again; the connection is already revoked, and reconnecting from Claude is the whole fix.
+
+### When Anthropic's address range changes
+
+Calls are refused (403) and show in the connection block's recent calls as refused_address with their address (one row per address every ten minutes). Set `CLAUDE_CONNECTOR_ALLOWED_CIDRS` in Render to the new comma-separated range from Anthropic's IP address page; an empty value switches the check off meanwhile.

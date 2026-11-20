@@ -244,6 +244,9 @@ app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/
 // Cal.com webhook needs raw body for HMAC-SHA256 signature verification, also BEFORE express.json()
 app.use('/api/calcom/webhook', express.raw({ type: 'application/json', limit: '256kb' }));
 
+// The Claude connector (spec 2026-11-19): /oauth/*, the metadata and /mcp, ahead of the global parsers with their own; 404 unless CLAUDE_CONNECTOR_ENABLED=true.
+app.use('/', require('./routes/connectorOauth'));
+app.use('/mcp', require('./routes/connectorMcp'));
 // Blog admin can post TipTap-inlined images that approach 10MB; scope the big
 // limit to the blog route only. Everything else uses the 1MB default.
 app.use('/api/blog', express.json({ limit: '10mb' }));
@@ -907,6 +910,7 @@ async function start() {
         clearHealthRow('gmail_sync');
       }
 
+      require('./utils/connector/cleanupScheduler').register({ enabled, globalScheduleDisabled, wrapScheduler, clearHealthRow }); // Claude connector, daily
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();

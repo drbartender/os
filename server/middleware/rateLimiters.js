@@ -1,5 +1,6 @@
 // Shared express-rate-limit instances (publicLimiter, signLimiter, adminWriteLimiter for admin
-// proposal writes, menuDraftReadLimiter and menuDraftEditLimiter for the menu art drafts, etc.)
+// proposal writes, menuDraftReadLimiter and menuDraftEditLimiter for the menu art drafts, the four
+// Claude connector limiters, etc.)
 
 const rateLimit = require('express-rate-limit');
 
@@ -347,6 +348,64 @@ const menuProofAnswerLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The Claude connector (spec 2026-11-19 section 7.1). Per grant on authenticated
+// /mcp calls, keyed by the grant the per-call check set (req.connector): a
+// Claude chat makes a burst of tool calls per answer, so 120 a minute is far
+// above use and still bounds a runaway loop. Per address on what an
+// unauthenticated caller can reach: refused /mcp calls, /oauth/authorize and
+// /oauth/token. Every Claude user's traffic leaves from Anthropic's range, so
+// an address bucket is shared with strangers; the caps sit well above one
+// owner's sign-in (a handful of authorize and token calls, one refresh an
+// hour). Skipped under NODE_ENV=test like webauthnLimiter, so the connector
+// suites' many calls from one address do not trip them; their own suite flips
+// the variable to prove each one.
+const skipInTest = () => process.env.NODE_ENV === 'test';
+const connectorGrantLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => (req.connector && req.connector.grantId ? `connector-grant-${req.connector.grantId}` : req.ip),
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+});
+// The per-address ceiling in front of everything on /mcp and /oauth/token,
+// ahead of the address check, the token lookup and any call-log write, so no
+// caller gets an unbounded database read or write. Generous: it counts the
+// owner's authenticated calls too, and Claude's calls spread over its range.
+const connectorAddressCeilingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+});
+const connectorMcpAddressLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+});
+const connectorAuthorizeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many sign-in attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+});
+const connectorTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: { error: 'Too many token requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -374,4 +433,9 @@ module.exports = {
   menuDraftEditLimiter,
   menuProofReadLimiter,
   menuProofAnswerLimiter,
+  connectorGrantLimiter,
+  connectorAddressCeilingLimiter,
+  connectorMcpAddressLimiter,
+  connectorAuthorizeLimiter,
+  connectorTokenLimiter,
 };

@@ -65,6 +65,13 @@ const JWT_VALUE = /(^|[^A-Za-z0-9_-]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{1,256}\.[A
 // the token page carries it after a card payment; the server sees it only in a
 // Referer, but a value rule costs nothing and matches the browser's.
 const CLIENT_SECRET_VALUE = /(?:pi|seti)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/g;
+// A Claude connector token or code by value: drbc_ plus its kind and body
+// (server/utils/connector/tokens.js TOKEN_PREFIX).
+const CONNECTOR_TOKEN_VALUE = /drbc_[A-Za-z0-9_-]+/g;
+// The sign-in parameters whose values are bearer-ish: state, code,
+// code_challenge and code_verifier, after ?, &, or the start of the text.
+// A value another rule already redacted (it opens with [) is left as it is.
+const OAUTH_PARAM_VALUE = /(^|[?&])(state|code|code_challenge|code_verifier)=[^&#\s"'<>[][^&#\s"'<>]*/gi;
 
 /** Public token segments and query-string tokens, redacted out of any URL. */
 const scrubUrl = (u) => {
@@ -130,6 +137,17 @@ const scrubUrl = (u) => {
     // Account SIDs are always uppercase AC + lowercase hex, so /i bought
     // nothing but false positives.
     .replace(/(?<![0-9a-zA-Z])AC[0-9a-f]{32}(?![0-9a-zA-Z])/g, '[redacted-account-sid]')
+    // The Claude connector's access and refresh tokens and its sign-in codes,
+    // by their fixed prefix (spec 2026-11-19 law 8; server/utils/connector/
+    // tokens.js): none rides in a path, but a code rides in the return
+    // address's query, a token in a header or a form body, and the prefix is
+    // the one shape all three share. Anchored on the literal prefix, so linear.
+    .replace(CONNECTOR_TOKEN_VALUE, '[redacted-connector-token]')
+    // The connector's sign-in values that carry no prefix: the authorize
+    // request's state and PKCE challenge, and a code or verifier in a query or
+    // a form body (review 2026-11-19). By parameter name, in a query string or
+    // at the start of a bare form body, either case.
+    .replace(OAUTH_PARAM_VALUE, '$1$2=[redacted]')
     // By value, last, so the path rules above keep their markers.
     .replace(UUID_VALUE, '[redacted-uuid]')
     .replace(JWT_VALUE, '$1[redacted-jwt]')
