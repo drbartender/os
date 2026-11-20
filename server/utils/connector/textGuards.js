@@ -239,7 +239,7 @@ const PROVIDER_START = new RegExp(`^${MAIL_PROVIDERS}`);
 
 const DOT_WORD = '\\s+(?:dot|d0t)(?:\\s+|[-_](?=[\\p{L}\\p{N}]))|\\s+dot(?=(?:com|net|org|io|co|me|us|info|biz)(?![\\p{L}\\p{N}]))';
 const DOT_PROSE = '\\s+(?:period|point|punto|full\\s+stop)\\s+';
-const DOT_SYMBOL = '\\s*[\\[({<]\\s*(?:\\.|dot|d0t|period|punto)\\s*[\\])}>]\\s*|\\s*["\'*](?:dot|d0t)["\'*]\\s*|\\s*-dot-\\s*|\\s+\\.\\s*|\\.';
+const DOT_SYMBOL = '\\s*[\\[({<]\\s*(?:\\.|dot|d0t|period|punto)\\s*[\\])}>]\\s*|\\s*["\'*](?:dot|d0t)["\'*]\\s*|\\s*-dot-\\s*|\\s+\\.\\s*|(?<=www)\\.\\s{1,3}|\\.\\s{1,3}(?=(?:com|org|net|edu|gov|io|xyz|biz|co|info|uk|ca|tv|cc|ly|gg|sh|ai)(?![\\p{L}\\p{N}-])|[a-z]{2,24}\\/)|\\.';
 const DOT_ANY = `(?:${DOT_WORD}|${DOT_PROSE}|${DOT_SYMBOL})`;
 const AT_ANY = '(?:\\s+(?:at|arroba|at-sign|at\\s+sign)\\s+|\\s*(?:@|[\\[({<]\\s*(?:at|@|a|arroba)\\s*[\\])}>]|-at-|_at_|\\*at\\*)\\s*)';
 
@@ -264,7 +264,6 @@ const T_EMAIL = /@[\p{L}]/u;
 const T_SCHEME = /(?::|\[:\]|\(:\)|\{:\})(?:\/|\\)/;
 const T_SLASHES = /^\/\/[\p{L}\p{N}]/u;
 const T_HOST = /[\p{L}\p{N}_-]\.[a-zß-ɏͰ-ϿЀ-ӿ]{2}/gu;
-const T_PATH = /[/?#]/;
 // A port needs a host with a dot, or localhost: "Budget:2500" is a fact.
 const T_PORT = /^(?:localhost|[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+):\d{2,5}(?:[/?#]|$)/u;
 const T_IPV4 = /(?<!\d)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?!\d)/;
@@ -280,12 +279,21 @@ function joinedHost(core) {
   return Boolean(m) && T_JOINED_HEAD.test(core.slice(Math.max(0, m.index - 2), m.index));
 }
 
-const isDigit = (c) => c >= '0' && c <= '9';
 // Abbreviations a missing space follows ("Sat.night", "etc.so yes").
 const ABBREVIATIONS = new Set(['sat', 'sun', 'mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'vs', 'etc', 'co', 'inc', 'jr', 'sr', 'ps', 'mr', 'mrs', 'ms', 'dr', 'st', 'ave', 'approx', 'est', 'no', 'vol', 'dept', 'apt', 'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec']);
 // Words that are no host ending after a spelled dot ("see you at hotel dot the bar").
 const NOT_ENDING = new Set(['the', 'and', 'or', 'of', 'for', 'with', 'then', 'that', 'this', 'there', 'their', 'was', 'are', 'be', 'theme', 'pattern', 'dress', 'print']);
-const isLabelChar = (c) => /[\p{L}\p{N}_-]/u.test(c);
+const LABEL_CHAR = /[\p{L}\p{N}_-]/u;
+const LETTER = /\p{L}/u;
+const isLabelChar = (c) => LABEL_CHAR.test(c);
+
+// The few characters written just before view offset i ('' when there is
+// no original): what precedes a token.
+function textBefore(ctx, i) {
+  if (!ctx || !ctx.text) return '';
+  const at = ctx.starts[i];
+  return ctx.text.slice(Math.max(0, at - 3), at);
+}
 
 // The text as written at view offset i ('' when there is no original).
 function originalAt(ctx, i, length) {
@@ -293,37 +301,144 @@ function originalAt(ctx, i, length) {
   return ctx.text.slice(ctx.starts[i], ctx.ends[i + length - 1]);
 }
 
-// Is a dot inside this token a host's dot? A dot after a number ("150.Start",
-// "$1,250.00.Thanks") or before a capitalized ordinary word ("Mr.Smith",
-// "Thanks.See") is a missing space, unless the token also has a path.
+// Endings a host plausibly has, for the dots the case or the left side leave
+// open: a host written in Title Case ("Example.Com"), a number or an
+// abbreviation before the dot ("888.com", "inc.com"). Two-letter endings that
+// are also English words (so, is, it, to, ...) are left out: written with a
+// capital after a missing space they start a sentence ("Thanks.So excited").
+const STRONG_ENDINGS = new Set([
+  'com', 'net', 'org', 'edu', 'gov', 'mil', 'int', 'info', 'biz', 'pro', 'mobi', 'name', 'app', 'dev', 'io',
+  'ai', 'xyz', 'online', 'site', 'website', 'store', 'shop', 'tech', 'cloud', 'club', 'space', 'icu', 'vip',
+  'zip', 'mov', 'lol', 'blog', 'email', 'agency', 'digital', 'solutions', 'services', 'events', 'wedding',
+  'studio', 'design', 'media', 'network', 'systems', 'company', 'support', 'host', 'hosting', 'domains',
+  'ninja', 'rocks', 'guru', 'tools', 'zone', 'social', 'chat', 'games', 'example', 'test', 'invalid',
+  'localhost', 'local', 'onion', 'arpa', 'me', 'us', 'sbs', 'cfd', 'cyou', 'lat', 'cam', 'gdn', 'wang', 'ren',
+  'kim', 'autos', 'pics', 'tokyo', 'sj', 'top', 'buzz', 'monster', 'quest', 'bond',
+  ...('ac ad ae af ag al ao aq ar au aw ax az ba bb bd bf bg bh bi bj bm bn bo br bs bt bw bz ca cc cd cf cg '
+    + 'ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm dz ec ee eg er es et eu fi fj fk fm fo fr ga gd '
+    + 'ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im iq ir je jm jo jp ke kg '
+    + 'kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md mg mh mk ml mm mn mo mp mq mr ms '
+    + 'mt mu mv mw mx mz na nc ne nf ng ni nl np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re '
+    + 'ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn tr '
+    + 'tt tv tw tz ua ug uk uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw').split(' '),
+]);
+// Endings a stated fact can sit before and still be a host ("4848x.com",
+// "2k.com", "$5.io"): the list above without the words a sentence typed after
+// a missing space starts with ("150.me and Sam", "Somos 120.la fiesta").
+const SENTENCE_START = new Set(['me', 'us', 'la', 'es', 'de', 'se', 'si', 'al', 'va', 'el', 'en', 'id', 'dj', 'im',
+  'email', 'name', 'events', 'wedding', 'company', 'chat', 'host', 'zone', 'tools', 'social', 'support', 'design',
+  'media', 'studio', 'club', 'shop', 'store', 'space', 'local', 'test', 'games', 'blog', 'pro', 'int', 'mil']);
+const FACT_ENDINGS = new Set([...STRONG_ENDINGS].filter((e) => !SENTENCE_START.has(e)));
+// A stated fact is a whole label that is a number, an amount, a time, a date,
+// an ordinal, a numbered item, a unit after a number, or a day, month, time
+// or count word ("150", "5pm", "3:30", "14th", "2k", "12b", "a1042",
+// "inv-1042", "$50/hr", "may", "friday", "fifteen", "ochenta", "third").
+// A label that mixes a word and a digit is a name ("evil1", "route66",
+// "1800flowers"), a host on any ending in any case.
+const FACT_LABEL = /^\d+(?::\d{2})?(?:am|pm|a|p|st|nd|rd|th|k|ppl|pp|hrs?|h|x|ish)?$/;
+const NUMBERED_ITEM = /^(?:(?:[a-z]|inv|ord|po|ref|no|rm|apt|ste|tkt|conf|res|acct)-?\d{3,}|\d+[a-z])$/;
+const UNIT_LABEL = /^(?:hr|hrs|hour|h|person|pp|guest|head|day|ea|each|pc|night|wk|week|mo|month)$/;
+const EN_UNITS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+const EN_TENS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const FACT_WORD = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'mon', 'tue', 'tues', 'wed', 'thu',
+  'thur', 'thurs', 'fri', 'sat', 'sun', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december', 'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept',
+  'oct', 'nov', 'dec', 'noon', 'midnight', 'tonight', 'today', 'tomorrow', 'weekend', 'night', 'morning',
+  'afternoon', 'evening', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo', 'enero',
+  'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'setiembre', 'octubre',
+  'noviembre', 'diciembre', 'hoy', 'manana', 'tarde', 'noche', 'mediodia', 'madrugada', 'finde',
+  ...EN_UNITS, 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+  'nineteen', ...EN_TENS, 'hundred', ...EN_TENS.flatMap((t) => EN_UNITS.map((u) => `${t}-${u}`)),
+  'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh',
+  'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth',
+  'twentieth', 'thirtieth',
+  'uno', 'una', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez', 'once', 'doce', 'trece',
+  'catorce', 'quince', 'dieciseis', 'diecisiete', 'dieciocho', 'diecinueve', 'veinte', 'veintiuno', 'veintidos',
+  'veintitres', 'veinticuatro', 'veinticinco', 'veintiseis', 'veintisiete', 'veintiocho', 'veintinueve', 'treinta',
+  'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa', 'cien', 'ciento', 'primero', 'primer',
+  'segundo', 'tercero', 'tercer', 'cuarto', 'quinto', 'sexto', 'septimo', 'octavo', 'noveno', 'decimo',
+]);
+function isFactLabel(label, pre) {
+  if (FACT_LABEL.test(label) || FACT_WORD.has(label)) return true;
+  // A range of facts ("7pm-11pm", "4-6pm", "friday-sunday").
+  if (label.includes('-') && label.split('-').every((p) => FACT_LABEL.test(p) || FACT_WORD.has(p))) return true;
+  if (/\d\/$/.test(pre) && UNIT_LABEL.test(label)) return true;
+  return /\d/.test(label) && (NUMBERED_ITEM.test(label) || pre.endsWith('#'));
+}
+// Spanish words a sentence starts with that are also country codes: a host
+// only in lowercase ("Gracias.Si, somos 150" is two sentences).
+const SPANISH_START = new Set(['la', 'es', 'de', 'se', 'si', 'al', 'va']);
+const TITLE_CASE = /^\p{Lu}\p{Ll}+$/u;
+// A label of two or more characters with a letter, then a dot: a subdomain.
+const SUBDOMAIN_BEFORE = /(?:^|[^\p{L}\p{N}_-])(?=[\p{L}\p{N}_-]{2})[\p{L}\p{N}_-]*\p{L}[\p{L}\p{N}_-]*\.$/u;
+
+// Is a dot inside this token a host's dot? After a stated fact the dot is a
+// missing space ("150.Start", "5pm.dress", "6/14.See", "$50/hr.Thanks",
+// "INV-1042.thanks", "4 p.m.reception", "count is 120.beer/wine only"),
+// unless a plausible ending follows in lowercase ("2k.com", "$5.io"), or a
+// path, a further dot or a subdomain comes with any plausible ending
+// ("4848x.shop/upload"). Otherwise a path, a query, a www label or a further
+// label makes a host whatever the labels are; a name with a digit is a host
+// ("evil1.me", "Evil1.Com"); after a word, a plausible ending makes a host
+// in any case ("Example.Com"), a capitalized ordinary word does not
+// ("Thanks.See", "Mr.Smith"), and a lowercase word does (any ending).
+const T_HOST_SCAN = new RegExp(T_HOST.source, 'gu');
 function hostDot(core, offset, ctx) {
-  for (const m of core.matchAll(T_HOST)) {
+  T_HOST_SCAN.lastIndex = 0;
+  for (let m = T_HOST_SCAN.exec(core); m; m = T_HOST_SCAN.exec(core)) {
     const dot = m.index + 1;
     let left = dot - 1;
     while (left > 0 && isLabelChar(core[left - 1])) left -= 1;
     const leftLabel = core.slice(left, dot);
+    // Only the characters just before the label decide (a label is at most
+    // 64 long), so no test rescans the token from its start.
+    const pre = core.slice(Math.max(0, left - 70), left);
     let right = dot + 1;
-    while (right < core.length && /\p{L}/u.test(core[right])) right += 1;
-    const written = originalAt(ctx, offset + dot + 1, right - dot - 1);
-    const capitalWord = /^\p{Lu}\p{Ll}+$/u.test(written);
-    const numberLeft = leftLabel !== '' && [...leftLabel].every(isDigit);
-    const abbreviation = left === 0 && ABBREVIATIONS.has(leftLabel);
-    if (!numberLeft && !capitalWord && !abbreviation) return true;
+    while (right < core.length && right - dot < 64 && LETTER.test(core[right])) right += 1;
+    const ending = core.slice(dot + 1, right);
+    const next = core[right] || ' ';
+    if (leftLabel === 'm' && /(?:^|[^\p{L}])[ap]\.$/u.test(pre)) continue; // "4 p.m.reception"
+    const structure = '/?#'.includes(next) || (next === '.' && LETTER.test(core[right + 1] || ''))
+      || leftLabel === 'www' || SUBDOMAIN_BEFORE.test(pre);
+    const title = TITLE_CASE.test(originalAt(ctx, offset + dot + 1, right - dot - 1));
+    // "am" and "pm" are a time only after a number ("4 pm.me and Sam"); alone
+    // they are a name ("pm.me").
+    const ampm = /^[ap]m$/.test(leftLabel);
+    const fact = ampm ? left === 0 && /\d ?$/.test(textBefore(ctx, offset)) : isFactLabel(leftLabel, pre);
+    if (fact) {
+      if (!title && FACT_ENDINGS.has(ending)) return true;
+      if (structure && STRONG_ENDINGS.has(ending)) return true;
+      continue;
+    }
+    if (structure || leftLabel.startsWith('xn--') || ending === 'xn') return true;
+    if (/\d/.test(leftLabel)) return true;
+    if (left === 0 && ABBREVIATIONS.has(leftLabel)) {
+      if (STRONG_ENDINGS.has(ending)) return true;
+      continue;
+    }
+    if (title) {
+      if (STRONG_ENDINGS.has(ending) && !SPANISH_START.has(ending)) return true;
+      continue;
+    }
+    return true;
   }
   return false;
 }
 
 // What a single token says: 'email', 'link' or null. offset is the token's
 // view offset, for reading its original case.
+// Characters every destination form holds at least one of.
+const MAY_BE_DESTINATION = /[.@:/\\[({<_*"'\u2024\u3002\uff0e-]|dot/;
 function tokenKind(core, offset, ctx) {
-  if (!core) return null;
+  if (!core || !MAY_BE_DESTINATION.test(core)) return null;
   const scheme = T_SCHEME.test(core) || T_SLASHES.test(core);
   if (T_EMAIL.test(core) || T_OBF_AT.test(core)) return scheme ? 'link' : 'email';
   if (scheme || T_IPV4.test(core) || T_IPV6.test(core) || T_OBF_DOT.test(core) || joinedHost(core) || T_PORT.test(core)) return 'link';
   T_HOST.lastIndex = 0;
   if (T_HOST.test(core)) {
     T_HOST.lastIndex = 0;
-    if (T_PATH.test(core) || hostDot(core, offset, ctx)) return 'link';
+    if (hostDot(core, offset, ctx)) return 'link';
   }
   return null;
 }
@@ -336,7 +451,15 @@ function lastWord(s) {
   return s.slice(i);
 }
 const firstWord = (s) => (s.match(/^[\p{L}\p{N}_%+-]{1,64}/u) || [''])[0];
-const spelledSeparators = (s) => /\s(?:dot|d0t|period|point|punto|full\s+stop)(?:\s|[-_]|(?=com|net|org|io|co|me|us|info|biz))|[\[({<"'*-]\s*(?:\.|dot|d0t|period|punto)|\s\./.test(s);
+const spelledSeparators = (s) => /\s(?:dot|d0t|period|point|punto|full\s+stop)(?:\s|[-_]|(?=com|net|org|io|co|me|us|info|biz))|[\[({<"'*-]\s*(?:\.|dot|d0t|period|punto)|\s\.|\.\s/.test(s);
+// A dot then a space before an ending ("example. com", "bit. ly/3abc") is a
+// host, in any case, unless the word before the dot is a stated fact: "count
+// is 150. net 30" is two sentences.
+const SPACED_LABEL = /([\p{L}\p{N}_%+-]+)\.\s/u;
+function spacedDotOk(match) {
+  const m = SPACED_LABEL.exec(match);
+  return !m || !isFactLabel(m[1], '');
+}
 const usesProse = (s) => /\s(?:period|point|punto|full\s+stop)\s/.test(s);
 const WORD_AT = /\s(?:at|arroba|at-sign|at\s+sign)\s/;
 const DOMAIN_AFTER_AT = /^[\s\S]*?(?:\s(?:at|arroba|at-sign|at\s+sign)\s|@|[\])}>]|-at-|_at_|\*at\*)\s*/;
@@ -389,6 +512,7 @@ function findDestinations(nv, text) {
     // only at a mail provider; otherwise the host alone is cut, below.
     const domain = match.replace(DOMAIN_AFTER_AT, '');
     if (WORD_AT.test(match) && !spelledSeparators(match) && !PROVIDER_START.test(firstWord(domain))) continue;
+    if (!spacedDotOk(match)) continue;
     add(m.index, m.index + match.length, 'email');
   }
   for (const m of view.matchAll(SPELLED_HOST)) {
@@ -397,6 +521,7 @@ function findDestinations(nv, text) {
     if (!spelledSeparators(host) || !ENDING_RE.test(ending) || NOT_ENDING.has(ending)) continue;
     if (usesProse(host) && !PROSE_ENDINGS.has(ending)) continue;
     if (/^[\p{L}\p{N}]\s+(?:dot|d0t|period|point|punto)/u.test(host)) continue; // "a dot com" in prose
+    if (!spacedDotOk(host)) continue;
     add(m.index, m.index + m[0].length, 'link');
   }
   return mergeSpans(found);
@@ -428,6 +553,14 @@ const EMOJI_BEFORE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\ufe0f]$/u;
 const EMOJI_AFTER = /^\p{Extended_Pictographic}/u;
 const PICTO_BEFORE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u20e3]$/u;
 
+// The three subdivision flags (England, Scotland, Wales) are a black flag,
+// tag letters and a cancel tag: an emoji, not hidden text.
+const TAG_FLAG = /\u{1f3f4}\u{e0067}\u{e0062}(?:\u{e0065}\u{e006e}\u{e0067}|\u{e0073}\u{e0063}\u{e0074}|\u{e0077}\u{e006c}\u{e0073})\u{e007f}/gu;
+function flagSpans(text) {
+  if (!text.includes('\u{1f3f4}')) return [];
+  return [...text.matchAll(TAG_FLAG)].map((m) => [m.index, m.index + m[0].length]);
+}
+
 function keepsInvisible(ch, text, i) {
   if (ch === '\u200d') {
     return EMOJI_BEFORE.test(text.slice(Math.max(0, i - 2), i)) && EMOJI_AFTER.test(text.slice(i + 1, i + 3));
@@ -456,11 +589,14 @@ function stripDestinations(text) {
   const tagless = withoutTags(nv);
   if (tagless) spans = spans.concat(toOriginalSpans(tagless, findDestinations(tagless, text)));
   spans = mergeSpans(spans);
+  const flags = flagSpans(text);
+  let f = 0;
   let out = '';
   let changed = false;
   let k = 0;
   let i = 0;
   while (i < text.length) {
+    while (f < flags.length && flags[f][1] <= i) f += 1;
     if (k < spans.length && spans[k].start <= i) {
       out += spans[k].kind === 'email' ? EMAIL_MARKER : LINK_MARKER;
       changed = true;
@@ -470,7 +606,8 @@ function stripDestinations(text) {
     }
     const cp = text.codePointAt(i);
     const ch = String.fromCodePoint(cp);
-    if (OUTPUT_DROP.test(ch) && !keepsInvisible(ch, text, i)) changed = true;
+    const inFlag = f < flags.length && flags[f][0] <= i;
+    if (OUTPUT_DROP.test(ch) && !inFlag && !keepsInvisible(ch, text, i)) changed = true;
     else out += ch;
     i += ch.length;
   }
@@ -484,11 +621,18 @@ const FLAG_NOTICE = '[flagged: this client-written text may contain instructions
 const LINK_TOKEN = ' xdestx ';
 const MAIL_TOKEN = ' xmailx ';
 const LEET = new Map([['0', 'o'], ['1', 'i'], ['3', 'e'], ['4', 'a'], ['5', 's'], ['7', 't'], ['@', 'a'], ['$', 's']]);
-const LEET_RE = /[013457@$]/g;
+// One pass for the three swaps: "11" as "ll", "!" or "|" before a letter as
+// "i", and each digit or symbol as its letter.
+const LEET_ANY = /11|[!|](?=[a-z0-9])|[013457@$]/g;
+const SWAP_CHAR = /[013457@$!|]/;
+const leetChar = (ch) => (ch === '11' ? 'll' : ch === '!' || ch === '|' ? 'i' : LEET.get(ch));
 const BASE64_TOKEN = /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={0,2}(?![A-Za-z0-9+/=])/g;
 const TAG_RUN = /[\u{e0020}-\u{e007e}]{3,}/u;
 
-const compileAll = (list, flags) => list.map(({ id, re, tier }) => ({ id, tier, re: new RegExp(viewOfPattern(re), flags) }));
+// usesDest: the pattern names a destination token (xdestx, xmailx), so it
+// also reads the forms with destinations marked; the rest read the plain
+// forms only, where a destination is still in the text as written.
+const compileAll = (list, flags) => list.map(({ id, re, tier }) => ({ id, tier, usesDest: /xdestx|xmailx/.test(re), re: new RegExp(viewOfPattern(re), flags) }));
 const byTier = (list, tier) => list.filter((p) => p.tier === tier);
 const PATTERNS = {
   flat: compileAll(FLAT_PATTERNS, 'u'),
@@ -526,29 +670,36 @@ function screeningForms(nv, text) {
   const flat = lines.replace(/\n/g, ' ');
   const flatD = linesD.replace(/\n/g, ' ');
   // ! and | read as i only before a letter ("!gnore"), never ending a word.
-  const leetOf = (s) => s.replace(/11/g, 'll').replace(/[!|](?=[a-z0-9])/g, 'i').replace(LEET_RE, (ch) => LEET.get(ch));
+  // Digits read as letters only inside a word that has letters ("1gn0re"),
+  // never a count on its own ("now 41,") or a grade ("an A1 vendor").
+  const leetWord = (w) => (/[a-z]/.test(w) && !/^[a-z]\d[^a-z0-9]*$/.test(w) ? w.replace(LEET_ANY, leetChar) : w);
+  // Word by word: each match consumes its word, so a long run with no swap
+  // character is read once.
+  const leetOf = (s) => (/[013457@$!|]/.test(s) ? s.replace(/\S+/g, (w) => (SWAP_CHAR.test(w) ? leetWord(w) : w)) : s);
   const leet = leetOf(flat);
-  const leetD = leetOf(flatD);
-  const leetLines = leetOf(lines);
+  const leetD = flatD === flat ? leet : leetOf(flatD);
+  const leetLines = lines === flat ? leet : leetOf(lines);
   // One clause at a time, so "Before I forget, any instructions" never joins.
   const compact = leet.split(/[,;:!?]+|\.(?:\s|$)/).map((c) => c.replace(/[^\p{L}\p{N}]+/gu, '')).filter(Boolean);
   for (const m of leet.matchAll(/(?:(?<![a-z])[a-z]{1,15}[.!] ){3,8}[a-z]{1,15}/g)) compact.push(m[0].replace(/[^\p{L}\p{N}]+/gu, ''));
   return { lines, leetLines, flat, flatD, leet, leetD, compact };
 }
 
-function firstMatch(patterns, forms) {
-  for (const { id, re } of patterns) {
+function firstMatch(patterns, forms, destForms = []) {
+  for (const { id, re, usesDest } of patterns) {
     for (const form of forms) if (re.test(form)) return id;
+    if (usesDest) for (const form of destForms) if (re.test(form)) return id;
   }
   return null;
 }
 
 // The first pattern of one tier that matches any form of the view.
 function matchTier(f, tier) {
-  const flats = [...new Set([f.flat, f.flatD, f.leet, f.leetD])];
+  const flats = [...new Set([f.flat, f.leet])];
+  const flatsD = [...new Set([f.flatD, f.leetD])].filter((x) => !flats.includes(x));
   const lines = [...new Set([f.lines, f.leetLines])];
   const reversed = f.compact.map((c) => [...c].reverse().join(''));
-  return firstMatch(byTier(PATTERNS.flat, tier), flats)
+  return firstMatch(byTier(PATTERNS.flat, tier), flats, flatsD)
     || firstMatch(byTier(PATTERNS.line, tier), lines)
     || firstMatch(byTier(PATTERNS.whole, tier), lines)
     || firstMatch(byTier(PATTERNS.compact, tier), [...f.compact, ...reversed]);
@@ -603,9 +754,11 @@ const result = (tier, pattern) => ({
  * withheld ('not-text'), and so is text too long to check ('too-long'): the
  * guard fails closed on what it cannot read.
  */
-function screenClientText(text) {
-  if (text === null || text === undefined || text === '') return result(null, null);
-  if (typeof text !== 'string') return result('withhold', 'not-text');
+function screenClientText(input) {
+  if (input === null || input === undefined || input === '') return result(null, null);
+  if (typeof input !== 'string') return result('withhold', 'not-text');
+  // A subdivision flag's tag letters are part of the emoji, never words.
+  const text = input.includes('\u{1f3f4}') ? input.replace(TAG_FLAG, '\u{1f3f4}') : input;
   const nv = normalizedView(text, { tags: 'decode' });
   if (!nv) return result('withhold', 'too-long');
   // Words written in Unicode tag characters are invisible to the reader of
