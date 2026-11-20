@@ -1,7 +1,7 @@
 ---
 spec: docs/superpowers/specs/2026-11-19-duet-connector-design.md   # revision 3
 format: lane map without code (spec 2026-10-19 D12)
-revision: "2 (2026-11-19), the plan review folded in; the body's last section is the record"
+revision: "3 (2026-11-19), the first wave built and merged, the text guards follow-up lane added; the body's last sections are the record"
 lanes:
   - id: connector-shared-reads
     scope: >
@@ -202,6 +202,44 @@ lanes:
       Disconnect leaves the log rows. Emails and audit entries are asserted through injected stubs.
     revert: >
       revert the one squash commit; the tables stay (idempotent, unused with the flag off).
+  - id: connector-text-guards-2
+    scope: >
+      The text guards' findings left open by the first lane's review cap (its receipt names each one
+      split here), fixed at the root. The withhold tier holds only text a real client never writes: a
+      named AI must be addressed (a greeting or vocative), never merely mentioned (a first-dance duet,
+      a husband named Claude); no withhold pattern without an AI, instruction or role word ("can you
+      respond to me by Friday", "I forget everything"); the client's own uses of instructions, rules,
+      system message and the above (payment errors, "per your original instructions", "disregard the
+      above, I found the invoice") and ordinary Spanish ("olvidé sus instrucciones") pass or flag. The
+      published benchmark strings (the AgentDojo templates, PromptInject's attack texts) are withheld or
+      flagged whatever their payload. The flag tier is quiet on everyday client mail (the first lane's
+      verify measured 52 of 53 flagged). The strip cuts a host written in Title Case, with a numeric
+      or abbreviation first label, and keeps a time, date, amount or invoice number typed with no space
+      after the period. Tag-sequence flag emoji are not hidden text.
+    footprint:
+      - server/utils/connector/textGuards.js
+      - server/utils/connector/screenPatterns.js
+      - server/utils/connector/textGuards.test.js
+    blockedBy: []
+    lenses: >
+      the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals. Reviewed at tier A as the defense of spec 7.6.
+    laws: >
+      Spec law 3 and section 7.6 as amended (two tiers). No AI call in the screening. aiRedact's own
+      output is unchanged.
+    seams: >
+      The tools lane is the first caller; the result shape { withheld, flagged, tier, pattern } and
+      FLAG_NOTICE stay as the first lane left them.
+    acceptance: >
+      Every input of the split findings in the first lane's receipt is in a table with its expected
+      tier or strip result and passes; every earlier table row still passes; verify's ordinary sets
+      (the scratch probe scripts) withhold nothing and flag a small share; linear time holds at 49,000
+      characters for every recorded shape.
+    test plan: >
+      Table-driven, as the first lane's suite: the split inputs, an ordinary English and Spanish set
+      written for the flag tier's patterns, the benchmark strings with payloads that name no client
+      data, Title Case and numeric hosts, facts with no space after the period.
+    revert: >
+      revert the one squash commit; the first lane's guards remain.
   - id: connector-signin-ui
     scope: >
       The owner can approve and manage the connection. A consent page in the admin app behind
@@ -273,7 +311,7 @@ lanes:
       - docs/ops-runbook.md
       - README.md
       - ARCHITECTURE.md
-    blockedBy: [connector-shared-reads, connector-text-guards, connector-signin-server]
+    blockedBy: [connector-shared-reads, connector-text-guards, connector-text-guards-2, connector-signin-server]
     lenses: >
       the tier A floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) and whatever the review skill computes; verify; the externals; the money smoke.
     laws: >
@@ -315,7 +353,7 @@ lanes:
     revert: >
       revert the one squash commit; with the tools gone the endpoint lists none.
 mergeOrder: >
-  connector-signin-server first (it carries the sensitive-list lines and the project-rules invariant, so everything after it is tiered correctly and the smaller lanes, not the largest, pay for the overlap pass); then connector-shared-reads; then connector-text-guards; then connector-signin-ui; then connector-tools.
+  connector-signin-server first (it carries the sensitive-list lines and the project-rules invariant, so everything after it is tiered correctly and the smaller lanes, not the largest, pay for the overlap pass); then connector-shared-reads; then connector-text-guards; then connector-text-guards-2 and connector-signin-ui in either order; then connector-tools.
 revertOrder: >
   the reverse of the merge order. connector-tools and connector-signin-ui are reverted before connector-signin-server, and connector-tools before connector-shared-reads and connector-text-guards.
 pushGate: >
@@ -375,3 +413,28 @@ The plan fleet (fidelity, decomposition) read revision 1: no blockers, twelve wa
 - Merge and revert order are named, the overlap passes are priced, and the sign-in server lane's split line is named in its scope.
 - Footprints: the sign-in server lane names its files, and the tools lane makes no schema edit.
 
+
+## First wave, as built (2026-11-19)
+
+The sign-in server, the shared reads and the text guards are merged (cc028a5b, b7b3005d, 334485a0), each with its tier A receipt. The text guards' open findings went to the new lane connector-text-guards-2 under the review cap. What the remaining lanes must build on, as the code now stands:
+
+To connector-signin-ui (all routes under /api/admin/connector, auth plus adminOnly; the consent page is `${ADMIN_URL}/connect-claude?request=<uuid>`):
+- GET /requests/:id: `{ request: { id, status, client_name, redirect_host, requested_at, expires_at, caller_address, user_agent, reads }, existing_connection }`, `existing_connection` only when a live connection exists; 404 CONNECTOR_REQUEST_NOT_FOUND, 410 CONNECTOR_REQUEST_USED, _CANCELLED or _EXPIRED.
+- POST /assert-options: passkey request options listing only the admin's own passkeys; 409 CONNECTOR_PASSKEY_NONE.
+- POST /requests/:id/approve `{ assertion }`: `{ redirect_url, replaced }`, `replaced` meaning a live connection the exchange will replace; 400 CONNECTOR_PASSKEY_REQUIRED or _EXPIRED, 409 CONNECTOR_PASSKEY_NONE, 403 CONNECTOR_PASSKEY_WRONG_ACCOUNT or _FAILED, the 404 and 410 codes above. The owner holds an admin and a staff account; the wrong-account message must say which to use.
+- POST /requests/:id/cancel: `{ redirect_url }`.
+- GET /status: `{ connection: { id, state, approved_at, connected_at, last_used_at, expires_at, lapses_at } | null, client_id, mcp_url, address_check }`, state one of live, lapsed, expired, signed_out, no_longer_admin; address_check on, off or unreadable.
+- GET /calls?refusals=0|1&outcome=&all=1&limit=: `{ calls: [...], has_more }`, refusals shown by default.
+- POST /disconnect: `{ ok, revoked }`.
+- The client's Sentry scrubber has no rule for the `drbc_` prefix and the page holds a sign-in code in `redirect_url`; add the rule (client/src/utils/sentryScrub.js joins the footprint).
+
+To connector-tools:
+- Every call into a shared read passes `legalHold.holdExclusion()`; only listUpcomingEvents refuses a missing exclusion, the others answer as the admin screen does without one. A test fails if any tool call site omits it.
+- The shared client and proposal reads return whole rows, link tokens included; each tool builds its result from its named field list.
+- Search's staff rows carry `cc_id` and a `name` that can fall through to an email; report name and status only.
+- Thread: a staff key, and a key that moves to a staff key, gets the not-found (the staff card's next-shift read takes no hold list); drop tap rows when the hold filter leaves no kept message.
+- Upcoming events: the default start must keep a shift that began the evening before and runs past midnight (yesterday's Chicago day, or no lower bound beyond shiftNotFinishedSql); a hand-made shift typed with the held client's name is not caught by the exclusion, so match it out by the held client's name or drop hand-made shifts whose client name matches.
+- Screening: a withheld piece emails the owner once (callLog.recordWithheldOnce); a flagged piece carries FLAG_NOTICE in front and a log row, and emails no one.
+- The per-address ceiling (300 per 15 minutes, shared by /mcp and /oauth/token) counts authenticated calls; keep authenticated tool calls out of it or size it above the per-grant limit, so a busy session never blocks its own refresh.
+- Call-log rows for errors are written after the response; the tripwire's count must not depend on a row that is not yet written.
+- Pre-existing and reported, not this plan's: the admin Outstanding figure (qOutstanding) counts paid off-contract invoices against the contract total, so a booking with a paid extras invoice shows less owed than its contract remainder; the tool reports the admin's figure as law 4 requires.
