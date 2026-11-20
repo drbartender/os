@@ -206,10 +206,32 @@ function redact(text, { personName } = {}) {
   return tidy(dropSurnames(placeheld, nameParts(personName)));
 }
 
+/**
+ * Links only, for text the business wrote (connector spec 2026-11-19 law 3):
+ * every link becomes [link] by the same three link passes and the same
+ * replacer redact() uses, and nothing else changes (addresses, numbers and
+ * names stay; a bare host with no path stays, as in redact()). Text with no
+ * link comes back exactly as given; the NFKC form is returned only when a link
+ * was replaced in it. null and undefined pass through; any other non-string
+ * becomes ''.
+ */
+function stripLinks(text) {
+  if (typeof text !== 'string') return text === null || text === undefined ? text : '';
+  if (text === '') return text;
+  const normalized = text.normalize('NFKC');
+  const stripped = normalized
+    .replace(SCHEME_URL, linkReplacer)
+    .replace(WWW_URL, linkReplacer)
+    .replace(BARE_URL_SCAN, bareUrlReplacer);
+  return stripped === normalized ? text : stripped;
+}
+
 module.exports = {
   SLICE_SKIP_WORDS,
   COMMON_WORD_SURNAMES,
   isKeywordRow,
+  linkReplacer,
   nameParts,
   redact,
+  stripLinks,
 };
