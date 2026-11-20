@@ -438,3 +438,21 @@ To connector-tools:
 - The per-address ceiling (300 per 15 minutes, shared by /mcp and /oauth/token) counts authenticated calls; keep authenticated tool calls out of it or size it above the per-grant limit, so a busy session never blocks its own refresh.
 - Call-log rows for errors are written after the response; the tripwire's count must not depend on a row that is not yet written.
 - Pre-existing and reported, not this plan's: the admin Outstanding figure (qOutstanding) counts paid off-contract invoices against the contract total, so a booking with a paid extras invoice shows less owed than its contract remainder; the tool reports the admin's figure as law 4 requires.
+
+## Follow-up lanes and what is left (2026-11-20)
+
+The review cap split three more lanes off, each built and reviewed at the full set like the five above, none in the front matter:
+- connector-text-guards-3 (merged c59cc7d9): the findings connector-text-guards-2 split off (sentence breaks read as hosts, reported-speech overrides, the plain override's sibling forms, number-named hosts with a path, units eaten).
+- connector-tools-2 (merged ad802599): the findings connector-tools split off (email fields screened whole and by shape, no address in refs or marks, readable trip and withheld marks in the settings block, the list mask's dash and international forms, budgets kept).
+- connector-tools-3 (building): the findings connector-tools-2 split off (the digest label screened like the guard, word reads on every piece, contractions kept, the bracket branch screened whole, address lists, budgets in a sentence, dates after an international number, time ranges).
+
+The connector stays switched off (CLAUDE_CONNECTOR_ENABLED unset in Render) until connector-tools-3 is merged and shipped.
+
+Accepted as the two-tier design's limit (my call, spec 7.6): wordings the screen does not catch reach the reader unflagged; the destination strip, the bulk-read tripwire, no write tools and Duet's own send approval do the stopping. Known trades left in the strip: a capital id or a number-named host on a word ending (J88.to, 777.to), a spaced dot before an everyday-word ending (example. us), a Title Case host on an unlisted ending (Evil.To).
+
+Follow-ups, each small, none blocking the switch-on:
+- The text guards' linear-time tests time wall clock and can fail on a loaded box; time bestOf3 with process.cpuUsage (measured 0 failures in 1,548 under load).
+- Two missing-space cases cut a stated number: a number before cash, one, gold or news with a slash, and a three-word slashed run after a number.
+- The trip flag lives per process and per instance; a second instance can trip on its own.
+- Pre-existing, outside this plan: the admin Outstanding figure (qOutstanding) counts paid off-contract invoices against the contract total; the admin Inbox treats nothing as held if the hold constant is missing.
+- The Gemini external reviewer (Antigravity CLI) failed to authenticate this session; codex is off.
