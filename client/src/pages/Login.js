@@ -2,19 +2,32 @@
 // migrate-headers on 2026-10-27; replace with what it does.
 
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
 import FormBanner from '../components/FormBanner';
 import useFormValidation from '../hooks/useFormValidation';
 import { getHomePath } from '../utils/userRoutes';
+import { connectReturn, CONNECT_WRONG_ACCOUNT } from '../utils/connectReturn';
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  // The Claude consent page's way back (spec 2026-11-19 section 7.2): honored
+  // only when it is exactly that page with a request id (connectReturn), and
+  // only for an admin, the one role the page admits. Another account signing
+  // in on it is not signed in at all (no token is stored on this origin) and
+  // is told to use the admin account, with the return kept, so the pending
+  // request is not dropped. The consent route's guard sends a non-admin
+  // session here the same way, with the notice in the location state.
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const returnTo = connectReturn(searchParams.get('return'));
   const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useState(
+    returnTo && location.state && location.state.connectNotice === 'wrong_account' ? CONNECT_WRONG_ACCOUNT : ''
+  );
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
@@ -38,9 +51,15 @@ export default function Login() {
     setLoading(true);
     try {
       const res = await api.post('/auth/login', form);
-      login(res.data.token, res.data.user);
       const u = res.data.user;
-      if (u.role === 'admin') navigate('/admin');
+      if (returnTo && u.role !== 'admin') {
+        setForm({ email: '', password: '' });
+        setError(CONNECT_WRONG_ACCOUNT);
+        return;
+      }
+      login(res.data.token, res.data.user);
+      if (u.role === 'admin' && returnTo) navigate(returnTo, { replace: true });
+      else if (u.role === 'admin') navigate('/admin');
       else if (['applied','interviewing','rejected'].includes(u.onboarding_status)) navigate(getHomePath(u));
       else if (u.onboarding_status === 'in_progress' && !u.has_application) {
         if (window.location.hostname.startsWith('staff.')) {
@@ -78,7 +97,9 @@ export default function Login() {
           <div className="text-center mb-3">
             <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }} aria-hidden="true">⚗️</div>
             <h1 style={{ marginBottom: '0.25rem' }}>Welcome Back</h1>
-            <p className="text-muted italic">Sign in to your account</p>
+            <p className="text-muted italic">
+              {returnTo ? 'Sign in with your admin account to approve Claude' : 'Sign in to your account'}
+            </p>
           </div>
 
           <div className="card">

@@ -2,9 +2,10 @@
 // migrate-headers on 2026-10-27; replace with what it does.
 
 import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { unlockWithPasskey } from '../../utils/webauthnClient';
+import { connectLoginPath } from '../../utils/connectReturn';
 import {
   clearLastActive, isRevocationCode, phoneUnlockArmed, readLastActive,
   setMobileLockHandler, shouldLock, touchLastActive,
@@ -21,6 +22,7 @@ import {
 export default function MobileLockScreen({ gate = false }) {
   const { login, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [locked, setLocked] = useState(() => gate || shouldLock({
     token: window.localStorage.getItem('token'),
     lastActiveAt: readLastActive(),
@@ -132,9 +134,11 @@ export default function MobileLockScreen({ gate = false }) {
 
   const onPassword = useCallback(() => {
     // Full re-auth: logout purges the phone caches by design (spec section 7).
+    // On the Claude consent page the login keeps the way back to it
+    // (connectLoginPath gives every other page plain /login).
     logout();
-    navigate('/login', { replace: true });
-  }, [logout, navigate]);
+    navigate(connectLoginPath(location.pathname + location.search), { replace: true });
+  }, [logout, navigate, location.pathname, location.search]);
 
   if (!locked) return null;
   return (

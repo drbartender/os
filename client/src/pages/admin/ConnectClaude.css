@@ -1,0 +1,318 @@
+/* The Claude connector's consent page (ConnectClaude.js), a standalone card on
+   the chalkboard as the login page is, and the settings block below; drb tokens only. */
+
+.connect-claude {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.connect-claude__main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--drb-s-8) var(--drb-s-4);
+}
+
+.connect-claude__card {
+  width: 100%;
+  max-width: 540px;
+  margin-bottom: 0;
+}
+
+.connect-claude__kicker {
+  font-family: var(--drb-font-display);
+  font-size: var(--drb-fs-kicker);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--drb-text-muted);
+  margin-bottom: var(--drb-s-2);
+}
+
+.connect-claude__title {
+  font-family: var(--drb-font-display);
+  font-size: var(--drb-fs-h3);
+  line-height: 1.2;
+  color: var(--drb-deep-brown);
+  margin: 0 0 var(--drb-s-3);
+}
+
+.connect-claude__lead {
+  font-size: var(--drb-fs-sm);
+  color: var(--drb-deep-brown);
+  margin: 0 0 var(--drb-s-3);
+}
+
+.connect-claude__reads {
+  margin: 0 0 var(--drb-s-5);
+  padding-left: var(--drb-s-5);
+  font-size: var(--drb-fs-sm);
+  color: var(--drb-deep-brown);
+}
+
+.connect-claude__reads li {
+  margin-bottom: var(--drb-s-1);
+}
+
+.connect-claude__facts {
+  margin: 0 0 var(--drb-s-5);
+  padding: var(--drb-s-3) 0 0;
+  border-top: 1px solid var(--drb-parchment-dark);
+  font-size: var(--drb-fs-xs);
+}
+
+.connect-claude__facts > div {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: var(--drb-s-2);
+  padding: var(--drb-s-1) 0;
+}
+
+.connect-claude__facts dt {
+  color: var(--drb-text-muted);
+}
+
+.connect-claude__facts dd {
+  margin: 0;
+  color: var(--drb-deep-brown);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connect-claude__ua {
+  font-family: var(--drb-font-mono);
+  font-size: 0.72rem;
+}
+
+.connect-claude__replace {
+  margin-bottom: var(--drb-s-4);
+}
+
+.connect-claude__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--drb-s-3);
+}
+
+.connect-claude__actions .btn {
+  flex: 1 1 10rem;
+}
+
+.connect-claude__status {
+  margin: var(--drb-s-2) 0;
+  font-size: var(--drb-fs-sm);
+  color: var(--drb-text-muted);
+}
+
+.connect-claude__back {
+  margin: var(--drb-s-4) 0 0;
+  font-size: var(--drb-fs-sm);
+}
+
+@media (max-width: 400px) {
+  .connect-claude__main {
+    padding: var(--drb-s-4) var(--drb-s-3);
+  }
+
+  .connect-claude__facts > div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+/* The "Claude connection" block in admin Security settings
+   (components/ClaudeConnection.js). It sits on the admin card beside the
+   Passkeys card, so its colors follow the admin skin, not the fixed parchment
+   tokens: the --cc-* values below are the theme-aware tokens the admin skins
+   remap (--text-muted, --ink-*, --line-*, and the Inbox's per-skin status
+   inks --ib-hot, --ib-warn-ink, --ib-ok-ink). Measured against each skin's
+   card: muted text 4.95 to 1 on the dark card (--ink-3) and 10.9 to 1 on
+   light paper (--ink-2, since the light skin's --ink-3 is 4.45 to 1); the
+   refusal red 5.65 and 6.51, the held-back amber 7.08 and 6.06, the
+   connected green 6.52 and 11.6. Outside the admin skin (no data-app) it
+   falls back to the parchment card's own tokens. */
+
+.claude-conn {
+  max-width: 560px;
+  --cc-text: var(--deep-brown);
+  --cc-muted: var(--text-muted);
+  --cc-line: var(--border-light);
+  --cc-bad: var(--drb-error);
+  --cc-warn: var(--drb-rust);
+  --cc-ok: var(--drb-success);
+}
+
+html[data-app="admin-os"] .claude-conn {
+  --cc-text: var(--ink-1);
+  --cc-muted: var(--ink-3);
+  --cc-line: var(--line-2);
+  --cc-bad: var(--ib-hot);
+  --cc-warn: var(--ib-warn-ink);
+  --cc-ok: var(--ib-ok-ink);
+}
+
+html[data-app="admin-os"][data-skin="light"] .claude-conn {
+  --cc-muted: var(--ink-2);
+}
+
+.claude-conn__title {
+  margin: 0 0 var(--drb-s-3);
+  font-size: 1rem;
+  color: var(--cc-text);
+}
+
+.claude-conn__subtitle {
+  margin: var(--drb-s-5) 0 var(--drb-s-2);
+  font-size: var(--drb-fs-sm);
+  color: var(--cc-text);
+}
+
+.claude-conn__muted {
+  font-size: var(--drb-fs-sm);
+  color: var(--cc-muted);
+  margin: 0 0 var(--drb-s-2);
+}
+
+.claude-conn__none p,
+.claude-conn__confirm p {
+  font-size: var(--drb-fs-sm);
+  margin: 0 0 var(--drb-s-2);
+}
+
+.claude-conn__none p:not(.claude-conn__muted):not(.claude-conn__done),
+.claude-conn__confirm p,
+.claude-conn__state {
+  color: var(--cc-text);
+}
+
+.claude-conn__done {
+  color: var(--cc-ok);
+}
+
+.claude-conn__state {
+  font-size: var(--drb-fs-sm);
+  margin: 0 0 var(--drb-s-3);
+}
+
+.claude-conn__state--live strong {
+  color: var(--cc-ok);
+}
+
+.claude-conn__state--off strong {
+  color: var(--cc-warn);
+}
+
+.claude-conn__facts {
+  margin: 0 0 var(--drb-s-3);
+  font-size: var(--drb-fs-xs);
+}
+
+.claude-conn__facts > div {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: var(--drb-s-2);
+  padding: 2px 0;
+}
+
+.claude-conn__facts dt {
+  color: var(--cc-muted);
+}
+
+.claude-conn__facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--cc-text);
+}
+
+.claude-conn__mono {
+  font-family: var(--drb-font-mono);
+}
+
+.claude-conn__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--drb-s-2);
+}
+
+.claude-conn__confirm {
+  padding: var(--drb-s-3);
+  border: 1px solid var(--cc-line);
+  border-radius: var(--drb-radius);
+}
+
+.claude-conn__confirm:focus {
+  outline: 2px solid var(--cc-muted);
+  outline-offset: 2px;
+}
+
+.claude-conn__address,
+.claude-conn__error {
+  margin: var(--drb-s-3) 0 0;
+}
+
+.claude-conn__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-conn__row {
+  padding: var(--drb-s-2) 0;
+  border-bottom: 1px solid var(--cc-line);
+}
+
+.claude-conn__row-main {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--drb-s-2);
+  font-size: var(--drb-fs-sm);
+}
+
+.claude-conn__what {
+  color: var(--cc-text);
+  overflow-wrap: anywhere;
+}
+
+.claude-conn__outcome {
+  color: var(--cc-text);
+}
+
+.claude-conn__outcome--refused {
+  color: var(--cc-bad);
+  font-weight: 600;
+}
+
+.claude-conn__outcome--withheld {
+  color: var(--cc-warn);
+  font-weight: 600;
+}
+
+.claude-conn__row-meta,
+.claude-conn__row-note {
+  font-size: var(--drb-fs-xs);
+  color: var(--cc-muted);
+  overflow-wrap: anywhere;
+}
+
+.claude-conn__more {
+  margin-top: var(--drb-s-2);
+}
+
+/* The phone surface (the mobile admin settings, below the app's 700px
+   phone breakpoint, hooks/useIsPhone.js): touch targets at least 44px. */
+@media (max-width: 699px) {
+  .claude-conn__actions .btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 400px) {
+  .claude-conn__facts > div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

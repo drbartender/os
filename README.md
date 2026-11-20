@@ -419,6 +419,7 @@ tests omitted
 │       │   ├── AudienceSelector.js # AudienceSelector (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── BrandLogo.js  # BrandLogo (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── CampaignMetricsBar.js # CampaignMetricsBar (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   ├── ClaudeConnection.js # ClaudeConnection: the "Claude connection" block in admin Security settings (spec 2026-11-19 section 7.2): the connection, the recent calls, Disconnect.
 │       │   ├── ClickableRow.js # ClickableRow (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── ClientConversation.js # ClientConversation (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── ConfirmModal.js # ConfirmModal (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -630,6 +631,8 @@ tests omitted
 │       │   │   ├── ClientDetail.js # ClientDetail: the admin client page at /clients/:id, mounted fresh per client so no open edit form, draft or late response carries over to the next one.
 │       │   │   ├── ClientsDashboard.js # ClientsDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── CocktailMenuDashboard.js # CocktailMenuDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── ConnectClaude.css # The Claude connector's consent page (ConnectClaude.js), a standalone card on the chalkboard as the login page is, and the settings block below; drb tokens only.
+│       │   │   ├── ConnectClaude.js # ConnectClaude: the Claude connector's consent page (spec 2026-11-19 section 7.2): the pending request, Allow with the passkey, Cancel.
 │       │   │   ├── DrinkPlanDetail.js # DrinkPlanDetail (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── DrinkPlansDashboard.js # DrinkPlansDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── EmailAnalyticsDashboard.js # EmailAnalyticsDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -1003,6 +1006,7 @@ tests omitted
 │           ├── buildTipDeepLink.js # Returns the URL to navigate to when the customer taps a payment button. Cash App and PayPal pre-fill the amount via URL; Venmo and Stripe ignore it.
 │           ├── chicagoDay.js # The calendar day, in the business timezone, of a TIMESTAMPTZ moment.
 │           ├── clientSources.js # Client acquisition source vocabulary (clients.source dropdown + badges). Mirrors server/utils/clientSources.js (CLIENT_SOURCES) - the canonical list. Keep both files in sync when adding a source, and also update: - server/routes/clients.js VALID_SOURCES validator - the clients_source_check CHECK in server/db/schema.sql (base def + migration) - the local `SOURCE` badge maps in client/src/pages/admin/ClientsDashboard.js and client/src/pages/admin/ClientDetail.js
+│           ├── connectReturn.js # The one place login may send a signed-out owner back to: the Claude consent page with a well-formed request id (connectReturn, connectLoginPath, connectRequestId).
 │           ├── constants.js  # Shared constants - single source of truth for hardcoded business values
 │           ├── consultCallLabel.js # Consult call bridge, the admin detail vocabulary (spec 2026-08-25 section 5.3). One line on ProposalDetail, one line per consult on ClientDetail, both fed by server/utils/consultCallLookups.js. Rows arrive snake_case, exactly as that module selects them.
 │           ├── desktopViewStore.js # Per-screen "Desktop view" overrides for the phone admin (spec section 3: the no-dead-ends escape hatch). localStorage-persisted so the choice is a real exit that survives reloads; keyed per screen so opting one surface out of the phone treatment does not opt out all of them. Cleared on logout by purgeMobileAdminState() (lane ma-b; spec section 7 purge rule).

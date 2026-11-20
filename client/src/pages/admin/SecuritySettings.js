@@ -7,11 +7,24 @@ import api from '../../utils/api';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
+import ClaudeConnection from '../../components/ClaudeConnection';
 
 // Passkey management (mobile-admin spec 2026-08-13 section 8 escape hatch).
 // Revoke is the lost-phone kill switch: it deletes the credential AND bumps
 // token_version, a global logout by design, this desktop session included.
+// The Claude connection block sits under the passkeys (spec 2026-11-19
+// section 7.2); it loads on its own and renders nothing for a manager or
+// while the connector is off.
 export default function SecuritySettings() {
+  return (
+    <>
+      <PasskeysCard />
+      <ClaudeConnection />
+    </>
+  );
+}
+
+function PasskeysCard() {
   const toast = useToast();
   const navigate = useNavigate();
   const { logout } = useAuth();

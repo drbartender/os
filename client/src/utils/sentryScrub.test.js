@@ -254,3 +254,48 @@ test('a UUID after a plus sign is redacted whole, not read as a phone number fir
   const digitsFirst = `${'1234'}${'5678'}-3456-4789-8abc-def012345678`;
   expect(scrubText(`/x?q=see+${digitsFirst}`)).toBe('/x?q=see+[redacted-uuid]');
 });
+
+// The Claude connector (spec 2026-11-19 law 8): the consent page sends the
+// browser to a return address carrying a single-use sign-in code and the
+// state, and the navigation lands in a crumb. Made-up values throughout.
+test('a connector token or code is redacted by its drbc_ prefix, wherever it sits', () => {
+  const code = `drbc_ac_${'Zx9-'.repeat(8)}`;
+  expect(scrubText(`code ${code} here`)).toBe('code [redacted-connector-token] here');
+  expect(scrubText(`Bearer drbc_at_${'q'.repeat(40)}`)).toBe('Bearer [redacted-connector-token]');
+  expect(scrubText(`refresh_token=drbc_rt_${'w'.repeat(40)}`)).not.toContain('w'.repeat(10));
+});
+
+test('the return address after Allow: the code and the state are gone from the URL and the navigation crumb', () => {
+  const code = `drbc_ac_${'k'.repeat(43)}`;
+  const state = `madeupstate${'S'.repeat(20)}`;
+  const url = `https://claude.example.com/api/mcp/auth_callback?code=${code}&state=${state}`;
+  const out = scrubText(url);
+  expect(out).not.toContain('k'.repeat(10));
+  expect(out).not.toContain(state);
+  expect(out).toContain('code=[redacted-connector-token]');
+  expect(out).toContain('&state=[redacted]');
+  const crumb = beforeBreadcrumb({ category: 'navigation', data: { from: `/connect-claude?request=${UUID_A}`, to: url } });
+  const text = JSON.stringify(crumb);
+  expect(text).not.toContain('k'.repeat(10));
+  expect(text).not.toContain(state);
+  expect(text).not.toContain(UUID_A);
+});
+
+test('a cancel return keeps the error readable and drops the state', () => {
+  const out = scrubText('https://claude.example.com/cb?error=access_denied&state=madeup-state-value');
+  expect(out).toBe('https://claude.example.com/cb?error=access_denied&state=[redacted]');
+});
+
+test('code, state, code_challenge and code_verifier values are redacted by name, plain or percent-encoded, in a query or a bare form body', () => {
+  expect(scrubText('/oauth/authorize?client_id=x&code_challenge=madeupchallenge123&state=abc')).toBe(
+    '/oauth/authorize?client_id=x&code_challenge=[redacted]&state=[redacted]'
+  );
+  expect(scrubText('code=madeupcode&code_verifier=madeupverifier')).toBe('code=[redacted]&code_verifier=[redacted]');
+  // A return address carried encoded in another URL: the value runs to the
+  // encoded separator, and an encoded byte inside it does not end it early.
+  const encoded = scrubText('/x?next=https%3A%2F%2Fc.example.com%2Fcb%3Fcode%3Dmadeup%2Bcode%26state%3Dmadeup%2Bstate%26z%3D1');
+  expect(encoded).not.toContain('madeup');
+  expect(encoded).toContain('%26z%3D1');
+  // Not a parameter boundary: a name that only ends in "code" stays.
+  expect(scrubText('/x?zip_code=60601&postcode=60601')).toBe('/x?zip_code=60601&postcode=60601');
+});

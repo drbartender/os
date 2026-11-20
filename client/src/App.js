@@ -1,9 +1,10 @@
 // All routes, auth guards (ProtectedRoute, RequireHired, etc.)
 
 import React, { Suspense, lazy as lazyBase, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from './utils/api';
 import { getHomePath } from './utils/userRoutes';
+import { connectLoginPath, connectReturn } from './utils/connectReturn';
 import { AuthProvider, useAuth } from './context/AuthContext';
 // Side-effect import, deliberately eager: captures Chrome's one-shot
 // beforeinstallprompt before any lazy chunk could ever load (mobile-admin
@@ -155,6 +156,7 @@ const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
 const PayrollPage = lazy(() => import('./pages/admin/payroll/PayrollPage'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
 const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
+const ConnectClaude = lazy(() => import('./pages/admin/ConnectClaude'));
 const PotionsPage = lazy(() => import('./pages/admin/PotionsPage'));
 const DrinkPlansDashboard = lazy(() => import('./pages/admin/DrinkPlansDashboard'));
 const DrinkPlanDetail = lazy(() => import('./pages/admin/DrinkPlanDetail'));
@@ -313,10 +315,14 @@ function getSiteContext() {
 // getHomePath is now imported from ./utils/userRoutes — see import above.
 
 /** Requires auth. adminOnly also allows managers (they share the dashboard);
- *  adminStrict is admin-only (rejects managers) for admin-exclusive surfaces. */
+ *  adminStrict is admin-only (rejects managers) for admin-exclusive surfaces.
+ *  returnHere sends a signed-out visitor to login with a way back, and only
+ *  the Claude consent page qualifies (connectLoginPath gives every other path
+ *  plain /login), so no other guard's redirect changes. */
 // Exported for the lock-gate wiring test (MobileLockScreen.wiring.test.js).
-export function ProtectedRoute({ children, adminOnly = false, adminStrict = false }) {
+export function ProtectedRoute({ children, adminOnly = false, adminStrict = false, returnHere = false }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (!user) {
     // Expired-JWT cold launch on a phone with an enrolled passkey (spec
@@ -326,9 +332,14 @@ export function ProtectedRoute({ children, adminOnly = false, adminStrict = fals
     if (phoneUnlockArmed() && localStorage.getItem('token')) {
       return <MobileLockScreen gate />;
     }
-    return <Navigate to="/login" replace />;
+    return <Navigate to={returnHere ? connectLoginPath(location.pathname + location.search) : '/login'} replace />;
   }
   if (adminStrict && user.role !== 'admin') {
+    // Another session (the owner's staff account) on the consent page: sign
+    // it out of this origin and show login with the way back and a notice,
+    // instead of dropping the pending request on a home page.
+    const back = returnHere ? connectLoginPath(location.pathname + location.search) : '/login';
+    if (back !== '/login') return <SignOutToConsentLogin to={back} />;
     return <Navigate to={getHomePath(user)} replace />;
   }
   if (adminOnly && user.role !== 'admin' && user.role !== 'manager') {
@@ -337,9 +348,26 @@ export function ProtectedRoute({ children, adminOnly = false, adminStrict = fals
   return children;
 }
 
+// Signs a non-admin session out, then shows the consent page's login link
+// with the wrong-account notice (Login reads it from the location state).
+function SignOutToConsentLogin({ to }) {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  useEffect(() => {
+    logout();
+    navigate(to, { replace: true, state: { connectNotice: 'wrong_account' } });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
+}
+
 function RedirectIfLoggedIn({ children }) {
   const { user, loading } = useAuth();
+  const [searchParams] = useSearchParams();
   if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
+  // An admin already signed in who lands on the consent page's login link goes
+  // straight back to it (the same allowlist Login uses); everyone else as before.
+  const returnTo = user && user.role === 'admin' ? connectReturn(searchParams.get('return')) : null;
+  if (returnTo) return <Navigate to={returnTo} replace />;
   if (user) return <Navigate to={getHomePath(user)} replace />;
   return children;
 }
@@ -599,6 +627,11 @@ function AppRoutes() {
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
       <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
       <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
+
+      {/* The Claude connector's consent page (spec 2026-11-19 section 7.2):
+          admin only, outside the shell so it stands alone, and the one guard
+          that sends a signed-out owner to login with a way back here. */}
+      <Route path="/connect-claude" element={<ProtectedRoute adminStrict returnHere><ConnectClaude /></ProtectedRoute>} />
 
       {/* Application flow (logged in, not yet hired) */}
       <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />

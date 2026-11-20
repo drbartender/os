@@ -87,6 +87,17 @@ const CLIENT_SECRET_VALUE = /(?:pi|seti)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/g;
 const TOKEN_PATH = /(?:\/|%2F)(t|tip|unsubscribe|reset-password|verify-email|cover-swaps)(?:\/|%2F)[^/?#&%\s"'<>]+/gi;
 // A token in a query string (?token=, &token=, or percent-encoded).
 const TOKEN_QUERY = /([?&]|%3F|%26)token(=|%3D)[^&#%\s"'<>]+/gi;
+// The Claude connector (spec 2026-11-19 law 8), the server's two rules
+// (server/utils/sentryScrub.js). Its tokens and sign-in codes by their fixed
+// prefix (server/utils/connector/tokens.js): the consent page holds the return
+// address with a code in it, and the navigation to it lands in a crumb.
+const CONNECTOR_TOKEN_VALUE = /drbc_[A-Za-z0-9_-]+/g;
+// The sign-in values with no prefix (state, code, code_challenge,
+// code_verifier) by parameter name, in a query, percent-encoded, or at the
+// start of a bare form body. The value runs to the next separator, plain or
+// encoded, so an encoded byte inside it does not end the redaction early. A
+// value another rule already redacted (it opens with [) is left as it is.
+const OAUTH_PARAM_VALUE = /(^|[?&]|%3F|%26)(state|code|code_challenge|code_verifier)(=|%3D)(?!\[)(?:(?!%26|%23)[^&#\s"'<>])+/gi;
 
 const MAX_DEPTH = 24;
 const MAX_NODES = 20000;
@@ -97,6 +108,8 @@ export function scrubText(s) {
     .replace(MENU_PROOF_PATH, '/menu-proof/[redacted]')
     .replace(TOKEN_PATH, (m, seg) => `/${seg.toLowerCase()}/[redacted]`)
     .replace(TOKEN_QUERY, '$1token$2[redacted]')
+    .replace(CONNECTOR_TOKEN_VALUE, '[redacted-connector-token]')
+    .replace(OAUTH_PARAM_VALUE, '$1$2$3[redacted]')
     // The token values after the path rules, so those keep their markers, and
     // BEFORE the phone rules: a plus sign (an encoded space) before a UUID that
     // opens with seven digits reads as an E.164 number, and the number marker
