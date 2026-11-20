@@ -93,6 +93,30 @@ const ALLOWLIST = new Map([
     'at all: it computes identically on the public /plan planner, where it has ' +
     'always looked this way. A pre-existing 2.31:1 on a public surface, not an ' +
     'admin palette leak. Fix it in the planner, not here.'],
+  ['.site-logo-mark',
+    'Inside .site-header, which paints its own near-black ground ' +
+    '(rgba(26, 20, 16, 0.92)) in every skin; the Claude connector consent page ' +
+    '(/connect-claude, an admin route since 2026-11-19) renders that header, which is ' +
+    'what made these rules admin-reachable. The text sits on the header, not on the ' +
+    'skin ground the heuristic assumes, so it reads as it always has on the public pages.'],
+  ['.site-logo',
+    'Inside .site-header, which paints its own near-black ground ' +
+    '(rgba(26, 20, 16, 0.92)) in every skin; the Claude connector consent page ' +
+    '(/connect-claude, an admin route since 2026-11-19) renders that header, which is ' +
+    'what made these rules admin-reachable. The text sits on the header, not on the ' +
+    'skin ground the heuristic assumes, so it reads as it always has on the public pages.'],
+  ['.site-logo span',
+    'Inside .site-header, which paints its own near-black ground ' +
+    '(rgba(26, 20, 16, 0.92)) in every skin; the Claude connector consent page ' +
+    '(/connect-claude, an admin route since 2026-11-19) renders that header, which is ' +
+    'what made these rules admin-reachable. The text sits on the header, not on the ' +
+    'skin ground the heuristic assumes, so it reads as it always has on the public pages.'],
+  ['.site-admin-tag',
+    'Inside .site-header, which paints its own near-black ground ' +
+    '(rgba(26, 20, 16, 0.92)) in every skin; the Claude connector consent page ' +
+    '(/connect-claude, an admin route since 2026-11-19) renders that header, which is ' +
+    'what made these rules admin-reachable. The text sits on the header, not on the ' +
+    'skin ground the heuristic assumes, so it reads as it always has on the public pages.'],
 ]);
 
 // ---------------------------------------------------------------------------
