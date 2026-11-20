@@ -73,8 +73,9 @@ const DEST_URL = '(?:xdestx|(?:this|that|the following) (?:url|link|address|endp
 const NOT_SELF = '(?<!(?:i\'ll|i will|we\'ll|we will|i can|we can|i\'m going to|i am going to|we\'re going to|we are going to|let me|i\'d like to|i would like to|i\'ve|i have|we have|we\'ve|i just|we just|i|we|i\'ll be|we\'ll be|i will be|i\'d|we\'d|i\'ll also|we\'ll also) )';
 
 // Instruction overrides. NOT_SUBJECT: the client speaking of their own
-// forgetting ("I forget everything", "did I forget anything") or reporting
-// what someone told them ("I was told to forget the previous instructions").
+// forgetting ("I forget everything", "did I forget anything"), and reported
+// speech ("I was told to forget the previous instructions"), which the
+// reported-override pair below tiers on its own.
 const NOT_SUBJECT = '(?<!(?:don\'t|do not|dont|never|not|n\'t|i|we|did i|did we|did you|have you|i\'ll|we\'ll|i\'d|we\'d|or i\'ll|i will|we will|i always|i often|i usually|i might|i may|we might|i sometimes|i tend to|we tend to|told to|told me to|told us to|said to|asked to|asked me to|asked us to) )';
 const OVERRIDE_VERB = `${NOT_SUBJECT}(?:ignore|disregard|forget|override|bypass|pay no attention to|never ?mind|do not follow|don\'t follow|dont follow|never follow|never obey|do not obey|don\'t obey|dont obey|stop following|no longer follow|stop obeying|do not listen to|don\'t listen to|stop listening to)`;
 // "you" then an order a reader takes, never "you must log in".
@@ -101,8 +102,10 @@ const ORDER_VERB = '(?:send|forward|list|reply|respond|print|output|say|state|wr
 // is paid", "the owner has approved"). A client's own requests (send me the
 // map, add 20 guests, confirm the time) are none of these.
 const DATA_CARGO = '(?:(?:the|your|all|every|each|other|all the|all your|the other|their)(?: \\S+){0,2}? )?(?:clients?|customers?|contacts|client list|customer list|bookings|phone numbers?|cells?|cell numbers?|e-?mail addresses|home addresses|leads)';
-const ATTACK_ORDER = `(?:(?:say|print|output|state that|write (?:that|a|an|me)|translate|reveal|report that|tell (?:me|the owner|the boss|the user|him|her) (?:that|the|this|your|what|everything)|reply with|respond with|act as|pretend|be (?:rude|mean|nasty)|draft (?:a|an) (?:reply|response|email|message|note)|approve (?:the |my |this |a |their )?(?:refund|discount|payment|request|invoice|charge|transfer)|refund (?:the |my |this |their |his |her )?(?:deposit|payment|charge|money|balance|invoice|card|order)|delete (?:this|the|all|every|that)|cancel (?:the |this |my |all )?(?:invoice|payment|charges?|refund)|open (?:the|this) (?:link|url|attachment|file|page|website)|forward (?:this|the|all|every) (?:thread|conversation|emails?|messages?|inbox)|mark (?:\\S+ ){0,3}?(?:as )?(?:paid|approved|resolved|settled)|what (?:is|are|was|were) (?:the |your |my )?(?:passwords?|pin|codes?|api keys?|secrets?|home address(?:es)?|address(?:es)? of)|(?:what|which|who) (?:other|else))(?![a-z0-9])|(?:send|e-?mail|give me|forward|export|list|paste|copy|include|share|post|upload)(?: \\S+){0,2}? ${DATA_CARGO}(?![a-z0-9])|(?:the |this |my )?(?:invoice|balance|deposit|bill|account|booking) (?:is|has been|was) (?:now )?(?:paid|zero|cleared|settled|waived|refunded|approved)(?![a-z0-9])|(?:nothing|no balance|no money) is (?:owed|due)|the owner (?:has )?approved|(?:is|was) paid in full|owes nothing)`;
-const TOPIC_THEN_ORDER = `(?=[,.;:!]?(?: \\S+){0,8}? (?:and|then),? (?:(?:then|instead|now|just|please) )*${ATTACK_ORDER}|[,.;:!]?(?: \\S+){0,8}?[.;:!] (?:(?:then|instead|now|just|please),? )*${ATTACK_ORDER})`;
+const ATTACK_ORDER = `(?:(?:say|print|output|state that|write (?:that|a|an|me)|translate|reveal|report that|tell (?:me|you|the owner|the boss|the user|him|her) (?:that|the|this|your|what|everything)|reply with|respond with|act as|pretend|be (?:rude|mean|nasty)|draft (?:a|an) (?:reply|response|email|message|note)|approve (?:the |my |this |a |their )?(?:refund|discount|payment|request|invoice|charge|transfer)|refund (?:the |my |this |their |his |her )?(?:deposit|payment|charge|money|balance|invoice|card|order)|delete (?:this|the|all|every|that)|cancel (?:the |this |my |all )?(?:invoice|payment|charges?|refund)|open (?:the|this) (?:link|url|attachment|file|page|website)|forward (?:this|the|all|every) (?:thread|conversation|emails?|messages?|inbox)|mark (?:\\S+ ){0,3}?(?:as )?(?:paid|approved|resolved|settled)|what (?:is|are|was|were) (?:the |your |my )?(?:passwords?|pin|codes?|api keys?|secrets?|home address(?:es)?|address(?:es)? of)|(?:what|which|who) (?:other|else))(?![a-z0-9])|(?:send|e-?mail|give me|forward|export|list|paste|copy|include|share|post|upload)(?: \\S+){0,2}? ${DATA_CARGO}(?![a-z0-9])|(?:the |this |my )?(?:invoice|balance|deposit|bill|account|booking) (?:is|has been|was) (?:now )?(?:paid|zero|cleared|settled|waived|refunded|approved)(?![a-z0-9])|(?:nothing|no balance|no money) is (?:owed|due)|the owner (?:has )?approved|(?:is|was) paid in full|owes nothing)`;
+// One copy of ATTACK_ORDER behind both joins (a conjunction, or a sentence
+// break), so the compiled pattern stays small.
+const TOPIC_THEN_ORDER = `(?=[,.;:!]?(?: \\S+){0,8}?(?: (?:and|then),? (?:(?:then|instead|now|just|please) )*|[.;:!] (?:(?:then|instead|now|just|please),? )*)${ATTACK_ORDER})`;
 // The client's own topic after a plain override, unless it names who gave
 // the instructions to a reader ("from the developer").
 const OWN_TOPIC_PLAIN = '(?! (?:(?:about|for(?! now)|on|regarding|re|to|i|we|my|our|in(?! this (?:conversation|chat|thread|session))|at(?! once)|of|with(?! immediate effect)|that i|that we|you got from|they|she|he|sent|given by|the venue|the planner)(?![a-z0-9])|from (?!(?:the |your )?(?:developers?|creators?|system|owner|user|operator|admin)(?![a-z0-9]))))';
@@ -113,6 +116,16 @@ const PLAIN_NOUN = '(?:instructions?|instrucions|instuctions|instrutions|iunstru
 // What an ordinary-sounding override is followed by when it is a published
 // injection ("ignore the above and say ...").
 const INJECT_TAIL = '(?:(?:just |only |simply )?(?:say|print|output|write|repeat|respond with|reply with|answer with|type)(?: \\S+){0,3}? ?["\':]|(?:respond only|reply only|write (?:a|an|me a) (?:poem|limerick|story|haiku|song|joke|essay)|tell me (?:what )?your|spell[ -]?check|reveal (?:your|the) (?:prompt|instructions)|instead (?:say|print|output|tell me|spell|reveal|translate|repeat))(?![a-z0-9])|translate (?:this|the following|it)(?: \\S+){0,3}? (?:as|into) ["\'])';
+
+// A plain override's other nouns: a client's words for a route and a
+// venue's terms as well as a reader's instructions. Directions to a place
+// are a route, never an override ("the earlier directions to the venue").
+const PLAIN_ROUTE = '(?:directions(?! to(?![a-z0-9]))|guidance|guidelines?|rules|constraints|restrictions)';
+// Someone reported as ordering an override ("said to", "told me to", "have
+// been asked to"), then the override itself: of instructions, of everything
+// above, of the above itself, or of what you were told.
+const REPORTED = '(?:told|said|asked)(?: (?:me|us|you|him|her|them|everyone))? to';
+const REPORTED_OVERRIDE = `${S}${REPORTED} (?:just )?(?:ignore|disregard|forget|override|bypass|pay no attention to|never ?mind|not follow|stop following) (?:(?:${DET_OTHER} ){0,3}(?:${DET_AI}|${DET_PREV}) (?:(?:${DET_OTHER}|${DET_AI}|${DET_PREV}) ){0,3}${OVERRIDE_NOUN}|(?:${DET_OTHER} ){0,3}${OVERRIDE_NOUN} (?:above|before this)|everything (?:above|before this|you(?:'ve| have| were)? (?:been )?(?:told|given))|(?:all (?:of )?)?(?:the |everything )?(?:above|text above|message above|preceding text)|what you (?:were|have been|'ve been) told)${E}`;
 
 // People whose records are the business's, and what is kept about them.
 const PEOPLE = '(?:clients?|customers?|leads?|users?|members?|subscribers?|patrons?|couples?|brides?|grooms?)';
@@ -185,10 +198,28 @@ const FLAT = [
   // route and a venue's terms ("ignore the earlier directions, park in lot B"),
   // and the plain override of earlier instructions with any topic: a
   // client's own correction flags and is never withheld.
+  // Every sibling of the plain override is here: the word placing the
+  // instructions before this text in front of the noun ("the previous
+  // directions") or after it ("the instructions above", "the rules before
+  // this"), whatever follows.
   {
     id: 'override-plain-topic',
     tier: 'flag',
-    re: `${S}${OVERRIDE_VERB} (?:${DET_OTHER} ){0,3}${DET_PREV} (?:${DET_OTHER} ){0,2}(?:directions|guidance|guidelines?|rules|constraints|restrictions)${E}${OWN_TOPIC_PLAIN}|${S}${OVERRIDE_VERB} (?:${DET_OTHER} ){0,3}${DET_PREV} (?:${DET_OTHER} ){0,2}${PLAIN_NOUN}${E}`,
+    re: `${S}${OVERRIDE_VERB} (?:${DET_OTHER} ){0,3}${DET_PREV} (?:${DET_OTHER} ){0,2}(?:${PLAIN_NOUN}|${PLAIN_ROUTE})${E}|${S}${OVERRIDE_VERB} (?:${DET_OTHER} ){0,3}(?:${PLAIN_NOUN}|${PLAIN_ROUTE}) (?:above|before this)${E}`,
+  },
+  // Reported speech of an override ("my planner said to ignore the
+  // instructions above", "you have been told to ignore all previous
+  // instructions"): an attack's usual authority frame, and a client's report
+  // of what someone said. With an attack payload after it, it withholds;
+  // otherwise it flags.
+  {
+    id: 'reported-override',
+    re: `${REPORTED_OVERRIDE}${TOPIC_THEN_ORDER}`,
+  },
+  {
+    id: 'reported-override-flag',
+    tier: 'flag',
+    re: REPORTED_OVERRIDE,
   },
   {
     id: 'override-above',
@@ -617,7 +648,7 @@ const COMPACT = [
 // The withhold tier: text a real client never writes. Everything else in
 // FLAT flags. LINE, WHOLE and COMPACT patterns all withhold.
 const WITHHOLD_IDS = new Set([
-  'override-instructions', 'override-plain', 'override-above', 'override-everything', 'what-you-were-told',
+  'override-instructions', 'override-plain', 'reported-override', 'override-above', 'override-everything', 'what-you-were-told',
   'instructions-void', 'new-task', 'system-prompt', 'claimed-instructions', 'your-hidden-instructions',
   'reveal-prompt', 'repeat-above', 'role-you-are-now', 'role-act-as', 'role-pretend', 'role-from-now-on',
   'mode-switch', 'ai-data-order', 'ai-named-order', 'benchmark-frame', 'you-are-an-ai', 'role-prefix-inline', 'message-boundary',

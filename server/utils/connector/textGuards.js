@@ -285,7 +285,20 @@ const ABBREVIATIONS = new Set(['sat', 'sun', 'mon', 'tue', 'tues', 'wed', 'thu',
 const NOT_ENDING = new Set(['the', 'and', 'or', 'of', 'for', 'with', 'then', 'that', 'this', 'there', 'their', 'was', 'are', 'be', 'theme', 'pattern', 'dress', 'print']);
 const LABEL_CHAR = /[\p{L}\p{N}_-]/u;
 const LETTER = /\p{L}/u;
-const isLabelChar = (c) => LABEL_CHAR.test(c);
+// ASCII is read by its code, so the per-character loops below run no regex
+// on ordinary text.
+function isLetter(c) {
+  if (!c) return false;
+  const x = c.charCodeAt(0);
+  if (x < 128) return (x >= 65 && x <= 90) || (x >= 97 && x <= 122);
+  return LETTER.test(c);
+}
+function isLabelChar(c) {
+  if (!c) return false;
+  const x = c.charCodeAt(0);
+  if (x < 128) return (x >= 48 && x <= 57) || (x >= 65 && x <= 90) || (x >= 97 && x <= 122) || x === 95 || x === 45;
+  return LABEL_CHAR.test(c);
+}
 
 // The few characters written just before view offset i ('' when there is
 // no original): what precedes a token.
@@ -335,7 +348,9 @@ const FACT_ENDINGS = new Set([...STRONG_ENDINGS].filter((e) => !SENTENCE_START.h
 // "inv-1042", "$50/hr", "may", "friday", "fifteen", "ochenta", "third").
 // A label that mixes a word and a digit is a name ("evil1", "route66",
 // "1800flowers"), a host on any ending in any case.
-const FACT_LABEL = /^\d+(?::\d{2})?(?:am|pm|a|p|st|nd|rd|th|k|ppl|pp|hrs?|h|x|ish)?$/;
+// A number may carry a time, an ordinal and a unit, then "ish" ("6pmish",
+// "12noon", "20min", "45mins", "150pax", "120guests", "3hrs").
+const FACT_LABEL = /^\d+(?::\d{2})?(?:am|pm|a|p|st|nd|rd|th|noon)?(?:k|m|x|h|hrs?|hours?|mins?|minutes?|pp|ppl|pax|people|persons?|guests?|heads?)?(?:ish)?$/;
 const NUMBERED_ITEM = /^(?:(?:[a-z]|inv|ord|po|ref|no|rm|apt|ste|tkt|conf|res|acct)-?\d{3,}|\d+[a-z])$/;
 const UNIT_LABEL = /^(?:hr|hrs|hour|h|person|pp|guest|head|day|ea|each|pc|night|wk|week|mo|month)$/;
 const EN_UNITS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
@@ -371,14 +386,51 @@ function isFactLabel(label, pre) {
 const SPANISH_START = new Set(['la', 'es', 'de', 'se', 'si', 'al', 'va']);
 const TITLE_CASE = /^\p{Lu}\p{Ll}+$/u;
 // A label of two or more characters with a letter, then a dot: a subdomain.
-const SUBDOMAIN_BEFORE = /(?:^|[^\p{L}\p{N}_-])(?=[\p{L}\p{N}_-]{2})[\p{L}\p{N}_-]*\p{L}[\p{L}\p{N}_-]*\.$/u;
+// A scan from the end, not a regex (an end-anchored regex rescans from
+// every position of pre, once per dot).
+function subdomainBefore(pre) {
+  if (!pre.endsWith('.')) return false;
+  let i = pre.length - 1;
+  let letter = false;
+  while (i > 0 && isLabelChar(pre[i - 1])) {
+    i -= 1;
+    if (isLetter(pre[i])) letter = true;
+  }
+  return letter && pre.length - 1 - i >= 2;
+}
+// "www." just before a label.
+const wwwBefore = (pre) => pre.endsWith('www.') && (pre.length === 4 || !isLabelChar(pre[pre.length - 5]));
+// Endings past the plausible list that hosts with a path or a www label use
+// (gambling, short-link and party spam: "777.win/bonus", "1.nyc/menu").
+// The first set is spam's alone, endings a sentence seldom opens with (a
+// capital id before one is a host: "BK8.asia", "Q8.cash"); the second holds
+// this business's own words, which open ordinary slashed pairs
+// ("bar/lounge", "party/reception", "live/dj"), so after a stated fact they
+// are a host only before a path that is not one word ending there
+// ("24h.live/x", "777.live/promo?ref=1").
+const SPAM_ENDINGS = ['link', 'click', 'win', 'bet', 'nyc', 'pw', 'ws', 'casino', 'poker', 'loan', 'loans', 'vegas',
+  'download', 'racing', 'webcam', 'ltd', 'llc', 'vip', 'asia', 'cash', 'ink', 'news', 'one', 'gold', 'xxx'];
+const WORD_PATH_ENDINGS = ['live', 'party', 'fun', 'bar', 'life', 'world', 'page', 'pub', 'stream', 'review', 'trade', 'bio'];
+const KNOWN_ENDINGS = new Set([...STRONG_ENDINGS, ...SPAM_ENDINGS, ...WORD_PATH_ENDINGS]);
+// The path after the dot is one plain word that ends there ("bar/lounge",
+// "party/dinner"): a space, punctuation or the end follows, never a query,
+// a fragment, an equals sign or another segment, which no slashed pair has.
+const PLAIN_WORD_PATH = /^\/[a-z]{2,24}(?![\p{L}\p{N}_%+-]|[/?#=&.][\p{L}\p{N}])/u;
+// An id typed in capitals, one or two letters and digits ("B12", "AA123",
+// "I-94"): a room, a gate, a flight, a highway, a stated fact, but only where
+// nothing after the dot reads as a host (no path, query, further label or
+// subdomain, and an ending on neither list). The same shape is the brand of
+// gambling hosts ("B52.club", "J88.to/vip", "AB12.Com"), which stay hosts.
+const CAPS_ID = /^[a-z]{1,2}-?\d{1,5}$/;
+const isCapsId = (label, written) => CAPS_ID.test(label) && /^\p{Lu}{1,2}-?\d+$/u.test(written);
 
 // Is a dot inside this token a host's dot? After a stated fact the dot is a
 // missing space ("150.Start", "5pm.dress", "6/14.See", "$50/hr.Thanks",
 // "INV-1042.thanks", "4 p.m.reception", "count is 120.beer/wine only"),
 // unless a plausible ending follows in lowercase ("2k.com", "$5.io"), or a
 // path, a further dot or a subdomain comes with any plausible ending
-// ("4848x.shop/upload"). Otherwise a path, a query, a www label or a further
+// ("4848x.com/upload", "777.win/bonus") but an ordinary slashed pair
+// ("5pm.bar/lounge"). Otherwise a path, a query, a www label or a further
 // label makes a host whatever the labels are; a name with a digit is a host
 // ("evil1.me", "Evil1.Com"); after a word, a plausible ending makes a host
 // in any case ("Example.Com"), a capitalized ordinary word does not
@@ -395,20 +447,28 @@ function hostDot(core, offset, ctx) {
     // 64 long), so no test rescans the token from its start.
     const pre = core.slice(Math.max(0, left - 70), left);
     let right = dot + 1;
-    while (right < core.length && right - dot < 64 && LETTER.test(core[right])) right += 1;
+    while (right < core.length && right - dot < 64 && isLetter(core[right])) right += 1;
     const ending = core.slice(dot + 1, right);
     const next = core[right] || ' ';
     if (leftLabel === 'm' && /(?:^|[^\p{L}])[ap]\.$/u.test(pre)) continue; // "4 p.m.reception"
-    const structure = '/?#'.includes(next) || (next === '.' && LETTER.test(core[right + 1] || ''))
-      || leftLabel === 'www' || SUBDOMAIN_BEFORE.test(pre);
+    const structure = '/?#'.includes(next) || (next === '.' && isLetter(core[right + 1]))
+      || leftLabel === 'www' || subdomainBefore(pre);
     const title = TITLE_CASE.test(originalAt(ctx, offset + dot + 1, right - dot - 1));
     // "am" and "pm" are a time only after a number ("4 pm.me and Sam"); alone
     // they are a name ("pm.me").
     const ampm = /^[ap]m$/.test(leftLabel);
-    const fact = ampm ? left === 0 && /\d ?$/.test(textBefore(ctx, offset)) : isFactLabel(leftLabel, pre);
+    const fact = ampm ? left === 0 && /\d ?$/.test(textBefore(ctx, offset)) : isFactLabel(leftLabel, pre)
+      || (!structure && !KNOWN_ENDINGS.has(ending) && isCapsId(leftLabel, originalAt(ctx, offset + left, dot - left)));
     if (fact) {
       if (!title && FACT_ENDINGS.has(ending)) return true;
-      if (structure && STRONG_ENDINGS.has(ending)) return true;
+      // A path, a query or a further label is a host on any plausible
+      // ending; before an ordinary word it is a fact and a missing space
+      // ("count is 120.beer/wine only"), and so is an ordinary slashed pair
+      // that opens with an ending ("5pm.bar/lounge", "6.party/dinner"). A
+      // www label is a host.
+      const wordPair = next === '/' && WORD_PATH_ENDINGS.includes(ending) && PLAIN_WORD_PATH.test(core.slice(right, right + 28));
+      if (structure && !wordPair && KNOWN_ENDINGS.has(ending) && !(title && SENTENCE_START.has(ending))) return true;
+      if (wwwBefore(pre)) return true;
       continue;
     }
     if (structure || leftLabel.startsWith('xn--') || ending === 'xn') return true;
@@ -452,13 +512,54 @@ function lastWord(s) {
 }
 const firstWord = (s) => (s.match(/^[\p{L}\p{N}_%+-]{1,64}/u) || [''])[0];
 const spelledSeparators = (s) => /\s(?:dot|d0t|period|point|punto|full\s+stop)(?:\s|[-_]|(?=com|net|org|io|co|me|us|info|biz))|[\[({<"'*-]\s*(?:\.|dot|d0t|period|punto)|\s\.|\.\s/.test(s);
-// A dot then a space before an ending ("example. com", "bit. ly/3abc") is a
-// host, in any case, unless the word before the dot is a stated fact: "count
-// is 150. net 30" is two sentences.
-const SPACED_LABEL = /([\p{L}\p{N}_%+-]+)\.\s/u;
-function spacedDotOk(match) {
-  const m = SPACED_LABEL.exec(match);
-  return !m || !isFactLabel(m[1], '');
+// A dot then whitespace (a line break included) is a sentence break far more
+// often than a host's dot, so it is a host's dot only when both sides read as
+// one. The word before the dot must be a plausible host label: letters,
+// digits and inner hyphens, and no stated fact, meridiem ("5 p.m. Beer/wine"),
+// unit ("120 guests. CC") or word a sentence ordinarily ends on ("Thanks.\nTV").
+// The side after the dot must be an ending: with a path, in lowercase one of
+// the plausible endings ("bit. ly/3abc", "t. me/barspam", "example. link/x")
+// and written with a capital only an ending no slashed pair opens with
+// ("Visit Example. Com/login", never "excited. Bar/bat mitzvah", "works.
+// Co/host" or "either. Friday/Saturday"); written with a capital, an ending that closes
+// the sentence ("visit Example. Net", never "the invoice. CC my husband" or
+// "the deposit. Net balance"), or com, xyz or biz; in lowercase, an ending
+// that closes the sentence or one of the classic endings ("visit example. org
+// today") but net, which an everyday word opening a sentence never is (cc,
+// info, tv).
+const SPACED_DOT = /[\p{L}\p{N}_%+-]\.\s+/u;
+const HOST_LABEL = /^[\p{L}\p{N}][\p{L}\p{N}-]{0,62}$/u;
+const UNIT_WORDS = new Set(['hour', 'hours', 'hr', 'hrs', 'h', 'min', 'mins', 'minute', 'minutes', 'guest', 'guests', 'people',
+  'ppl', 'pax', 'person', 'persons', 'head', 'heads', 'percent', 'pct', 'dollars', 'bucks', 'k', 'am', 'pm', 'night', 'nights',
+  'day', 'days', 'week', 'weeks', 'month', 'months', 'year', 'years', 'each', 'ea', 'total', 'cases', 'bottles', 'kegs']);
+const SENTENCE_END_WORDS = new Set(['thanks', 'thank', 'thx', 'ty', 'you', 'ya', 'u', 'it', 'me', 'us', 'them', 'him', 'her',
+  'please', 'pls', 'plz', 'ok', 'okay', 'k', 'yes', 'yeah', 'yep', 'no', 'nope', 'good', 'great', 'perfect', 'fine', 'done',
+  'sure', 'cool', 'awesome', 'then', 'there', 'here', 'too', 'now', 'soon', 'again', 'later', 'below', 'above', 'attached',
+  'all', 'set', 'well', 'so', 'much', 'lol', 'gracias', 'si', 'bien', 'listo', 'favor', 'tambien']);
+const CAPITAL_ANY_FOLLOW = new Set(['com', 'xyz', 'biz']);
+const LOWER_PATH_ENDINGS = new Set([...STRONG_ENDINGS, 'link', 'click']);
+const CAPITAL_PATH_ENDINGS = new Set(['com', 'edu', 'gov', 'io', 'xyz', 'biz', 'ly', 'gl', 'gd', 'gg', 'sh']);
+// net is left out: "payment is due. net 30" is money talk in any case.
+const LOWER_ANY_FOLLOW = new Set(['com', 'org', 'edu', 'gov', 'io', 'xyz', 'biz']);
+// After the host: closing punctuation, then the end of the text, the end of
+// the sentence or a line break.
+const CLOSES_SENTENCE = /^[)\]"'*_~]*(?:$|[.!?,;]+(?:\s|$)|\n)/;
+function spacedDotHost(view, start, match, host, ctx) {
+  const spaced = SPACED_DOT.exec(match);
+  if (!spaced) return true;
+  const dotAt = spaced.index + 1;
+  let left = dotAt;
+  while (left > 0 && isLabelChar(match[left - 1])) left -= 1;
+  const label = match.slice(left, dotAt);
+  const before = view.slice(Math.max(0, start + left - 3), start + left);
+  if (!HOST_LABEL.test(label) || label.endsWith('-') || isFactLabel(label, before) || UNIT_WORDS.has(label) || SENTENCE_END_WORDS.has(label)) return false;
+  if (label === 'm' && /(?:^|[^\p{L}])[ap]\.$/u.test(before)) return false; // "5 p.m. Info"
+  const ending = lastWord(host);
+  const after = spaced.index + spaced[0].length;
+  const capital = /\p{Lu}/u.test(ctx && ctx.text ? ctx.text[ctx.starts[start + after]] || '' : '');
+  if (match.length > host.length) return (capital ? CAPITAL_PATH_ENDINGS : LOWER_PATH_ENDINGS).has(ending); // a path
+  const closes = CLOSES_SENTENCE.test(view.slice(start + match.length, start + match.length + 8));
+  return (capital ? CAPITAL_ANY_FOLLOW : LOWER_ANY_FOLLOW).has(ending) || closes;
 }
 const usesProse = (s) => /\s(?:period|point|punto|full\s+stop)\s/.test(s);
 const WORD_AT = /\s(?:at|arroba|at-sign|at\s+sign)\s/;
@@ -512,7 +613,7 @@ function findDestinations(nv, text) {
     // only at a mail provider; otherwise the host alone is cut, below.
     const domain = match.replace(DOMAIN_AFTER_AT, '');
     if (WORD_AT.test(match) && !spelledSeparators(match) && !PROVIDER_START.test(firstWord(domain))) continue;
-    if (!spacedDotOk(match)) continue;
+    if (/\.\s/.test(match) && !spacedDotHost(view, m.index, match, match, ctx)) continue;
     add(m.index, m.index + match.length, 'email');
   }
   for (const m of view.matchAll(SPELLED_HOST)) {
@@ -521,7 +622,7 @@ function findDestinations(nv, text) {
     if (!spelledSeparators(host) || !ENDING_RE.test(ending) || NOT_ENDING.has(ending)) continue;
     if (usesProse(host) && !PROSE_ENDINGS.has(ending)) continue;
     if (/^[\p{L}\p{N}]\s+(?:dot|d0t|period|point|punto)/u.test(host)) continue; // "a dot com" in prose
-    if (!spacedDotOk(host)) continue;
+    if (/\.\s/.test(m[0]) && !spacedDotHost(view, m.index, m[0], host, ctx)) continue;
     add(m.index, m.index + m[0].length, 'link');
   }
   return mergeSpans(found);
