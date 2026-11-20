@@ -54,8 +54,31 @@ function when(value) {
   return day ? `${day}, ${chicagoTime(value)}` : '';
 }
 
+// A row's record list in plain words: a tripwire mark (trip:<instant>) as
+// the trip's start in Chicago time, the call's held-back pieces
+// (withheld:<ref>, a field ref and a hash, never text) as one "text held
+// back" entry ahead of any flagged ones, so they are never hidden behind
+// "and N more".
+export function recordWords(recordIds) {
+  const list = Array.isArray(recordIds) ? recordIds.map(String) : [];
+  const plain = [];
+  const trips = [];
+  const flagged = [];
+  let held = 0;
+  for (const id of list) {
+    if (id.startsWith('withheld:')) held += 1;
+    else if (id.startsWith('trip:')) {
+      const at = when(id.slice(5));
+      trips.push(at ? `read limit trip started ${at}` : 'read limit trip');
+    } else if (id.startsWith('flagged:')) flagged.push(id);
+    else plain.push(id);
+  }
+  const heldWords = held === 0 ? [] : [held === 1 ? 'text held back' : `text held back (${held} pieces)`];
+  return [...plain, ...trips, ...heldWords, ...flagged];
+}
+
 function ids(recordIds) {
-  const list = Array.isArray(recordIds) ? recordIds : [];
+  const list = recordWords(recordIds);
   if (list.length <= 3) return list.join(', ');
   return `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
 }

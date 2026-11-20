@@ -9,7 +9,7 @@ const mockUseAuth = jest.fn();
 jest.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() }));
 
 // eslint-disable-next-line import/first
-import ClaudeConnection, { STATE_TEXT, callLabel } from './ClaudeConnection';
+import ClaudeConnection, { STATE_TEXT, callLabel, recordWords } from './ClaudeConnection';
 
 const STATUS_NONE = {
   connection: null,
@@ -253,4 +253,21 @@ test('no copy in the block carries an em dash', () => {
   // eslint-disable-next-line global-require
   const src = require('fs').readFileSync(require('path').join(__dirname, 'ClaudeConnection.js'), 'utf8');
   expect(src).not.toContain('—');
+});
+
+test('recordWords: a trip mark in Chicago time, held-back pieces as one plain entry ahead of flags, no raw marks', () => {
+  const words = recordWords(['50201', 'flagged:message sms:1', 'flagged:message sms:2', 'withheld:email:c-5#abcdefabcdefabcd', 'withheld:msg:sms:3#fedcbafedcbafedc']);
+  expect(words).toEqual(['50201', 'text held back (2 pieces)', 'flagged:message sms:1', 'flagged:message sms:2']);
+  const trip = recordWords(['50210', 'trip:2026-11-20T03:14:00.000Z']);
+  expect(trip[1]).toMatch(/^read limit trip started .*9:14/);
+  expect(trip.join(' ')).not.toMatch(/T03:14|trip:/);
+  expect(recordWords(['withheld:name:c-5#abcdefabcdefabcd'])).toEqual(['text held back']);
+});
+
+test('a call row shows its held-back piece within the first three records, never behind "and N more"', async () => {
+  routeApi({ ...STATUS_NONE, connection: LIVE }, { calls: [{ id: 30, called_at: '2026-11-19T14:30:00.000Z', caller_address: '192.0.2.20', method: 'tools/call', tool_name: 'thread', record_ids: ['c-5', 'flagged:message sms:1', 'flagged:message sms:2', 'flagged:message sms:3', 'withheld:msg:sms:4#abcdefabcdefabcd'], outcome: 'ok' }], has_more: false });
+  render(<ClaudeConnection />);
+  const row = await screen.findByText(/Records:/);
+  expect(row.textContent).toMatch(/Records: c-5, text held back, flagged:message sms:1 and 2 more/);
+  expect(row.textContent).not.toMatch(/withheld:/);
 });
