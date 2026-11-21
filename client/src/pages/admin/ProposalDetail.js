@@ -351,7 +351,7 @@ function ProposalDetailBody() {
       setShowArchiveModal(false);
       loadProposal();
     } catch (err) {
-      toast.error(err?.response?.data?.error || err.message || 'Failed to archive.');
+      toast.error(err?.message || 'Failed to archive.');
     } finally {
       setArchiving(false);
     }

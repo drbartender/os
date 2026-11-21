@@ -83,10 +83,7 @@ export default function AdminApplicationDetail() {
       if (successMsg) toast.success(successMsg);
       await load();
     } catch (e) {
-      const apiMsg = e?.response?.data?.error
-        || e?.response?.data?.message
-        || 'Action failed.';
-      toast.error(apiMsg);
+      toast.error(e?.message || 'Action failed.');
     } finally {
       setActing(false);
     }
@@ -99,7 +96,7 @@ export default function AdminApplicationDetail() {
       toast.success('Reminder sent.');
       await load();
     } catch (e) {
-      toast.error(e?.response?.data?.error || e?.response?.data?.message || 'Could not send reminder.');
+      toast.error(e?.message || 'Could not send reminder.');
     } finally {
       setReminderBusy(false);
     }

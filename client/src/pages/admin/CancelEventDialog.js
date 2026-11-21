@@ -41,7 +41,7 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
       setPreview(res.data);
       setStep('preview');
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not load the cancellation preview.');
+      toast.error(err?.message || 'Could not load the cancellation preview.');
     } finally {
       setLoadingPreview(false);
     }
@@ -77,11 +77,11 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
       toast.success('Event cancelled.');
       if (onCancelled) onCancelled(res.data);
     } catch (err) {
-      const code = err?.response?.data?.code;
+      const code = err?.code;
       if (code === 'LAST_NAME_MISMATCH') {
         toast.error('The last name does not match our records.');
       } else {
-        toast.error(err?.response?.data?.error || 'Could not cancel the event.');
+        toast.error(err?.message || 'Could not cancel the event.');
       }
     } finally {
       setSubmitting(false);
@@ -118,7 +118,7 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
           : 'Nothing left to refund.');
       }
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not issue the refund.');
+      toast.error(err?.message || 'Could not issue the refund.');
     } finally {
       setRefunding(false);
     }

@@ -25,9 +25,12 @@ const TABS = [
 const num = (v) => (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 }));
 const money = (v) => (v == null || v === '' ? '—' : `$${num(v)}`);
 const fmtSigned = (n) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(Number(n) || 0)).toLocaleString('en-US');
+// api.js rejects with { message, code, fieldErrors, status }: show the first
+// field error when the server named one, else its message.
 const fieldError = (err) => {
-  const fe = err.response?.data?.fieldErrors;
-  return fe ? Object.values(fe)[0] : (err.response?.data?.error || 'Save failed.');
+  const fe = err?.fieldErrors;
+  const first = fe ? Object.values(fe)[0] : null;
+  return first || err?.message || 'Save failed.';
 };
 
 // ─── Eligible-bottle typeahead over the par catalog ──────────────

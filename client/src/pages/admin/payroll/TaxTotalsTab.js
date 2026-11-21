@@ -79,7 +79,7 @@ export default function TaxTotalsTab() {
       setRows(prev => (prev || []).map(r => (
         r.user_id === row.user_id ? { ...r, exclude_from_1099: row.exclude_from_1099 } : r
       )));
-      toast.error(err.response?.data?.error || err.message || 'Could not update exclusion.');
+      toast.error(err.message || 'Could not update exclusion.');
     } finally {
       setPendingUser(null);
     }

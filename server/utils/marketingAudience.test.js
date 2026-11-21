@@ -5,6 +5,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { pool } = require('../db');
+const { EVENT_TYPES } = require('./eventTypes');
 const {
   isMailable, heldBackReason, MAILABLE_SQL, HELD_BACK_SQL,
   LEAD_UNSUB_LATERAL, HELD_BACK_REASONS, LAST_EVENT,
@@ -327,33 +328,29 @@ test('NORM_EVENT_TYPE reconciles every spelling actually in prod', async () => {
   }
 });
 
-test('no event-type spelling in the database falls through every list', async () => {
-  // Every distinct event_type must land in exactly one of the three exported
-  // lists. A spelling in none of them is a SILENT fourth bucket: it neither
-  // counts as corporate nor suppresses a corporate suggestion, which is
-  // precisely how a wedding-only contact ended up suggested Corporate.
+test('every canonical event type lands in exactly one list', () => {
+  // Every id in the canonical vocabulary (server/utils/eventTypes.js, the
+  // list the booking forms offer) must land in exactly one of the three
+  // exported lists. A type in none of them is a SILENT fourth bucket: it
+  // neither counts as corporate nor suppresses a corporate suggestion, which
+  // is precisely how a wedding-only contact ended up suggested Corporate.
   //
-  // The lists come from the module, never restated here, so this test cannot
-  // pass against a copy that has drifted from the SQL.
-  const known = new Set([
-    ...CORPORATE_EVENT_TYPES, ...PERSONAL_EVENT_TYPES, ...UNCLASSIFIED_EVENT_TYPES,
-    'walk-fixture', // a dev-only test fixture, not a real event type
-  ]);
-  // Server suites share ONE dev database, and other windows run their suites
-  // concurrently. Their fixtures appear in this table mid-run, so an assertion
-  // over live state has to ignore anything self-identifying as a fixture or it
-  // fails for reasons that have nothing to do with the vocabulary. Narrow on
-  // purpose: only spellings that literally say "test" are skipped, so a real
-  // event type can never hide behind this.
-  const looksLikeFixture = (n) => /(^|-)test(-|$)|(^|-)fixture(-|$)/.test(n);
-  const { rows } = await pool.query(`
-    SELECT DISTINCT btrim(lower(regexp_replace(event_type, '[^a-zA-Z0-9]+', '-', 'g')), '-') AS n
-      FROM proposals
-     WHERE status <> 'archived' AND event_type IS NOT NULL AND btrim(event_type) <> ''`);
-  const unclassified = rows.map(r => r.n).filter(n => !known.has(n) && !looksLikeFixture(n)).sort();
-  assert.deepEqual(unclassified, [],
-    `unclassified event types: add each to CORPORATE_EVENT_TYPES, ` +
-    `PERSONAL_EVENT_TYPES, or UNCLASSIFIED_EVENT_TYPES: ${unclassified.join(', ')}`);
+  // Both sides come from the modules, never restated here, so the test cannot
+  // pass against a copy that has drifted. It reads no database rows, so a
+  // parallel suite's fixtures cannot make it flake. The JS normalization
+  // mirrors NORM_EVENT_TYPE: runs of non-alphanumerics become one dash,
+  // lowercased, dashes trimmed from the ends.
+  const norm = (t) => String(t).replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase().replace(/^-+|-+$/g, '');
+  const lists = { CORPORATE_EVENT_TYPES, PERSONAL_EVENT_TYPES, UNCLASSIFIED_EVENT_TYPES };
+  const problems = [];
+  for (const { id } of EVENT_TYPES) {
+    const n = norm(id);
+    const homes = Object.entries(lists).filter(([, arr]) => arr.includes(n)).map(([name]) => name);
+    if (homes.length !== 1) problems.push(`${id} -> ${homes.length ? homes.join(' and ') : 'no list'}`);
+  }
+  assert.deepEqual(problems, [],
+    `each canonical event type belongs in exactly one of CORPORATE_EVENT_TYPES, ` +
+    `PERSONAL_EVENT_TYPES or UNCLASSIFIED_EVENT_TYPES: ${problems.join('; ')}`);
 });
 
 test('the three event-type lists are disjoint', () => {

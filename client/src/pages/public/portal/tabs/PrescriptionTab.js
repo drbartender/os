@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback, useId } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../../utils/api';
+import { useToast } from '../../../../context/ToastContext';
 import { interpolatePackageIncludes } from '../../../../utils/packageIncludes';
 import { GRATUITY_DISPLAY, resolveGratuityDisplayLabel } from '../../../../utils/gratuityLabels';
 import { formatDollars, formatCents } from '../money';
@@ -13,6 +14,7 @@ import ChangeRequestBanner from './ChangeRequestBanner';
 
 export default function PrescriptionTab({ focus, proposalDetail }) {
   const pricingId = useId();
+  const toast = useToast();
   // Reuse a parent-fetched detail ONLY when it is THIS event's detail. After an
   // archive fallback PortalHome can still be holding a previously-viewed event's
   // detail; reusing it by truthiness alone would render the wrong proposal's
@@ -48,7 +50,9 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
       const token = localStorage.getItem('db_client_token');
       await api.post(`/client-portal/proposals/${focus.token}/change-requests/${openRequest.id}/cancel`, {}, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       loadRequests();
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      toast.error(e?.message || 'Could not withdraw your request. Please try again.');
+    }
   };
 
   if (state === 'loading') return <div className="loading" role="status"><div className="spinner" />Loading...</div>;

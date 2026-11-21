@@ -62,7 +62,7 @@ export default function UnassignedTipsPanel({ onCount, hideWhenEmpty = false }) 
       }
       setTips(prev => prev.filter(t => t.id !== tipId));
     } catch (err) {
-      toast.error(err.response?.data?.error || err.message);
+      toast.error(err.message);
     } finally {
       setBusy(b => ({ ...b, [tipId]: false }));
     }

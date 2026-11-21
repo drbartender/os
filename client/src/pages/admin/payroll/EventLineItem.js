@@ -87,7 +87,7 @@ export default function EventLineItem({ event, editable, onSaved }) {
         const { data } = await api.patch(`/admin/payroll/payout-events/${event.id}`, patch);
         return data;
       } catch (err) {
-        toast.error(err.response?.data?.error || err.message);
+        toast.error(err.message);
         return null;
       } finally {
         inflight.current -= 1;

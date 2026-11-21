@@ -1,6 +1,6 @@
 import React from 'react';
 import '@testing-library/jest-dom'; // per-file import — this repo has no setupTests.js
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CancelEventDialog from './CancelEventDialog';
 import api from '../../utils/api';
 
@@ -102,5 +102,79 @@ describe('CancelEventDialog refund shortfall surfacing (B7)', () => {
     expect(screen.queryByText(/by hand in Stripe/i)).toBeNull();
     expect(mockToast.success).toHaveBeenCalledWith('Refund of $300.00 issued.');
     expect(mockToast.info).not.toHaveBeenCalled();
+  });
+});
+
+// api.js rejects with the flat { message, code, fieldErrors, status } shape,
+// never an axios err.response, so every catch reads err.code / err.message.
+describe('CancelEventDialog error surfacing (api.js reject shape)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function mockWith(overrides) {
+    api.post.mockImplementation((url) => {
+      if (overrides[url]) return overrides[url]();
+      if (url === '/proposals/1/cancel/preview') return Promise.resolve({ data: PREVIEW });
+      if (url === '/proposals/1/cancel') return Promise.resolve({ data: CANCEL_RESULT });
+      return Promise.reject(new Error(`unmocked POST ${url}`));
+    });
+    render(
+      <CancelEventDialog proposalId={1} clientName="Ana Smith" onClose={jest.fn()} onCancelled={jest.fn()} />
+    );
+  }
+
+  async function toPreview() {
+    fireEvent.click(screen.getByRole('button', { name: 'Review consequences' }));
+    const lastName = await screen.findByPlaceholderText('Last name');
+    fireEvent.change(lastName, { target: { value: 'Smyth' } });
+  }
+
+  test('a LAST_NAME_MISMATCH rejection shows the mismatch message', async () => {
+    mockWith({
+      '/proposals/1/cancel': () => Promise.reject({
+        message: 'Server wording', code: 'LAST_NAME_MISMATCH', fieldErrors: undefined, status: 422,
+      }),
+    });
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel event' }));
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
+    expect(mockToast.error).toHaveBeenCalledWith('The last name does not match our records.');
+  });
+
+  test('any other cancel rejection shows the server message', async () => {
+    mockWith({
+      '/proposals/1/cancel': () => Promise.reject({
+        message: 'This booking is already archived.', code: 'CONFLICT', fieldErrors: undefined, status: 409,
+      }),
+    });
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel event' }));
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
+    expect(mockToast.error).toHaveBeenCalledWith('This booking is already archived.');
+  });
+
+  test('a refund rejection shows the provider decline reason', async () => {
+    mockWith({
+      '/proposals/1/cancel/refund': () => Promise.reject({
+        message: 'Refund failed: the charge was already disputed.', code: 'PAYMENT_ERROR', fieldErrors: undefined, status: 402,
+      }),
+    });
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel event' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Issue $300.00 refund' }));
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
+    expect(mockToast.error).toHaveBeenCalledWith('Refund failed: the charge was already disputed.');
+  });
+
+  test('a preview rejection shows the server message', async () => {
+    mockWith({
+      '/proposals/1/cancel/preview': () => Promise.reject({
+        message: 'Proposal not found.', code: 'NOT_FOUND', fieldErrors: undefined, status: 404,
+      }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review consequences' }));
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
+    expect(mockToast.error).toHaveBeenCalledWith('Proposal not found.');
   });
 });

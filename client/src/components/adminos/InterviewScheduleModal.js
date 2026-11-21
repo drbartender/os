@@ -53,8 +53,7 @@ export default function InterviewScheduleModal({ open, applicant, onClose, onSav
       onSaved && onSaved();
       onClose();
     } catch (e) {
-      const msg = e?.response?.data?.error || e?.response?.data?.message || 'Could not schedule.';
-      toast.error(msg);
+      toast.error(e?.message || 'Could not schedule.');
     } finally {
       setSubmit(false);
     }

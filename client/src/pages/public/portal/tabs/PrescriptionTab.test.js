@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import React from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import PrescriptionTab from './PrescriptionTab';
 import { mapDetailToFocus } from '../constants';
 import api from '../../../../utils/api';
@@ -10,7 +10,9 @@ import api from '../../../../utils/api';
 // prop ONLY when proposalDetail.token === focus.token, else it would render a
 // previously-viewed event's price rows / payments / signature under this event's
 // totals (the stale-detail bug Codex flagged).
-jest.mock('../../../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
+jest.mock('../../../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));
+const mockToast = { success: jest.fn(), error: jest.fn(), info: jest.fn() };
+jest.mock('../../../../context/ToastContext', () => ({ useToast: () => mockToast }));
 jest.mock('@sentry/react', () => ({ captureException: jest.fn() }));
 jest.mock('../ShareButton', () => () => <div data-testid="share-button" />);
 
@@ -205,4 +207,14 @@ test('a booked proposal with a balance still offers Pay balance on its open invo
   const pay = screen.getByRole('link', { name: /Pay balance/i });
   expect(pay).toHaveAttribute('href', '/invoice/inv-tok-balance');
   expect(screen.queryByRole('link', { name: /Review & book/i })).not.toBeInTheDocument();
+});
+
+test('a failed Withdraw tells the client instead of failing silently', async () => {
+  api.get.mockImplementation((url) => (url.endsWith('/change-requests')
+    ? Promise.resolve({ data: { requests: [{ id: 7, status: 'pending' }] } })
+    : Promise.resolve({ data: { proposal: detailA } })));
+  api.post.mockRejectedValue({ message: 'This request was already decided.', code: 'CONFLICT', fieldErrors: undefined, status: 409 });
+  render(<PrescriptionTab focus={focusA} proposalDetail={detailA} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Withdraw request' }));
+  await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('This request was already decided.'));
 });

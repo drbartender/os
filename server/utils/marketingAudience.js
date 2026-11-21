@@ -165,7 +165,7 @@ const PERSONAL_EVENT_TYPES = [
   'cocktail-party', 'private-party', 'engagement-party', 'rehearsal-dinner',
   'bachelor-bachelorette', 'bachelor-bachelorette-party', 'housewarming',
   'celebration-of-life', 'celebration-of-life-memorial', 'derby-party',
-  '420-party',
+  '420-party', 'block-party', 'dinner-party',
 ];
 
 /**

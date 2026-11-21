@@ -48,9 +48,7 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
     else copyHint = 'Fewer than two options are live, so the compare link would open a single proposal instead of a comparison.';
   }
 
-  const apiError = (err, fallback) => err?.response?.data?.error
-    || (typeof err?.response?.data === 'string' ? err.response.data : null)
-    || err.message || fallback;
+  const apiError = (err, fallback) => err?.message || fallback;
 
   const addAlternative = async () => {
     setBusy('add');

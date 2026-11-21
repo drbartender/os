@@ -59,7 +59,7 @@ export default function DeferredTipsPanel({ onCount, hideWhenEmpty = false }) {
       }
       setTips(data.tips || []);
     } catch (err) {
-      toast.error(err.response?.data?.error || err.message || 'Retry failed');
+      toast.error(err.message || 'Retry failed');
     } finally {
       setRetrying(false);
     }

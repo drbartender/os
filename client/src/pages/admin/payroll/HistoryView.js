@@ -45,7 +45,7 @@ export default function HistoryView({ periodParam }) {
     setSelectedLoading(true);
     api.get(`/admin/payroll/periods/${id}`)
       .then(r => setSelected(r.data))
-      .catch(err => toast.error(err.response?.data?.error || err.message))
+      .catch(err => toast.error(err.message))
       .finally(() => setSelectedLoading(false));
   }, [toast]);
 
