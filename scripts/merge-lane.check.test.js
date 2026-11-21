@@ -101,15 +101,20 @@ test('check: ready, then ready-moved, then stale with the overlap list, exit 0, 
   expect(check(repo, 'lane-1'), 1, /^stale server\/a\.js, server\/b\.js$/);
 });
 
-test('check: stale with the sensitive flag when a sensitive-listed path landed on main', (t) => {
+test('check: stale with the sensitive flag when a sensitive-listed path a lane file requires landed on main; ready-moved when it shares nothing with the lane', (t) => {
   assert.ok(SM.isSensitive([LISTED]), `${LISTED} is on the real sensitive list`);
   const repo = makeOs(t);
-  lane(t, repo, 'lane-2', { 'server/a.js': 'a v2\n' });
+  lane(t, repo, 'lane-2', { 'server/lib/a.js': "require('../utils/encryption');\n" });
   review(t, repo, 'lane-2');
+  lane(t, repo, 'lane-2u', { 'server/lib/b.js': 'b v2\n' });
+  review(t, repo, 'lane-2u');
   commit(repo, 'main moves', { [LISTED]: '// a stand-in\n' });
   const r = check(repo, 'lane-2');
   expect(r, 1, /^stale \(no overlap\) sensitive$/);
   assert.match(r.stderr, /sensitive-listed on main since: server\/utils\/encryption\.js/);
+  const u = check(repo, 'lane-2u');
+  expect(u, 0, /^ready-moved$/);
+  assert.match(u.stderr, /sensitive-listed on main since, unrelated to the lane: server\/utils\/encryption\.js/);
 });
 
 test('check refuses: no receipt, a lower tier, a short file list, a recorded tip behind the branch tip', (t) => {

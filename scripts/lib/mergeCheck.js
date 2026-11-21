@@ -97,9 +97,13 @@
 //     the judge only passes a receipt while the list it reads is main's;
 //   - the receipt's reviewed_against against refs/heads/main: equal is ready;
 //     an ancestor of main is ready-moved when no file of the lane (the docs
-//     aside) changed on main since it and no path main changed since it is
-//     on main's sensitive list, else stale with that overlap and the sensitive
-//     flag; anything else refuses;
+//     aside) changed on main since it and no path main changed since it that
+//     is on main's sensitive list is related to the lane (staleRelated.js's
+//     rule: a direct import either way, a file in or beside a lane file's
+//     directory, the list, schema.sql for a lane with SQL-running code, any
+//     scripts/ or .husky/ path for a shell or hook lane file), else stale
+//     with that overlap and the sensitive flag naming only related paths (the
+//     rest in result.unrelatedSensitivePaths); anything else refuses;
 //   - refs/heads/main, the staged status and the list on disk, read once more
 //     right before an answer that is not a refusal: main moved, a staged
 //     change appeared, or the list on disk no longer is main's, during the
@@ -142,6 +146,7 @@ const RC = require('./rangeCheck');
 const FE = require('./flockExec');
 const PII = require('./piiShapes');
 const MK = require('./genDocs/markers');
+const SR = require('./staleRelated');
 const SRC = require('./genDocs/source');
 const { parse: parseTap } = require('./tapSummary');
 
@@ -496,9 +501,24 @@ function judge({ cwd, branch, plan = null, work, allowStaged = false }) {
   if (!R.isAncestor(rv, main, { cwd })) return refuse(at, `the receipt ${k} was reviewed against ${S(rv)}, which is not on main ${S(main)}`);
   const moved = namesBetween(cwd, rv, main);
   const overlap = files.filter((f) => moved.includes(f));
-  const sensitivePaths = SM.matchSensitive(moved, listFile);
+  const read = (ref) => (paths) => textsAt(cwd, ref, paths);
+  const { related: sensitivePaths, unrelated } = SR.relatedSensitive({ sensitivePaths: SM.matchSensitive(moved, listFile), laneFiles: files, readMain: read(main), readTip: read(tip) });
   const state = overlap.length || sensitivePaths.length ? 'stale' : 'ready-moved';
-  return settle(result({ ...at, state, overlap, sensitive: sensitivePaths.length > 0, sensitivePaths, movedFiles: moved }));
+  return settle(result({ ...at, state, overlap, sensitive: sensitivePaths.length > 0, sensitivePaths, unrelatedSensitivePaths: unrelated, movedFiles: moved }));
+}
+
+// path -> text for the blobs among `paths` that `ref` holds; git failing throws.
+function textsAt(cwd, ref, paths) {
+  const out = new Map();
+  if (!paths.length) return out;
+  const blobs = SR.blobRecords(git(cwd, ['--literal-pathspecs', 'ls-tree', '-z', '--full-tree', ref, '--', ...paths])).filter(([, oid]) => R.KEY_RE.test(oid));
+  if (!blobs.length) return out;
+  const oids = blobs.map(([, oid]) => oid);
+  // One cat-file for every blob, its stdin the ids.
+  const r = spawnSync('git', ['cat-file', '--batch'], { cwd, env: env(), input: `${oids.join('\n')}\n`, maxBuffer: MAX_BUFFER, stdio: ['pipe', 'pipe', 'pipe'] });
+  if (r.error || r.status !== 0) throw gitFailed({ ...r, stderr: r.stderr ? r.stderr.toString('utf8') : '' });
+  SR.parseBatch(r.stdout, oids).forEach((text, i) => out.set(blobs[i][0], text));
+  return out;
 }
 
 function commitExists(cwd, sha) {
@@ -532,7 +552,7 @@ function report(r, { out = (s) => process.stdout.write(s), err = (s) => process.
   out(`${line(r)}\n`);
   for (const p of r.problems.slice(1)) err(`  - ${p}\n`);
   if (r.state !== 'refused') {
-    const sens = r.sensitive ? `; sensitive-listed on main since: ${listed(r.sensitivePaths)}` : '';
+    const sens = `${r.sensitive ? `; sensitive-listed on main since: ${listed(r.sensitivePaths)}` : ''}${r.unrelatedSensitivePaths && r.unrelatedSensitivePaths.length ? `; sensitive-listed on main since, unrelated to the lane: ${listed(r.unrelatedSensitivePaths)}` : ''}`;
     err(`check: receipt ${S(r.key)} (by ${r.via}, tier ${r.tier}), reviewed against ${S(r.reviewed_against)}, main ${S(r.main)}${sens}\n`);
   }
 }

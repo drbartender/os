@@ -47,9 +47,11 @@ function lane(t, repo, branch, files) {
 // A real lane receipt at `tier`: init, a passing report from each floor lens,
 // the runs the tier needs, finalize. Returns the receipt directory.
 let selects = 0;
+// tier 'auto' takes the tier the diff computes to.
 function review(t, repo, branch, { tier = 'B', more = () => {} } = {}) {
   ok(cli(repo, 'init', '--branch', branch));
   const base = git(repo, 'merge-base', 'main', branch);
+  if (tier === 'auto') tier = SM.tierFromGit({ base, tip: branch }, { cwd: repo }).tier;
   const files = git(repo, 'diff', '--name-only', base, branch).split('\n').filter((f) => f && !R.GENERATED_DOCS.includes(f));
   more(K.prepare(t, repo, branch, files, { tier }).at);
   const select = path.join(repo, '.git', `select-mc-${++selects}.json`);
@@ -122,17 +124,157 @@ test('ready-moved and stale: main moving past the files the lane touches (a gene
   assert.equal(stale.sensitive, false);
 });
 
-test('stale with the sensitive flag: a sensitive-listed path landed on main, overlap or none', (t) => {
+test('ready-moved: a sensitive-listed path landed on main that shares nothing with the lane (no lane file, no import either way)', (t) => {
   assert.ok(SM.isSensitive([LISTED]), `${LISTED} is on the real sensitive list`);
   const repo = osRepo(t);
-  lane(t, repo, 'lane-s', { 'server/a.js': 'a v2\n' });
+  lane(t, repo, 'lane-u', { 'server/lib/a.js': 'a v2\n' });
+  review(t, repo, 'lane-u');
+  onMain(repo, { [LISTED]: '// a stand-in\n' });
+  const r = check(repo, 'lane-u');
+  assert.equal(M.line(r), 'ready-moved');
+  assert.equal(r.sensitive, false);
+  assert.deepEqual(r.sensitivePaths, []);
+  assert.deepEqual(r.unrelatedSensitivePaths, [LISTED]);
+  const err = [];
+  M.report(r, { out: () => {}, err: (s) => err.push(s) });
+  assert.match(err.join(''), /sensitive-listed on main since, unrelated to the lane: server\/utils\/encryption\.js/);
+});
+
+test('stale with the sensitive flag: a sensitive-listed path a lane file requires landed on main, overlap or none', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-s', { 'server/lib/a.js': "const enc = require('../utils/encryption');\n" });
   review(t, repo, 'lane-s');
   onMain(repo, { [LISTED]: '// a stand-in\n' });
   const r = check(repo, 'lane-s');
   assert.equal(M.line(r), 'stale (no overlap) sensitive');
   assert.deepEqual(r.sensitivePaths, [LISTED]);
-  onMain(repo, { 'server/a.js': 'a from main\n' });
-  assert.equal(M.line(check(repo, 'lane-s')), 'stale server/a.js sensitive');
+  onMain(repo, { 'server/lib/a.js': 'a from main\n' });
+  assert.equal(M.line(check(repo, 'lane-s')), 'stale server/lib/a.js sensitive');
+});
+
+test('stale with the sensitive flag: a lane file imported from it (an ESM import of a .jsx file, an index.js directory import)', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-e', { 'server/ui/Toast.jsx': 'export default 1;\n' });
+  review(t, repo, 'lane-e');
+  onMain(repo, { [LISTED]: "import Toast from '../ui/Toast';\n" });
+  const r = check(repo, 'lane-e');
+  assert.equal(M.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, [LISTED]);
+  const repo2 = osRepo(t);
+  lane(t, repo2, 'lane-i', { 'server/lib/index.js': 'module.exports = 1;\n' });
+  review(t, repo2, 'lane-i');
+  onMain(repo2, { [LISTED]: "const lib = require('../lib');\n" });
+  assert.equal(M.line(check(repo2, 'lane-i')), 'stale (no overlap) sensitive');
+});
+
+test('stale with the sensitive flag: a sensitive-listed path that requires a lane file landed on main', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-q', { 'server/lib/a.js': 'a v2\n' });
+  review(t, repo, 'lane-q');
+  onMain(repo, { [LISTED]: "const a = require('../lib/a.js');\n" });
+  const r = check(repo, 'lane-q');
+  assert.equal(M.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, [LISTED]);
+});
+
+test('stale with the sensitive flag: schema.sql landed on main and the lane has a server, scripts/ or root code file; a client-only lane reads ready-moved', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-d', { 'server/a.js': 'a v2\n' });
+  review(t, repo, 'lane-d');
+  // scripts/ and root scripts run raw SQL behind pure tests: the code before
+  // the widening read both of these ready-moved.
+  lane(t, repo, 'lane-c', { 'scripts/tools/x.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-c', { tier: 'auto' });
+  lane(t, repo, 'lane-rt', { 'backfill-x.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-rt', { tier: 'auto' });
+  lane(t, repo, 'lane-cl', { 'client/lib/x.js': 'export default 1;\n' });
+  const logs = tmpDir(t, 'logs');
+  review(t, repo, 'lane-cl', { tier: 'auto', more: (at) => ok(cli(repo, 'tests', 'lane-cl', '--build', K.writeFile(logs, 'build.log', 'Compiled successfully.\n'), '--exit', '0', '--position', at)) });
+  onMain(repo, { 'server/db/schema.sql': 'CREATE TABLE IF NOT EXISTS t (id int);\n' });
+  for (const b of ['lane-d', 'lane-c', 'lane-rt']) {
+    const r = check(repo, b);
+    assert.equal(M.line(r), 'stale (no overlap) sensitive', b);
+    assert.deepEqual(r.sensitivePaths, ['server/db/schema.sql'], b);
+  }
+  const c = check(repo, 'lane-cl');
+  assert.equal(M.line(c), 'ready-moved');
+  assert.deepEqual(c.unrelatedSensitivePaths, ['server/db/schema.sql']);
+});
+
+test('stale with the sensitive flag: a hook or shell lane file, and a sensitive path under scripts/ landed on main (the code before the widening read ready-moved)', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-h', { '.husky/pre-push': '#!/bin/sh\nnode scripts/ship.js\n' });
+  review(t, repo, 'lane-h', { tier: 'auto' });
+  onMain(repo, { 'scripts/ship.js': '// a stand-in\n' });
+  const r = check(repo, 'lane-h');
+  assert.equal(M.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, ['scripts/ship.js']);
+});
+
+test('stale with the sensitive flag: a hook landed on main and a lane JS file under scripts/ (the code before read ready-moved)', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-pg', { 'scripts/push-gate.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-pg', { tier: 'auto' });
+  onMain(repo, { '.husky/pre-push': '#!/bin/sh\nnode scripts/ship.js\n' });
+  const r = check(repo, 'lane-pg');
+  assert.equal(M.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, ['.husky/pre-push']);
+});
+
+test('package.json landed on main: stale when a "scripts" value names a lane file, ready-moved for a lane file it does not name', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-sh', { 'scripts/ship.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-sh', { tier: 'auto' });
+  lane(t, repo, 'lane-cl', { 'client/src/x.js': 'export default 1;\n' });
+  const logs = tmpDir(t, 'logs');
+  review(t, repo, 'lane-cl', { tier: 'auto', more: (at) => ok(cli(repo, 'tests', 'lane-cl', '--build', K.writeFile(logs, 'build.log', 'Compiled successfully.\n'), '--exit', '0', '--position', at)) });
+  onMain(repo, { 'package.json': `${JSON.stringify({ scripts: { ship: 'node scripts/ship.js' } }, null, 2)}\n` });
+  const r = check(repo, 'lane-sh');
+  assert.equal(M.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, ['package.json']);
+  const c = check(repo, 'lane-cl');
+  assert.equal(M.line(c), 'ready-moved');
+  assert.deepEqual(c.unrelatedSensitivePaths, ['package.json']);
+});
+
+test('relatedSensitive: package.json read at main and at the tip, an unparsable or absent copy related; parseBatch throws on a short or missing record', () => {
+  const SR = require('./staleRelated');
+  const map = (o) => new Map(Object.entries(o));
+  const run = (main, tip, laneFiles = ['scripts/ship.js']) => SR.relatedSensitive({ sensitivePaths: ['package.json'], laneFiles, readMain: () => map(main), readTip: () => map(tip) }).related;
+  const named = JSON.stringify({ scripts: { ship: 'node scripts/ship.js' } });
+  const other = JSON.stringify({ scripts: { dev: 'node server/index.js' } });
+  assert.deepEqual(run({ 'package.json': other }, { 'package.json': named }), ['package.json'], 'named at the tip only');
+  assert.deepEqual(run({ 'package.json': other }, { 'package.json': other }), []);
+  assert.deepEqual(run({ 'package.json': '{ not json' }, { 'package.json': other }), ['package.json'], 'unparsable');
+  assert.deepEqual(run({}, {}), ['package.json'], 'at neither ref');
+  const client = (laneFiles) => SR.relatedSensitive({ sensitivePaths: ['client/package.json'], laneFiles,
+    readMain: () => map({ 'client/package.json': JSON.stringify({ scripts: { pre: 'node scripts/gen.js' } }) }), readTip: () => map({}) }).related;
+  assert.deepEqual(client(['client/scripts/gen.js']), ['client/package.json'], "client/'s scripts name paths under client/");
+  assert.deepEqual(client(['scripts/gen.js']), []);
+  const oid = 'a'.repeat(40);
+  assert.deepEqual(SR.parseBatch(Buffer.from(`${oid} blob 3\nabc\n`), [oid]), ['abc']);
+  assert.throws(() => SR.parseBatch(Buffer.from(`${oid} blob 5\nabc\n`), [oid]), /cat-file --batch/);
+  assert.throws(() => SR.parseBatch(Buffer.from(`${oid} missing\n`), [oid]), /cat-file --batch/);
+  assert.throws(() => SR.parseBatch(Buffer.from(''), [oid]), /cat-file --batch/);
+});
+
+test('stale with the sensitive flag: a sensitive path beside a lane file, in its directory or its parent, no import either way (the code before the widening read ready-moved)', (t) => {
+  const repo = osRepo(t);
+  lane(t, repo, 'lane-p', { 'server/utils/comms/actions/x.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-p', { tier: 'auto' });
+  lane(t, repo, 'lane-sd', { 'server/utils/comms/y.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-sd', { tier: 'auto' });
+  lane(t, repo, 'lane-far', { 'server/lib/a.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-far', { tier: 'auto' });
+  onMain(repo, { 'server/utils/comms/registry.js': '// a stand-in\n' });
+  for (const b of ['lane-p', 'lane-sd']) {
+    const r = check(repo, b);
+    assert.equal(M.line(r), 'stale (no overlap) sensitive', b);
+    assert.deepEqual(r.sensitivePaths, ['server/utils/comms/registry.js'], b);
+  }
+  const far = check(repo, 'lane-far');
+  assert.equal(M.line(far), 'ready-moved');
+  assert.deepEqual(far.unrelatedSensitivePaths, ['server/utils/comms/registry.js']);
 });
 
 test('a content-identical rebase keeps the key: found by key, the old tip no ancestor, ready-moved', (t) => {
@@ -191,6 +333,18 @@ test('the sensitive list is main\'s: an unstaged edit of os\'s copy that would l
   fs.writeFileSync(list, before);
   assert.match(git(repo, '--no-optional-locks', 'status', '--porcelain'), /^M scripts\/sensitive-paths\.txt$/m, 'another window edits os\'s copy');
   refusedWith(C.checkLane({ cwd: repo, branch: 'lane-l' }), /^refused the lane computes to tier A with main's sensitive list; the receipt [0-9a-f]{7} is tier B$/);
+});
+
+test('stale with the sensitive flag: the sensitive list itself landed on main, a lane sharing nothing with it', (t) => {
+  const repo = osRepo(t);
+  const C = ownModules(repo);
+  lane(t, repo, 'lane-k', { 'scripts/tools/x.js': 'module.exports = 1;\n' });
+  review(t, repo, 'lane-k');
+  const list = path.join(repo, 'scripts', 'sensitive-paths.txt');
+  onMain(repo, { 'scripts/sensitive-paths.txt': `${fs.readFileSync(list, 'utf8')}# a comment main added\n` });
+  const r = C.checkLane({ cwd: repo, branch: 'lane-k' });
+  assert.equal(C.line(r), 'stale (no overlap) sensitive');
+  assert.deepEqual(r.sensitivePaths, ['scripts/sensitive-paths.txt']);
 });
 
 test('the push gate\'s judge reads the list on disk, so an unstaged edit of os\'s copy that drops a lane file\'s pattern refuses before it, never ready', (t) => {

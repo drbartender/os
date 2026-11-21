@@ -20,7 +20,12 @@
 // A lane is STALE when ANY of these hold:
 //   (a) older than 48h with no new commit on it,
 //   (b) main has advanced 15+ commits since the lane was cut (merge-base),
-//   (c) any sensitive path has landed on main since the lane was cut.
+//   (c) a sensitive path related to the lane has landed on main since the
+//       lane was cut, by the merge check's rule (scripts/lib/staleRelated.js:
+//       the lane's files are mergeBase..branch, the moved ones mergeBase..main;
+//       a relation it cannot read counts as related); read only for a lane
+//       (a) and (b) leave fresh, so sensitiveLanded is false on one they
+//       already flag.
 //
 // Safe-scrap (the hard line, "never lose my code"): a lane may be auto-scrapped
 // ONLY if `git log main..<lane-branch>` is empty (no distinct unmerged work).
@@ -55,8 +60,8 @@
 // then one line per stale lane, at most SESSION_MAX_LINES lines, and exit 0
 // whatever it finds, so the hook can never fail or hang a session. The work runs in a
 // child process of this same file (--session-start-run) under a hard timeout;
-// the child loads markers.js, shipLog.js, mergeShipLog.js and
-// sensitive-match.js only inside its guard, and a failed load, a crash, a cwd
+// the child loads markers.js, shipLog.js, mergeShipLog.js, sensitive-match.js
+// and staleRelated.js only inside its guard, and a failed load, a crash, a cwd
 // outside git or the timeout is one line naming it. The plain CLI keeps its
 // exit 1 on a stale lane.
 //
@@ -68,8 +73,21 @@ const path = require('node:path');
 
 // Loaded on first use, so a missing or broken module is caught by the caller
 // (the session-start guard) instead of failing this file's own load.
-function isSensitive(paths) {
-  return require('./sensitive-match').isSensitive(paths);
+function matchSensitive(paths) {
+  return require('./sensitive-match').matchSensitive(paths);
+}
+
+// True when any of `hits` (sensitive paths main changed since mergeBase) is
+// related to the lane by staleRelated.js; a git failure reads as related.
+function relatedLanded(cwd, mergeBase, mainRef, branch, hits) {
+  const SR = require('./lib/staleRelated'); // a failed load reaches the caller's guard
+  try {
+    const laneFiles = git(cwd, ['diff', '--name-only', `${mergeBase}..${branch}`]).split('\n').filter(Boolean);
+    const r = SR.relatedSensitive({ sensitivePaths: hits, laneFiles, readMain: SR.readAt(cwd, mainRef), readTip: SR.readAt(cwd, branch) });
+    return r.related.length > 0;
+  } catch {
+    return true;
+  }
 }
 
 const STALE_AGE_MS = 48 * 60 * 60 * 1000; // 48h with no new commit
@@ -186,16 +204,19 @@ function evaluateLane(lane, opts = {}) {
     }
   }
 
-  // (c) any sensitive path has landed on main since the lane was cut.
+  // (c) a sensitive path related to the lane has landed on main since the
+  // lane was cut. Skipped for a lane (a) or (b) already makes stale: the
+  // relation read is the costly part of the session-start child's bound.
   let sensitiveLanded = false;
-  if (mergeBase) {
+  if (mergeBase && !reasons.length) {
     const diff = git(cwd, ['diff', '--name-only', `${mergeBase}..${mainRef}`], {
       allowFail: true,
     });
     const changed = diff ? diff.split('\n').filter(Boolean) : [];
-    if (changed.length && isSensitive(changed)) {
+    const hits = changed.length ? matchSensitive(changed) : [];
+    if (hits.length && relatedLanded(cwd, mergeBase, mainRef, lane.branch, hits)) {
       sensitiveLanded = true;
-      reasons.push('a sensitive path landed on main since cut');
+      reasons.push('a related sensitive path landed on main since cut');
     }
   }
 
@@ -436,8 +457,8 @@ function capLines(lines, max = SESSION_MAX_LINES) {
 }
 
 // The session-start lines, computed in this process (the child's half).
-// Every require of markers.js, shipLog.js and sensitive-match.js happens in
-// here, inside a guard.
+// Every require of markers.js, shipLog.js, sensitive-match.js and
+// staleRelated.js happens in here, inside a guard.
 function sessionStartLines({ cwd = process.cwd() } = {}) {
   if (git(cwd, ['rev-parse', '--git-common-dir'], { allowFail: true }) === null) {
     return [`lane-status: ${cwd} is not inside a git repo; nothing to report`];

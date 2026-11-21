@@ -119,20 +119,28 @@ test('a fresh lane (recent commit, main barely moved) is NOT stale', () => {
   assert.strictEqual(evald.stale, false, `unexpected reasons: ${evald.reasons.join('; ')}`);
 });
 
-test('a lane is flagged stale when a sensitive path lands on main since cut', () => {
+test('a sensitive path landing on main flags a lane only when related to it (the merge check\'s rule)', () => {
   const repo = makeRepo('sensitive');
-  const lane = cutLane(repo, 'lane');
-  // A sensitive file (matches the repo sensitive-paths.txt) lands on main.
-  commitAt(
-    repo,
-    'server/utils/pricingEngine.js',
-    'module.exports = {};\n',
-    'pricing change on main'
-  );
+  git(repo, ['checkout', '-q', '-b', 'lane']);
+  commitAt(repo, 'server/routes/quote.js', "const p = require('../utils/pricingEngine');\n", 'lane work');
+  git(repo, ['checkout', '-q', 'main']);
+  const lane = { branch: 'lane', path: repo };
+  // A sensitive path the lane shares nothing with: no flag.
+  commitAt(repo, 'server/utils/encryption.js', 'module.exports = {};\n', 'encryption change on main');
+  const quiet = evaluateLane(lane, { cwd: repo, mainRef: 'main' });
+  assert.strictEqual(quiet.sensitiveLanded, false);
+  assert.strictEqual(quiet.stale, false, `unexpected reasons: ${quiet.reasons.join('; ')}`);
+  // A sensitive path a lane file requires: flagged.
+  commitAt(repo, 'server/utils/pricingEngine.js', 'module.exports = {};\n', 'pricing change on main');
   const evald = evaluateLane(lane, { cwd: repo, mainRef: 'main' });
   assert.strictEqual(evald.sensitiveLanded, true);
   assert.strictEqual(evald.stale, true);
-  assert.ok(evald.reasons.some((r) => r.includes('sensitive')));
+  assert.ok(evald.reasons.includes('a related sensitive path landed on main since cut'), evald.reasons.join('; '));
+  // A lane the age rule already flags skips the relation read.
+  const later = evaluateLane(lane, { cwd: repo, mainRef: 'main', now: Date.now() + 72 * 60 * 60 * 1000 });
+  assert.strictEqual(later.stale, true);
+  assert.strictEqual(later.sensitiveLanded, false);
+  assert.deepEqual(later.reasons.map((r) => r.includes('over 48h')), [true]);
 });
 
 test('safe-scrap REFUSES a lane with unmerged commits (git log main..lane non-empty)', () => {
