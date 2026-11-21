@@ -6,7 +6,7 @@
 // status and sent timestamps untouched — so this action has NO state side
 // effect (ensureSideEffects is a validate-only no-op). dispatch OWNS its ledger
 // writes with skipLog so a provider throw can never leave a sent-but-unlogged
-// message (the 7/16 Brandon Martin failure class).
+// message (the 7/16 sent-but-unlogged failure class).
 //
 // GV posts (spec docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md):
 // for a Thumbtack relay client the text is routed first, and a queued or

@@ -6,7 +6,7 @@
 // the client-facing approved snapshot per spec 4.9) run in ensureSideEffects,
 // idempotently; dispatch sends the possibly-edited message and OWNS its ledger
 // writes (sendEmail is called with skipLog so a Resend SDK throw can never
-// produce a sent-but-unlogged email again — the 7/16 Brandon Martin failure).
+// produce a sent-but-unlogged email again, as it did on 7/16).
 const { pool } = require('../../../db');
 const { sendEmail } = require('../../email');
 const { sendSMS, normalizePhone } = require('../../sms');
@@ -26,7 +26,7 @@ const defaultChannels = { email: true, sms: false };
 // One row fetch shared by resolve/build/dispatch. Live client email via the
 // proposal join is the source of truth (spec 4.2: recipient is never the
 // drink_plans snapshot when a linked client exists — the snapshot went stale
-// for Brandon Martin and Aaran Varatharajan and killed their sends).
+// for two clients' plans and killed their sends).
 async function load(planId) {
   const { rows } = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name,

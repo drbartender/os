@@ -166,7 +166,7 @@ router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
     // field, and `created` is the ownership gate recordSmsConsent needs. It is
     // NOT purely a reader, though — on a phone+name match against a row whose
     // email IS NULL it backfills the submitted email onto that EXISTING row (the
-    // admin proposal-create's "Jim fix"; the wizard itself passes stampEmail:
+    // admin proposal-create's "phone-only-duplicate fix"; the wizard itself passes stampEmail:
     // false since audit 2026-11-05 AUTH-02). That write is why the rollback
     // below is not gated on `created`; see the note there. source stays 'website' rather than a new
     // enum value — clients.source carries a CHECK constraint whose live

@@ -6,7 +6,7 @@
 //
 // THE BUG: the legacy send (drinkPlanConsult.js post-commit block) read
 // dp.client_email — the drink_plans SNAPSHOT — as the recipient. That snapshot
-// goes stale when a client updates their email (the Brandon Martin failure
+// goes stale when a client updates their email (the stale stored address failure
 // shape). resolveRecipient here resolves the LIVE client email via the proposal
 // join, with the snapshot kept only as a fallback + mismatch warning, mirroring
 // shoppingListApprove.js.

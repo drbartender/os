@@ -100,7 +100,7 @@ async function findOrCreateClientDetailed(db, { name, email, phone, source = 'di
     );
     if (r.rows[0]) {
       winnerId = r.rows[0].id;
-      // Matched by normalized phone AND name. Stamp the email on (the "Jim fix")
+      // Matched by normalized phone AND name. Stamp the email on (the "phone-only-duplicate fix")
       // so a later proposal-create resolves to it. The phone is already this
       // row's match key; we backfill ONLY the email, never overwriting a
       // non-null value. stampEmail: false (the public wizard) resolves only.

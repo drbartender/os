@@ -552,7 +552,7 @@ async function handleSubmit(req, res) {
             // Live client record first, plan snapshot as fallback (fix-list
             // 2026-07-18: the old `proposal.client_email` fallback was always
             // undefined — proposals has no such column — so this path emailed
-            // the stale drink_plans snapshot; Brandon-class stale-recipient
+            // the stale drink_plans snapshot; the shopping-list stale-recipient
             // shape. Mirrors the fast path's live c.email resolution.
             clientName: existing.rows[0]?.live_client_name || existing.rows[0]?.client_name || 'Client',
             clientEmail: existing.rows[0]?.live_client_email || existing.rows[0]?.client_email,
