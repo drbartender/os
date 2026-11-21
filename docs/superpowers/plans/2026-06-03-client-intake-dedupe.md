@@ -4,11 +4,11 @@
 
 **Goal:** One person becomes exactly one `clients` row no matter which intake path (Thumbtack lead, admin proposal-create, public quote wizard, BEO/shift) first sees them, and clean up the duplicates that already exist.
 
-**Architecture:** Extract a single `findOrCreateClient(db, {...})` helper that de-dupes on **email OR normalized phone** (with a name guard on phone-only matches, mirroring `calcom.js`) and only ever **backfills NULL fields** — never overwrites identity, so it's safe for the unauthenticated wizard. Wire it into all four intake sites. Add a `mergeClients(db, loser, winner)` helper that repoints FK references discovered from the catalog and deletes the loser, then run it once for Jim (1384→1385) and surface any other dupes for manual triage.
+**Architecture:** Extract a single `findOrCreateClient(db, {...})` helper that de-dupes on **email OR normalized phone** (with a name guard on phone-only matches, mirroring `calcom.js`) and only ever **backfills NULL fields** — never overwrites identity, so it's safe for the unauthenticated wizard. Wire it into all four intake sites. Add a `mergeClients(db, loser, winner)` helper that repoints FK references discovered from the catalog and deletes the loser, then run it once for the phone-only duplicate (1384→1385) and surface any other dupes for manual triage.
 
 **Tech Stack:** Node/Express, raw SQL via `pg`, `node:test`. Existing patterns to mirror: `server/routes/calcom.js:123-218` (email-then-phone find-or-create + 23505 savepoint recovery), `server/utils/phone.js#validatePhone` (10-digit normalizer), the functional index `idx_clients_phone_normalized` (`RIGHT(REGEXP_REPLACE(phone,'\D','','g'),10)`).
 
-**Root cause being fixed:** `server/routes/thumbtack.js:233-265` matches on **phone only**; `server/routes/proposals/crud.js:142-162` and `proposals/public.js:274-281` match on **email only**; `server/routes/shifts.js:351-365` matches on email only (case-sensitive). A phone-only Thumbtack lead (no email) followed by an email-bearing proposal-create therefore produced two rows (Jim = clients 1384 + 1385).
+**Root cause being fixed:** `server/routes/thumbtack.js:233-265` matches on **phone only**; `server/routes/proposals/crud.js:142-162` and `proposals/public.js:274-281` match on **email only**; `server/routes/shifts.js:351-365` matches on email only (case-sensitive). A phone-only Thumbtack lead (no email) followed by an email-bearing proposal-create therefore produced two rows (clients 1384 + 1385).
 
 ---
 
@@ -69,7 +69,7 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
   }
 
   if (winnerId) {
-    // Backfill NULLs only — never overwrite. This is the Jim fix: a phone-only
+    // Backfill NULLs only — never overwrite. This is the phone-only-duplicate fix: a phone-only
     // Thumbtack row gets the email stamped on, so the later proposal-create
     // resolves to it instead of inserting a second row.
     await db.query(
@@ -111,7 +111,7 @@ const assert = require('node:assert');
 const { pool } = require('../db');
 const { findOrCreateClient } = require('./clientDedup');
 
-test('phone-only row then email proposal-create resolves to ONE client (the Jim case)', async () => {
+test('phone-only row then email proposal-create resolves to ONE client (the phone-only-duplicate case)', async () => {
   const db = await pool.connect();
   const ids = [];
   try {
@@ -292,7 +292,7 @@ module.exports = { mergeClients };
 
 ---
 
-### Task 4: Detect existing dupes + merge Jim (operational, against production)
+### Task 4: Detect existing dupes + merge the phone-only duplicate (operational, against production)
 
 **Files:** none — a read-only report plus one guarded merge, run via the Neon MCP against branch `br-noisy-frog-ad99sa6l` (production), like the proposal-443 archive.
 
@@ -337,7 +337,7 @@ UNION ALL SELECT 'legacy_cc_proposals', id FROM legacy_cc_proposals WHERE client
 
 (Rollback = restore these `client_id`s to 1384 and re-INSERT the deleted client row from the first SELECT.)
 
-- [ ] **Step 4: Merge Jim 1384 → 1385** (winner 1385 holds the email + both proposals + SMS) as one transaction repointing ALL FK tables confirmed in Step 2. This is the MCP-runnable equivalent of calling `mergeClients(db, 1384, 1385)`; prefer running the Task 3 helper from a one-off Node script if a prod DB connection is available (it derives the table list dynamically).
+- [ ] **Step 4: Merge 1384 → 1385** (winner 1385 holds the email + both proposals + SMS) as one transaction repointing ALL FK tables confirmed in Step 2. This is the MCP-runnable equivalent of calling `mergeClients(db, 1384, 1385)`; prefer running the Task 3 helper from a one-off Node script if a prod DB connection is available (it derives the table list dynamically).
 
 ```sql
 BEGIN;
@@ -359,7 +359,7 @@ COMMIT;
 
 ## Verification (whole plan)
 - `node --test server/utils/clientDedup.test.js server/utils/clientMerge.test.js` (run separately if the shared dev DB collides).
-- Re-run the detection report after merges → Jim's pair no longer appears.
+- Re-run the detection report after merges → the 1384/1385 pair no longer appears.
 - Manual: create a Thumbtack-style phone-only client, then an admin proposal with the same phone + an email → one client row, email backfilled.
 
 ## Self-review notes

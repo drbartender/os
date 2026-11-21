@@ -22,13 +22,13 @@ Includes deliberately-removed real records the user confirmed: `#11` slparent@gm
 
 ### Proposals — keep 6, delete 46
 
-**KEEP (ids):** `21` (Stef D., $400 balance_paid) · `25` (Jane) · `30` (Kaite Watson) · `51` (David Luebke) · `52` (Tabitha Lopez) · `54` (real `deposit_paid` booking, converted post-analysis 2026-05-15)
+**KEEP (ids):** `21` (client 21, $400 balance_paid) · `25` (client 26) · `30` (client 31) · `51` (email lead 44's booking) · `52` (client 83) · `54` (real `deposit_paid` booking, converted post-analysis 2026-05-15)
 
 **DELETE:** all other 46 proposals.
 
 ### Clients — keep 71, delete 28
 
-**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 6 clients of kept proposals: `21` (Stef D.), `26` (Jane), `31` (Kaite Watson), `80` (David Luebke), `83` (Tabitha Lopez), `102` (converted post-analysis 2026-05-15).
+**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 6 clients of kept proposals: `21` (proposal 21's client), `26` (proposal 25's client), `31` (proposal 30's client), `80` (proposal 51's client), `83` (proposal 52's client), `102` (converted post-analysis 2026-05-15).
 
 **DELETE:** all other 28 clients (Dallas Raby variants, @labrat.test, joke names, unlinked `source='thumbtack'` test entries).
 
@@ -42,7 +42,7 @@ Zero invoices reference a kept proposal. All 8 must be deleted **before** their 
 
 ### Email leads / quote drafts / enrollments — keep real customer trail + config
 
-- **KEEP `email_leads`:** `44` (David Luebke — kept proposal #51) · `46` (fresh real inbound 5/15). **DELETE:** `41, 42, 43, 45`.
+- **KEEP `email_leads`:** `44` (the lead behind kept proposal #51) · `46` (fresh real inbound 5/15). **DELETE:** `41, 42, 43, 45`.
 - **KEEP `quote_drafts`:** the 2 whose `lead_id` ∈ {44, 46}. **DELETE** the other 4.
 - **KEEP `email_sequence_enrollments`:** the 2 whose `lead_id` ∈ {44, 46}. **DELETE** the 1 for lead 42 (Sean).
 - **KEEP untouched (automation config):** `email_campaigns` (1 — "Abandoned Quote Followup") · `email_sequence_steps` (2).
@@ -99,7 +99,7 @@ Build keep-lists as temp tables first (`keep_users`, `keep_proposals`, `keep_cli
 
 ## Cross-cutting consistency
 
-- David Luebke kept as a coherent set: proposal #51 + client 80 + email_lead 44 + quote_draft + enrollment.
+- The proposal 51 lead kept as a coherent set: proposal #51 + client 80 + email_lead 44 + quote_draft + enrollment.
 - Removals only — no proposal re-pricing or payment-status recompute is triggered.
 - `labratCleanup.js` continues to target `@labrat.test`; those rows are purged here regardless.
 

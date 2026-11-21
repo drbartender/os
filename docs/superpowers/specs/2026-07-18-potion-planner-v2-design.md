@@ -10,7 +10,7 @@
 
 The live planner audit and the client feedback file converge on four root problems:
 
-1. **Selling is tangled into planning.** Upsell radios that look required (Sid Khaitan), payment fused into the confirmation step (Anna Simpson, Julia Frye), and the extras_plus_balance scenario that blocks drink submission behind balance payment.
+1. **Selling is tangled into planning.** Upsell radios that look required (one client), payment fused into the confirmation step (two clients), and the extras_plus_balance scenario that blocks drink submission behind balance payment.
 2. **Hosted clients can order outside their package silently.** Mocktails carry no package-gap logic at all (the proposal 600 case), forcing after-the-fact no/free/pay compromises.
 3. **The planner collects ambiguous or dead data.** "Not sure" stored as null (indistinguishable from unanswered), the balance question never consumed by the shopping-list generator, custom drinks captured as bare strings with no ingredients.
 4. **Package contents are prose, not data.** Four disagreeing sources of truth (cost sheet, marketing page, DB seed, owner's head). Formula No. 5 shipped without citrus and nothing noticed.
@@ -32,7 +32,7 @@ The live planner audit and the client feedback file converge on four root proble
 Steps: Welcome, Quick Pick, Drink Picking, Bar Stocking, Crowd Questions (new), Menu Design, Day-Of Details, Review and Submit.
 
 - **Welcome:** unchanged in structure (it is the strongest screen). Copy updated for honest step count.
-- **Quick Pick:** four presets. **Custom Setup is deleted.** Degenerate combos route through Full Bar's existing None/skip answers (verified: the Cathy Murphy case is expressible).
+- **Quick Pick:** four presets. **Custom Setup is deleted.** Degenerate combos route through Full Bar's existing None/skip answers (verified: a live client's degenerate combo is expressible).
 - **Drink Picking:** uninterrupted fun. No syrup radios, no upsell panels, no source toggles, no dollar signs. Custom drink requests stay as free text and feed the admin recipe flow (merged 2026-07-16, c0495f7). The 2 to 4 drink guidance and over-selection warning stay.
 - **Bar Stocking (spirits / beer / wine):** as today, with fixes: one shared vocabulary per flow (no "Mostly Cocktails" in beer-and-wine-only), and "not sure yet" becomes a real stored value distinct from unanswered, everywhere.
 - **Crowd Questions (new, one screen):** (a) "About how many of your N guests drink?" (carries real weight in quantity math), (b) the balance question (light weight only, hosts guess). Both consumed by the generator; asking questions we do not use is banned.

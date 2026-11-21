@@ -12,7 +12,7 @@ gated on `status === 'approved'` (`shoppingList.js:46`), so every edit hides the
 the client until it is re-approved. The only re-approve path in the UI is "Re-approve &
 Send", which always emails the client.
 
-Seen live with Sid: editing the list while on the phone with him forced a re-approve after
+Seen live with a client: editing the list while on the phone with him forced a re-approve after
 each change so he could keep seeing it, and each re-approve emailed him. The workaround
 (stop re-approving) leaves the list stuck in `pending_review`, hidden from the client and
 sitting in the admin needs-review queue.
@@ -125,7 +125,7 @@ because that is what unlocks the repeat-edit loop:
   the *next* edit re-arms to `'idle'` and sets `wasApproved` via that existing branch, with
   no change to the auto-save effect. A distinct status (e.g. `'published_quiet'`) would
   never match this check and would deadlock both footer buttons after one use — the exact
-  Sid loop this feature exists to enable.
+  phone-call edit loop this feature exists to enable.
 - `ClientPreview` already receives `approved={approveStatus === 'approved'}`
   (`ShoppingListModal.jsx:584`); landing on `'approved'` keeps the admin's preview tab
   truthful.
@@ -174,7 +174,7 @@ Whether the client has *ever* seen this list drives the copy. The durable signal
 Behavior when the silent button is enabled (`approveStatus === 'idle' && !sendOpen`):
 
 - `hasBeenPublished === true` → label "Update Client's Copy", fires immediately, no
-  confirmation. Covers Sid's case and any previously-live list, including one stuck in
+  confirmation. Covers the phone-call case and any previously-live list, including one stuck in
   `pending_review` from a prior edit session.
 - `hasBeenPublished === false` → label "Publish Quietly", gated behind one
   `window.confirm`: "Publish this list to the client without notifying them? They will not

@@ -242,7 +242,7 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       **Added 2026-08-28 (lane full-pay-invoice):** after the real full payment, the
       portal Receipts tab must show ONE invoice, "Full Payment", at the with-tip amount,
       paid. Not "Deposit $100 paid". Then the backfill (its own runbook in the plan): after
-      --apply, Mike Boswell's INV-0336 reads Full Payment $550.00 paid, Karen Habenicht's
+      --apply, one client's INV-0336 reads Full Payment $550.00 paid, another's
       INV-0329 reads Full Payment $300.00 paid, and the Sentry issue DRBARTENDER-SERVER-1E
       (invoice_link_overflow_capped) goes quiet. Separately, on the LIVE-upgraded proposal
       from the real checkout above (its event more than 14 days out; the Cancel button
@@ -305,7 +305,7 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       log recorded only a `viewed`. Both halves proven without spending anything.
       Bonus: the prior $300 intent was CANCELED one second before the $450 one was minted,
       so the stale-election replacement path works rather than stacking duplicates.
-- [x] **Admin gratuity mandate — PASSED 2026-08-12 on Lauren Karcz (719).** Dallas removed
+- [x] **Admin gratuity mandate — PASSED 2026-08-12 on proposal 719.** Dallas removed
       a hand-rolled $100 surcharge line and ticked "Require prepaid gratuity" instead. The
       mandate reproduced his manual figure exactly: snapshot reads
       `rate 50 / hours 2 / staff_count 1 / total 100 / tip_jar true / floor_rate 50`, the
@@ -331,8 +331,8 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       pending. Reopen → Process closed both immediately. Worth knowing as an ops move: a
       period stranded in `processing` with nothing pending is closed by Reopen then Process,
       not by SQL.
-- [x] **Service extension, in-app pass — PASSED 2026-08-13/14 on dev** (fixture: Sean
-      Parent, Aug 30, 5h -> 6h, end 10 -> 11 PM, settled via the real `settleExtension()`
+- [x] **Service extension, in-app pass — PASSED 2026-08-13/14 on dev** (fixture: a dev
+      client, Aug 30, 5h -> 6h, end 10 -> 11 PM, settled via the real `settleExtension()`
       then finalized by the heal sweep — which had also never run and verified itself in
       the process; see git history of this entry for the full fixture story).
       All six surfaces read the extension correctly: staff event details (walk, 8/13),
@@ -550,8 +550,8 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       admin-only right-rail card. This entry's own warning, that the unmatched-payout alarm
       would need a new surface if the tab went away, was answered in the same lane: the alarm
       rides a badge on the Band 2 Payouts button.
-- [x] **Global search palette — PASSED 2026-08-13.** Staff search groups correctly (`Teah`
-      under Staff), client search resolves the record plus its proposal (`Lauren Karcz` ->
+- [x] **Global search palette — PASSED 2026-08-13.** Staff search groups correctly (a staffer
+      under Staff), client search resolves the record plus its proposal (the client's name ->
       proposal 719), and the empty-state Jump to list is complete. Note the shortcut is
       **Ctrl+K on Linux** — `AdminLayout.js:110` accepts `metaKey || ctrlKey`, so Cmd+K is
       Mac-only.
@@ -658,8 +658,8 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       mechanical render check, not a human walk.** Open a spec at the bar and confirm real
       ingredients render, not `[object Object]`.
 - [ ] **First-name greetings: REASSIGNED to the automated lane 2026-08-14 (routing rule 1),
-      mechanical render check, not a human walk.** Confirm a normal client gets "Hi Monica,"
-      and a couple gets "Hi Aubrey & Dominic,". The couples case was fixed at the push gate
+      mechanical render check, not a human walk.** Confirm a normal client gets "Hi <first name>,"
+      and a couple gets "Hi <first> & <first>,". The couples case was fixed at the push gate
       and has unit coverage, but no rendered email has been read by a human.
 - [~] **Tip sign wake lock: LEG A PASSED, LEG B STILL OWED.** Named in the ordered list
       above since 2026-08-14 with no checkbox anywhere in the tiers, so it was invisible to
@@ -887,7 +887,7 @@ which is the largest client-facing change in the drop and is listed first becaus
       (`c4bb2d1f`) through `sh-g-fidelity` (`c2b05d8d`), plus `4dbe9c5b`, `ba9ea23b`,
       `b97c7490` and `c0dcd5b7`. Benchmark artifact
       `docs/design-artifacts/2026-08-19-staff-hub.dc.html`, design project
-      `96291c7a-3510-4910-9c67-c41d81504920`.
+      (token on its admin page).
       **NOT "never opened" — correct that before you start.** `staff_reviews` holds TWO
       rows, and row 2 is `source='google'`, `created_by=1` (Dallas), stamped 2026-08-20
       16:17Z, about thirty minutes after the push. A `google` row can only be written by
@@ -1373,14 +1373,14 @@ which is the largest client-facing change in the drop and is listed first becaus
       label is unobservable in both environments as they stand. Seeing it requires setting
       equipment on a dev fixture shift first; there is no "just go look" path.
 - [x] **Bar-required transport ack + card: PASSED 2026-08-21 (Zul), on dev. All three checks.**
-      (1) **Equipment card names the bar.** Shift 14 (Sean Parent) leads with "Portable bar —
+      (1) **Equipment card names the bar.** Shift 14 leads with "Portable bar —
       DRB bar pickup at the Pilsen storage unit, or bring your own". Worth stating why that is
       the strong result: shift 14's `equipment_required` is literally `[]`, so the card can
       ONLY be driven by the DERIVED `bar_required` (`barRequiredSql`, `shifts.queries.js:31`:
       `num_bars > 0 AND (per_guest OR paid bar_rental)`). Nothing in the stored equipment list
       could have produced it.
       (2) **The transport ack gates correctly, proven as a PAIR rather than a single case.**
-      POSITIVE, shift 4302 (James Stewart, Aug 22): `equipment_required` `[]`,
+      POSITIVE, shift 4302 (Aug 22): `equipment_required` `[]`,
       `supply_run_required` false, so the BAR IS THE ONLY REASON transport is required. The
       ack appeared. CONTROL, shift 10824 (Sep 4): no bar, no equipment, no supply run. **No
       ack appeared.** So the gate fires when it should and stays quiet when it should not, and
@@ -1394,12 +1394,12 @@ which is the largest client-facing change in the drop and is listed first becaus
       other shifts the script implies (4, 12, 19) are PAST events, so they are absent from the
       open feed entirely — the feed is upcoming-only, and on dev it holds 9 future open shifts
       of which 8 are available to Marcus.
-      **USE THESE INSTEAD, both future, both un-requested:** 4302 (James Stewart, bar-only,
+      **USE THESE INSTEAD, both future, both un-requested:** 4302 (bar-only,
       the clean positive) and 10824 (the control). For the HOSTED branch of the rule rather
-      than the paid-rental branch, 4306 (Madelyn Brandt) or 4307 (Julia Neave) are `per_guest`
+      than the paid-rental branch, 4306 or 4307 are `per_guest`
       AND carry a supply run, so their transport line should list multiple reasons with the
       bar first.
-      **HOSTED ACKNOWLEDGMENT ALSO WALKED 2026-08-21 (Zul), shift 4306 (Madelyn Brandt), and
+      **HOSTED ACKNOWLEDGMENT ALSO WALKED 2026-08-21 (Zul), shift 4306, and
       it PASSES including the client/server agreement.** A hosted shift raises TWO INDEPENDENT
       acks, not one: the transport ack (gated on `transportRequired`) and the hosted ack
       ("I understand what a hosted event requires and I am ready for the supply work", gated
@@ -1419,9 +1419,9 @@ which is the largest client-facing change in the drop and is listed first becaus
       hosted-with-zero-rental open shift to separate them. Needs a seeded fixture.
       **FIXTURE NOTE, so this walk does not poison the next one exactly as 13/14/15 did:**
       that submit left marcus.j holding a PENDING request on 4306, so **4306 is no longer a
-      fresh test shift.** 4307 (Julia Neave) is the remaining un-requested hosted one.
+      fresh test shift.** 4307 is the remaining un-requested hosted one.
       Original entry follows. **(built 2026-08-13, unseen).** On dev
-      (`staff.localhost:3000`, marcus.j): open shift 14 (Sean Parent) — the Equipment card
+      (`staff.localhost:3000`, marcus.j): open shift 14 — the Equipment card
       must lead with "Portable bar — DRB bar pickup at the Pilsen storage unit, or bring
       your own", and hitting Request on any bar-carrying open shift must demand the
       transport acknowledgment naming the bar. Also read the corrected cooler copy (brought
@@ -1451,11 +1451,11 @@ which is the largest client-facing change in the drop and is listed first becaus
       `41d3206c` is the push-gate fix inside the lane, not the lane; the merge is `d945656a`,
       and it deliberately deleted the old `!inOptionGroup` gate so the panel now appears on
       grouped proposals too.
-      WALK IT ON **proposal 733** (Julia Gutnik, token `eb616114-6e11-4b0e-b35f-d77f9d45ddff`,
+      WALK IT ON **proposal 733** (token on its admin proposal page,
       $1,250.00, 50 guests / 5 hours, event Sep 5). Already status `viewed`, so opening it
       flips no status; it does bump `view_count` and `last_viewed_at` and log a `viewed` row
       with the viewer's IP. Zero-footprint alternative if that matters: proposal 482, DRB's
-      own Test Client, token `cc6c3ab6-2eb8-41a9-9a69-65b983707c0f` — but it is past-dated so
+      own Test Client, token on its admin proposal page — but it is past-dated so
       it shows pay-in-full copy, which is expected noise, not a panel bug.
       PASS, five things: the strip opens and prices 11 options across exactly TWO lanes
       (hosted 10 + BYOB 1; "Also available" correctly never appears); the BYOB card reads
@@ -1720,10 +1720,10 @@ now reads as the live check it is.
       "no logo" on all seven events too. The files were never lost and the seven rows are already
       backfilled, so the data half was already live; **as of the 2026-08-26 push the code half is too, and the whole thing needs looking at.**
       **The walk is two surfaces, because the backfill fixed the rows but nobody has seen either
-      one render.** On the admin event-detail page for proposal 718 (Tyler Anderson), confirm the
+      one render.** On the admin event-detail page for proposal 718, confirm the
       logo displays and "Download original" saves a real PNG. Then open the same event in the staff
       portal and confirm the BEO now shows the logo rather than claiming there is none. Spot-check a
-      second one, ideally plan 91 (Khaitan) since it is the only JPG in the set and the only row
+      second one, ideally plan 91 since it is the only JPG in the set and the only row
       still in draft.
       **Then, after the push, upload a NEW logo and save the plan again** — that is the half the
       backfill cannot prove, and it is the half that was actually broken.
@@ -2512,7 +2512,7 @@ to rot. Do that again for the next thing that sits here.
       proven in production without a walk: `sms_messages` holds **34** `drink_plan_nudge_sms`
       rows, latest 2026-08-12. Nothing owed there.
       All that is genuinely unwalked is the submit-side EMAIL on dev, a 3-minute check:
-      submit at `/plan/600924a5-a608-485e-a530-90546242fdd9` (dev plan 445, proposal 9813)
+      submit at `/plan/(token on its admin page) (dev plan 445, proposal 9813)
       and confirm exactly one `[DEV] Email skipped (notifications gated off)` line and zero
       SMS lines. SAFETY: dev fixtures carry REAL client addresses, and the only thing
       stopping a real send is `notificationsEnabled()`. Confirmed 2026-08-14 that `.env` has

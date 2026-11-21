@@ -10,7 +10,7 @@
 
 ### Problem (diagnosed, confirmed in prod)
 - Portal Next-Up "Pay balance" CTA links to `/proposal/:token`; for a booked proposal, `ProposalView`'s paid-state card shows the balance due but has **no pay control** — its only action is "Open the Potion Planner →" (`ProposalView.js:615`). The actual pay surface is the balance invoice (`/invoice/:token`), reachable only via the Receipts tab or the invoice email. Clients following visible CTAs get funneled into the planner (Angelena Davis, proposal 522, paid balance 7/12 only after finding the invoice).
-- Portal focus picker ignores status: `ORDER BY event_date, event_start_time, created_at DESC` lets a newer draft shadow a booked proposal for the same date/time (`clientPortal.js` focus queries). Live instance: Allyson Gietl's portal focuses proposal 626 (`viewed`) instead of her booked one.
+- Portal focus picker ignores status: `ORDER BY event_date, event_start_time, created_at DESC` lets a newer draft shadow a booked proposal for the same date/time (`clientPortal.js` focus queries). Live instance: one client's portal focuses proposal 626 (`viewed`) instead of her booked one.
 - Duplicate Thumbtack lead created stray draft #528 + email-less duplicate client record 1461 for Angelena (data cleanup, not code).
 
 ### Design (approved: "route them to the right spot")

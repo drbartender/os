@@ -24,7 +24,7 @@ The client does this to themselves. No admin action is involved.
   $4,000.00, Remaining Balance $3,900.00". A balance invoice created at that moment
   would have overbilled him by $627. Corrected by hand in prod; invoice INV-0193 minted
   and locked.
-- **Shiralee Mack Perkins (527), 2026-06-24.** Same path. Override $350 re-priced to
+- **Proposal 527, 2026-06-24.** Same path. Override $350 re-priced to
   $450. She paid $450. Refunded $80 by hand on 2026-07-15 (`refund_issued`, reason
   "Bar and Syrup") to land at $370, which is her $350 override plus the $20 parking
   add-on. The rule this spec implements reproduces that number exactly.
@@ -33,8 +33,8 @@ The client does this to themselves. No admin action is involved.
 
 Every proposal with a `total_price_override` and a live drink plan. That is the 12
 remaining CC-transferred events plus any native proposal Dallas custom-prices. Exposure
-runs both directions: Madelyn (+$277) and Emiline (+$50) would be overbilled; Julia
-(-$350), Cecilia (-$320), Cody (-$280), Shazana (-$160), Eliana (-$150) and Amy (-$100)
+runs both directions: two clients (+$277 and +$50) would be overbilled; six clients
+(-$350, -$320, -$280, -$160, -$150 and -$100)
 would be underbilled, because their contracts sit above catalog.
 
 ## The trap: the obvious fix is wrong
@@ -129,8 +129,8 @@ total stays internally consistent.
 
 ## Part 2: CC balance-invoice operator script
 
-Roughly ten CC balance invoices remain (Cody, Eliana, Emiline, Jayme, James, Emily,
-Shazana, Madelyn, Julia, Cecilia) before Check Cherry is cancelled on 2026-07-21. Each
+Roughly ten CC balance invoices remain (one each for ten CC
+clients) before Check Cherry is cancelled on 2026-07-21. Each
 needs the shape INV-0193 ended up with, because the generator cannot produce it:
 
 - label `Balance` (a real `CONTRACT_LABELS` member, so refunds classify correctly and do

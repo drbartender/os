@@ -30,7 +30,7 @@ For the **drink-plan-reachable** add-on set, the pay-now **charge**, the "Drink 
 
 - No change to syrup or bar-rental pricing (already correct).
 - No change to `calculateProposal` / `calculateAddonCost` — the engine is the source of truth, not the thing changed.
-- No schema change, no data migration. Historical flat-priced extras invoices stay as-is; the one live abandoned case (Shiralee, 527) is syrup-only and unaffected.
+- No schema change, no data migration. Historical flat-priced extras invoices stay as-is; the one live abandoned case (proposal 527) is syrup-only and unaffected.
 - The `additional-bartender` + client-gratuity interaction (Warning below) is **out of scope** because staffing add-ons are not drink-plan-selectable.
 
 ## Design — reuse the engine via a with-vs-without delta, on a TARGETED path

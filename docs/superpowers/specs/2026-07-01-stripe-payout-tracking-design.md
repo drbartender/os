@@ -28,7 +28,7 @@ report, never wrong money.
   balance transactions with `payout=po_...` returns the payout's own negative
   `type=payout` row plus one row per constituent transaction, each carrying signed
   amount/fee/net (integer cents), `available_on`, `reporting_category`, a
-  human-readable description ("INV-0091 — Allyson Gietl"), and a source charge whose
+  human-readable description ("INV-0091 — <client name>"), and a source charge whose
   `payment_intent` is expandable.
 - Estimated dates come straight from Stripe fields: `payout.arrival_date` for created
   payouts, `balance_transaction.available_on` for pending funds. No heuristic.

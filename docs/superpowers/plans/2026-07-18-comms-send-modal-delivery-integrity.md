@@ -122,10 +122,10 @@ lanes:
 
 ## L0: Prod data repair (ops, approval-gated)
 
-- [ ] R1. Cathy: `UPDATE clients SET email='cmurphy@arthrex-chicago.com' WHERE id=1436 AND email='cmurphy@arthrex-chicago.conm'`; same-guard update on plan 76 `drink_plans.client_email`. Verify before/after. #1427 stays dormant for manual archive.
-- [ ] R2. Re-send Cathy's shopping list (Dallas picks timing; event 7/25).
-- [ ] R3. Siddhant plan 91: Dallas confirms content, re-approve before 7/23. Do NOT wait for the snapshot lane.
-- [ ] R4. Stale-email backfill, future events only, SELECT-first (expected: 86 Brandon, 57 Aaran). (A per-client carve-out that used to sit here was retired 2026-08-06 and is gone: there are no named-client exceptions, and the future-events-only filter is the whole scope.)
+- [ ] R1. Typo-domain client: `UPDATE clients SET email='<real .com address>' WHERE id=1436 AND email='<same address at .conm>'`; same-guard update on plan 76 `drink_plans.client_email`. Verify before/after. #1427 stays dormant for manual archive.
+- [ ] R2. Re-send the typo-domain client's shopping list (Dallas picks timing; event 7/25).
+- [ ] R3. Plan 91: Dallas confirms content, re-approve before 7/23. Do NOT wait for the snapshot lane.
+- [ ] R4. Stale-email backfill, future events only, SELECT-first (expected: plans 86 and 57, the two stale-relay plans). (A per-client carve-out that used to sit here was retired 2026-08-06 and is gone: there are no named-client exceptions, and the future-events-only filter is the whole scope.)
 - [ ] R5. Dallas manual: register Resend webhook (sent/delivered/bounced/complained) + set `RESEND_WEBHOOK_SECRET` in Render. Precondition for bounce-pipeline VERIFICATION only.
 
 ## Lane comms-registry
@@ -183,7 +183,7 @@ lanes:
 
 ## Verification (whole project)
 
-- [ ] V1. Brandon replay on dev: stale plan email + changed client email; modal shows live gmail + mismatch warning; send ledgers with sent_by; simulated dispatch failure shows red channel + Retry; Retry does not re-flip status.
-- [ ] V2. Cathy replay: `.conm` warned at preview and at capture entry; dup-client warning offers the existing record; simulated bounce flips ledger red, raises needs-attention, alert email arrives, re-send clears the item.
+- [ ] V1. Stale stored address replay on dev: stale plan email + changed client email; modal shows live gmail + mismatch warning; send ledgers with sent_by; simulated dispatch failure shows red channel + Retry; Retry does not re-flip status.
+- [ ] V2. Typo-domain replay: `.conm` warned at preview and at capture entry; dup-client warning offers the existing record; simulated bounce flips ledger red, raises needs-attention, alert email arrives, re-send clears the item.
 - [ ] V3. Revert replay: approve, edit, client link still serves approved content; re-approve swaps it.
 - [ ] V4. Push gate per house rules: push-time sweep + sensitive-path full fleet + /second-opinion (comms, webhook, schema, invoice flip are sensitive) + money-smoke gate.

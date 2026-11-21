@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. This is a copy-only, behavior-inert change — no unit tests, verify with a client build + eyeball.
 
-**Goal:** When a proposal forces full payment (event ≤14 days out), the page and the proposal SMS make clear this is the **complete, final cost** — no separate deposit, no later balance — so a client (especially a Thumbtack lead arriving with a "deposit to book" mental model) can't read their full payment as a deposit. This is the copy gap behind Jim Strachan's "it said deposit only."
+**Goal:** When a proposal forces full payment (event ≤14 days out), the page and the proposal SMS make clear this is the **complete, final cost** — no separate deposit, no later balance — so a client (especially a Thumbtack lead arriving with a "deposit to book" mental model) can't read their full payment as a deposit. This is the copy gap behind one client's "it said deposit only."
 
 **Architecture:** Three string edits — the full-payment notice and a new caption on the proposal page, plus a less deposit-priming initial-proposal SMS. No logic changes.
 

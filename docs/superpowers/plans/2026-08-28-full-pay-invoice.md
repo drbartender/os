@@ -1702,7 +1702,7 @@ Inside the Tier 1 entry, after the paragraph beginning `**Added 2026-08-28 (lane
       **Added 2026-08-28 (lane full-pay-invoice):** after the real full payment, the
       portal Receipts tab must show ONE invoice, "Full Payment", at the with-tip amount,
       paid. Not "Deposit $100 paid". Then the backfill (its own runbook in the plan): after
-      --apply, Mike Boswell's INV-0336 reads Full Payment $550.00 paid, Karen Habenicht's
+      --apply, one client's INV-0336 reads Full Payment $550.00 paid, another's
       INV-0329 reads Full Payment $300.00 paid, and the Sentry issue DRBARTENDER-SERVER-1E
       (invoice_link_overflow_capped) goes quiet.
 ```

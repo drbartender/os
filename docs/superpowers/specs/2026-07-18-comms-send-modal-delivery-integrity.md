@@ -6,7 +6,7 @@
 
 ## 1. Why (incident summary, verified)
 
-Brandon Martin's wedding (7/18) shopping list never reached him. Verified chain, from prod data + Sentry traces:
+A client's wedding (7/18) shopping list never reached him. Verified chain, from prod data + Sentry traces:
 
 1. Approve clicked 7/16 18:29 UTC. Route ran on prod (Sentry-sampled PATCH trace), status flipped, email **was sent** (`POST https://api.resend.com/emails` span present) to `drink_plans.client_email`, a stale Apple relay address frozen at plan creation (6/29). His real email changed to gmail ~7/1 on the client record; nothing syncs plan rows.
 2. `logClientMessage` silently skipped the ledger row: `messageLog.js:69` returns when the recipient matches no client, and the same staleness that killed delivery also killed the lookup. No log row, no error.
@@ -17,10 +17,10 @@ Stale-snapshot senders (verified by fleet): the shopping-list approve email AND 
 
 Same class, other clients (verified in prod):
 
-- **Cathy Murphy** (event 7/25): duplicate client records #1427 (`cmurphy@arthrex-chicago.com`, real) and #1436 (`...conm`, typo, nonexistent TLD). Booking hangs off the typo record. All 4 shopping-list sends plus every email since 7/4 went to `.conm`, all marked "sent."
-- **Siddhant Khaitan** (event 7/23): 5 shopping-list emails delivered, but post-approve edits reverted the list to `pending_review`; every link in his inbox shows the pending screen.
-- **Aaran Varatharajan** (6/6, historical): same stale-relay signature as Brandon.
-- Plans approved with no email on file (Tabitha Lopez, Michael Sawula): silent no-send behind an "Approved & Sent" button.
+- **The typo-domain client** (event 7/25): duplicate client records #1427 (the `.com` address, real) and #1436 (`...conm`, typo, nonexistent TLD). Booking hangs off the typo record. All 4 shopping-list sends plus every email since 7/4 went to `.conm`, all marked "sent."
+- **The approved-then-edited client** (event 7/23): 5 shopping-list emails delivered, but post-approve edits reverted the list to `pending_review`; every link in his inbox shows the pending screen.
+- **An earlier client** (6/6, historical): same stale-relay signature as the 7/18 wedding.
+- Plans approved with no email on file (two clients): silent no-send behind an "Approved & Sent" button.
 
 Five holes: (1) bounce blindness, (2) no capture-time address validation or dup detection, (3) stale `drink_plans.client_email` snapshots (approve email + consult recap), (4) the approved-then-edited revert trap, (5) sends that silently skip or fail while the UI claims success.
 
@@ -38,7 +38,7 @@ Five holes: (1) bounce blindness, (2) no capture-time address validation or dup 
 - Scheduler-driven sends keep firing automatically, no compose step. (Fleet verified they already resolve recipients live; no scheduler changes needed beyond the consult recap, which is a converted action anyway.)
 - Staff SMS blast (`Messages.js`) and marketing campaigns keep their existing compose UIs.
 - No raw HTML editing. Prose only; brand shell and action links stay fixed. Edited `bodyText` is HTML-escaped at render (via the existing `esc`), so markup cannot be injected.
-- No client-record merge tooling. Cathy's dup is repaired by hand (L0). Note: after R1 both #1427 and #1436 hold the same `.com` address, making `logClientMessage`'s `LOWER(email) LIMIT 1` lookup nondeterministic between them; tolerable because the registry resolves via the proposal join, and #1427 is slated for manual archive.
+- No client-record merge tooling. The typo-domain client's dup is repaired by hand (L0). Note: after R1 both #1427 and #1436 hold the same `.com` address, making `logClientMessage`'s `LOWER(email) LIMIT 1` lookup nondeterministic between them; tolerable because the registry resolves via the proposal join, and #1427 is slated for manual archive.
 - No sms_messages/thread integration change: registry SMS uses the exact send+log path each converted route uses today (`sendSMS` + `message_log`). Two-way thread ledger (`sms_messages`) is untouched.
 - Edited message bodies are not stored in the ledger (PII/bloat); the ledger records that the body was edited (`body_edited`) and by whom (`sent_by`).
 
@@ -150,9 +150,9 @@ Thumbtack create-proposal page (and admin client-create form): on email blur, ru
 ## 5. Data repair (L0, prod, each step individually approved before running)
 
 1. Client #1436 email `.conm` to `.com`; same fix on `drink_plans` 76. #1427 stays dormant for manual archive (see 3, nondeterminism note).
-2. Re-send Cathy's shopping list (after 1).
-3. Siddhant plan 91: re-approve once Dallas confirms content, before 7/23.
-4. Backfill stale `drink_plans.client_email` from the live client record, future events only (expected: plan 86 Brandon, plan 57 Aaran; sweep for others). (A per-client carve-out written here was retired 2026-08-06; there are no named-client exceptions.)
+2. Re-send the typo-domain client's shopping list (after 1).
+3. Plan 91: re-approve once Dallas confirms content, before 7/23.
+4. Backfill stale `drink_plans.client_email` from the live client record, future events only (expected: plans 86 and 57, the two stale-relay plans; sweep for others). (A per-client carve-out written here was retired 2026-08-06; there are no named-client exceptions.)
 5. Dallas manual: Resend webhook registration + `RESEND_WEBHOOK_SECRET` in Render.
 
 ## 6. Out-of-band notes

@@ -55,7 +55,7 @@ The condition is the invariant itself: the balance due exceeds the total still p
 
 - **`status IN ('confirmed','deposit_paid')`**: post-booking only. Quote-stage proposals pay through sign-and-pay; `archived`, `balance_paid`, and `completed` are out of scope (the seven known clientless `completed` orphans are excluded by this filter, and the `JOIN clients` keeps any future clientless row out as well).
 - **COALESCE on the money columns**: `total_price` and `amount_paid` are nullable, and a NULL would otherwise make the row silently invisible.
-- **Covered, not merely invoiced.** This catches every shape the incident produced or nearly produced: never invoiced (the CC transfers), only-voided Balance (the archive-then-recover shape, since `cancel.js` voids zero-paid invoices), a zero-due open invoice (payable sum contributes 0), and the split shape (Emilene: $200 balance with only a $60 extras invoice open, so 200 > 60 alerts). It stays quiet when an open invoice genuinely carries the balance regardless of label (Iga's `Gratuity Balance`, Brandon's `Additional Services`), which the rev-3 design would have escalated daily.
+- **Covered, not merely invoiced.** This catches every shape the incident produced or nearly produced: never invoiced (the CC transfers), only-voided Balance (the archive-then-recover shape, since `cancel.js` voids zero-paid invoices), a zero-due open invoice (payable sum contributes 0), and the split shape (one CC client: $200 balance with only a $60 extras invoice open, so 200 > 60 alerts). It stays quiet when an open invoice genuinely carries the balance regardless of label (a client's `Gratuity Balance`, prop 557's `Additional Services`), which the rev-3 design would have escalated daily.
 - **Known false negative, accepted:** an extras-fold tangle where an open non-contract invoice's remainder happens to cover the shortfall can mask a real gap. Classifying that correctly is the rev-3 guard machinery; for an alarm it is not worth the complexity.
 
 ### Escalation
@@ -93,7 +93,7 @@ Read-only detection needs no locks and no transaction beyond the two-statement e
 
 ## Blast radius
 
-Verified against the prod branch on 2026-07-21: the detection query returns **zero rows** today (all eight CC clients have covering Balance invoices; native events are covered by the webhook; Iga and Brandon are covered by their bespoke-label invoices and correctly stay quiet). First prod run alerting nothing is the deployment gate.
+Verified against the prod branch on 2026-07-21: the detection query returns **zero rows** today (all eight CC clients have covering Balance invoices; native events are covered by the webhook; the gratuity-balance client and prop 557 are covered by their bespoke-label invoices and correctly stay quiet). First prod run alerting nothing is the deployment gate.
 
 ## Testing
 

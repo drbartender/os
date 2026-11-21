@@ -5,7 +5,7 @@ Status: Approved (Dallas)
 
 ## Problem
 
-Two-way client SMS is currently only reachable from the standalone inbox at `/messages`. When you are looking at a specific client (say Cathy Murphy) on her detail page, you cannot read or answer her texts without leaving for the inbox and re-finding her thread.
+Two-way client SMS is currently only reachable from the standalone inbox at `/messages`. When you are looking at a specific client on her detail page, you cannot read or answer her texts without leaving for the inbox and re-finding her thread.
 
 Separately, the inbox conversation list sorts by last activity (the max `created_at` across both directions). Sending a reply bumps a thread you just handled to the top, while a client who is actually waiting on you sits lower. The list should surface who is waiting, not what you last touched.
 

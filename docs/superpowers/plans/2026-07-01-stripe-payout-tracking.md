@@ -70,8 +70,8 @@ lanes:
   "pending": [
     { "id": 7, "stripe_balance_txn_id": "txn_...", "amount_cents": 45000,
       "fee_cents": 1335, "net_cents": 43665, "available_on": "2026-07-03T00:00:00.000Z",
-      "description": "INV-0091 — Allyson Gietl", "matched_kind": "payment",
-      "proposal_id": 321, "client_name": "Allyson Gietl", "event_type": "wedding",
+      "description": "INV-0091 — <client name>", "matched_kind": "payment",
+      "proposal_id": 321, "client_name": "<client name>", "event_type": "wedding",
       "event_type_custom": null, "invoice_id": 91, "invoice_number": "INV-0091",
       "invoice_token": "uuid", "staff_name": null }
   ],

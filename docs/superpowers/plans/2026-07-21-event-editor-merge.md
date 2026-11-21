@@ -816,7 +816,7 @@ Runs with the old editors still on disk: if any step fails, diff the new form's 
 
 **Files:** none (verification only).
 
-- [ ] **Step 1: Event-mount full edit.** On the local admin, open a booked event (e.g. `/events/9818`, Julia Neave, confirmed, $2,425). Click Edit. Verify all sections render: Client, Event, Package, Add-ons, Gratuity, Total override, Live preview, staff-notify toggles. Change guest count 100 to 120. Verify the live preview total moves.
+- [ ] **Step 1: Event-mount full edit.** On the local admin, open a booked event (e.g. `/events/9818`, confirmed, $2,425). Click Edit. Verify all sections render: Client, Event, Package, Add-ons, Gratuity, Total override, Live preview, staff-notify toggles. Change guest count 100 to 120. Verify the live preview total moves.
 
 - [ ] **Step 2: Reprice modal correctness.** Click Save changes. Modal must show old total $2,425.00, the new preview total, signed delta, paid $100.00, new balance, and (increase while confirmed) the Additional Services invoice line + the rebuild line, with NO demotion line. Cancel: form state intact. Save and reprice: toast, page reloads, new total visible, linked shift still in sync (check the Staffing card date/time).
 

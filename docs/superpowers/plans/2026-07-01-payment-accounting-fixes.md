@@ -345,11 +345,11 @@ assert.equal(Number(log.rows[0].amt), 6000);
 
 **Files:** Create `scripts/backfill-extras-invoices.js`.
 
-- [ ] **Step 1: Implement** — for a proposal id passed as an argument (Shiralee, 527): read the abandoned `requires_payment_method` extras PaymentIntent via `stripeClient`; guard with `findExtrasInvoice` (skip if a non-void one already exists), else `createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents: pi.amount }, pool)` using the PI `amount` as the authoritative figure; then cancel the stale PI(s). Idempotent. `--dry-run` flag prints intended actions without writing.
+- [ ] **Step 1: Implement** — for a proposal id passed as an argument (proposal 527): read the abandoned `requires_payment_method` extras PaymentIntent via `stripeClient`; guard with `findExtrasInvoice` (skip if a non-void one already exists), else `createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents: pi.amount }, pool)` using the PI `amount` as the authoritative figure; then cancel the stale PI(s). Idempotent. `--dry-run` flag prints intended actions without writing.
 - [ ] **Step 2: Dry-run against dev** — verify the intended invoice + PI cancel with no writes.
 - [ ] **Step 3: Commit** — `git commit -m "chore(potion): one-time backfill script for abandoned pay-now extras"`
 
-Post-deploy: run once for 527. Anna (owner-handled) and Julia (past event) are manual.
+Post-deploy: run once for 527. The owner-handled one and the past event are manual.
 
 ---
 

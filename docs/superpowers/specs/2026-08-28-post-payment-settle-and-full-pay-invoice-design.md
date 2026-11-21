@@ -3,7 +3,7 @@
 **Date:** 2026-08-28
 **Status:** Approved (conversational, section-by-section). Revised 2026-08-28 after the design-stage fleet (six Claude reviewers) and the code-stage fleet on the shipped fix; every confirmed finding is folded in below and marked "(rev)".
 **Base:** main @ ac056a8e
-**Prompted by:** Mike Boswell (proposal 774): paid $550 in full with a $200 gratuity, and the page that came back told him he had paid $100 and owed $250 by the next day.
+**Prompted by:** the client on proposal 774, who paid $550 in full with a $200 gratuity, and the page that came back told him he had paid $100 and owed $250 by the next day.
 
 ## 1. Context and problem
 
@@ -23,23 +23,23 @@ After `stripe.confirmPayment`, Stripe redirects the client to `/proposal/:token?
 
 The webhook committed at roughly 17:04:11.6. The page's SELECT ran at 17:04:11.17 and read the pre-commit row: status `accepted`, `amount_paid` 0, `total_price` 350, snapshot without the gratuity. The same ordering holds on every full-payment conversion checked (770, 767, 713, 675): the client's first view after paying falls between the webhook transaction start and the shift creation. The webhook transaction is long (payment insert, proposal update, gratuity apply, invoice create, link and lock, group and archive checks) and the page is fast. This is the normal ordering, not a fluke.
 
-`ProposalView.js` then combined that stale row with the URL flag. `isPaid` is `status in paid states OR paid`, so the paid card rendered; `isFullyPaid` read the stale row and said no; `balanceAmount` fell to the pre-payment formula `total - $100`. Mike saw:
+`ProposalView.js` then combined that stale row with the URL flag. `isPaid` is `status in paid states OR paid`, so the paid card rendered; `isFullyPaid` read the stale row and said no; `balanceAmount` fell to the pre-payment formula `total - $100`. The client saw:
 
 > Booking confirmed. Your remaining balance of $250.00 is due by Aug 29. [Pay balance]
 
 plus a Payment Terms box reading "Deposit Due at Signing $100 / Remaining Balance $250 / Balance Due By Aug 29," a price breakdown totalling $350 with no gratuity line, and a Pay balance button pointing at the $100 Deposit invoice. A reload shows "Fully paid." He loaded the page once.
 
-Why it hid for months: for a deposit payment the stale render is coincidentally correct (remaining = total minus $100, due date from the row). It is only wrong for full payers, and worst for full payers with a gratuity. Mike is the first to write in. The client on proposal 770 almost certainly saw it on 8/25.
+Why it hid for months: for a deposit payment the stale render is coincidentally correct (remaining = total minus $100, due date from the row). It is only wrong for full payers, and worst for full payers with a gratuity. He is the first to write in. The client on proposal 770 almost certainly saw it on 8/25.
 
 A second hole in the same code: Stripe appends `redirect_status` to the return URL. A failed 3DS redirect lands on `?paid=true` with `redirect_status=failed`, and today's page shows "Booking confirmed" on a payment that did not happen.
 
-(rev) A third hazard on the same page: every call it makes (`GET /t/:token/resolve`, `GET /t/:token`, `POST /stripe/create-intent/:token`) draws on `publicLimiter`, 20 requests per 15 minutes keyed by IP (`server/middleware/rateLimiters.js`). A page load spends three; every payment-option, autopay or gratuity change spends one; a failed sign's recovery spends two. Mike's six attempts on the 28th spent roughly eighteen. The repo has already moved four other public surfaces off this bucket for the same reason and documents the rule at `optionsQuoteLimiter`: browsing must never be able to spend the budget that paying depends on.
+(rev) A third hazard on the same page: every call it makes (`GET /t/:token/resolve`, `GET /t/:token`, `POST /stripe/create-intent/:token`) draws on `publicLimiter`, 20 requests per 15 minutes keyed by IP (`server/middleware/rateLimiters.js`). A page load spends three; every payment-option, autopay or gratuity change spends one; a failed sign's recovery spends two. His six attempts on the 28th spent roughly eighteen. The repo has already moved four other public surfaces off this bucket for the same reason and documents the rule at `optionsQuoteLimiter`: browsing must never be able to spend the budget that paying depends on.
 
 ### 1b. A full payment on a deposit-terms proposal strands the remainder off the invoice ledger
 
 `createInvoiceOnSend` mints the first invoice at send time from `proposals.payment_type`, whose column default is `deposit`. So a normal send gets a `Deposit` invoice at `deposit_amount`. When the client picks pay-in-full at checkout, `stripeCreateIntent.js` flips `payment_type` to `full` but nothing reshapes the invoice. The webhook credits the proposal correctly, then its label-blind fallback links the whole capture onto the only open invoice, and `linkPaymentToInvoice` caps the credit at remaining due and drops the rest into a Sentry warning (`invoice_link_overflow_capped`, DRBARTENDER-SERVER-1E, five events in 28 days, none acted on). `createBalanceInvoice` never mints a row for the remainder because it is gated on `paymentType === 'deposit'`.
 
-Result for Mike: one invoice, INV-0336 `Deposit`, $100 due, $100 paid, locked. `invoice_payments` row 87 records $100 of a $550 payment. The portal's Receipts tab shows "INV-0336 · Deposit · $100.00 · paid" and nothing else.
+Result for proposal 774: one invoice, INV-0336 `Deposit`, $100 due, $100 paid, locked. `invoice_payments` row 87 records $100 of a $550 payment. The portal's Receipts tab shows "INV-0336 · Deposit · $100.00 · paid" and nothing else.
 
 (rev) **Blast radius, by shape, verified read-only on prod 2026-08-28:** 25 proposals whose only contract invoice is a paid, locked Deposit linked to a succeeded payment larger than it: 442, 450, 451, 452, 472, 479, 484, 494, 502, 556, 573, 579, 623, 625, 633, 635, 659, 660, 666, 674, 675, 713, 767, 770, 774. One of them, 633 (Dora Travaglio), carries a refund and is held for a manual look. The other 24 total roughly $9,350 of collected money with no invoice behind it. The backlog entry's "13 since 2026-07-02, about $4,605" was date-floored; the shape is not. All 24 are `completed` except 767 and 774.
 
@@ -77,7 +77,7 @@ Read two URL params on mount: `paid` and `redirect_status`. Define, in one pure 
 
 `isPaid` becomes `PAID_STATES.includes(proposal.status)` only. The `|| paid` half is removed. The paid card can render only from row state.
 
-(rev) Three flags read the old URL half and all three are named here: `showSignAndPay` and `showPayOnly` both gain `&& !settling`, and the mobile "Complete Your Payment" CTA in the breakdown (which keys on those two) therefore hides too. Without this, a signed-but-unsettled row (`accepted`, which is exactly Mike's) would render the pay-only section beside the settling card, with no client secret, showing "Unable to load payment form."
+(rev) Three flags read the old URL half and all three are named here: `showSignAndPay` and `showPayOnly` both gain `&& !settling`, and the mobile "Complete Your Payment" CTA in the breakdown (which keys on those two) therefore hides too. Without this, a signed-but-unsettled row (`accepted`, which is exactly proposal 774's) would render the pay-only section beside the settling card, with no client secret, showing "Unable to load payment form."
 
 `PAID_STATES` is `['deposit_paid', 'balance_paid', 'confirmed', 'completed']`, the same set the existing `inPaidState` uses for `balanceAmount`. A `completed` booking is paid; its card says "Fully paid." with a past-tense line and no "closer to the date."
 
@@ -235,7 +235,7 @@ Idempotent: a re-run selects nothing, because the invoice is no longer labelled 
 Written before the code they cover.
 
 Lane 1:
-- `paidState.test.js`: Mike's pre-commit row returns `none`; `balance_paid` and `completed` return `full`; `deposit_paid` returns `deposit` with the remainder from `renderedTotal`; `readRedirect` on `paid=true`, `redirect_status=succeeded`, `=failed`, `=pending`, and no params.
+- `paidState.test.js`: proposal 774's pre-commit row returns `none`; `balance_paid` and `completed` return `full`; `deposit_paid` returns `deposit` with the remainder from `renderedTotal`; `readRedirect` on `paid=true`, `redirect_status=succeeded`, `=failed`, `=pending`, and no params.
 - `settlePoll.test.js`: settles on the first paid response; exhausts after 13 with 12 sleeps; a 5xx is a miss; a 4xx stops immediately with reason `blocked`; cancellation stops early.
 - (rev) `useSettle.test.js` via `renderHook`: a row already paid goes straight to `paid`; a row that settles on the third poll reaches `paid` and refetches once; an exhausted poll reaches `fallback`; and the hook survives its own state changes (the cancel-on-first-render defect, pinned).
 - `PaidCard.test.js`: settling and fallback render no `$` and no Pay balance; `completed` renders the past-tense line.

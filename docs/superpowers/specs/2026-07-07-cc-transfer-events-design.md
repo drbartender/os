@@ -20,7 +20,7 @@ conversationally 2026-07-07; Dallas answered the full quiz in-chat.
   "Collected in CheckCherry: $X" and the number is bookkept, not derived.
 - Balance math then self-corrects everywhere that computes
   `total_price - amount_paid` (verified: balanceReminderScheduling.js:77).
-  Paid-in-full transfers (Amy M.) have zero balance and never dun.
+  Paid-in-full transfers (one client) have zero balance and never dun.
 - `balance_due_date` = CC "Due On". Balances collect via normal DRB invoices
   (Dallas confirmed); the invoice amount derives from the same balance math.
 - New column `transferred_from_cc_id TEXT` (partial unique) marks transfers
@@ -84,7 +84,7 @@ rows). Package names match DRB exactly (verified against service_packages).
 ## Post-transfer operations (Dallas)
 
 Turn OFF CC client notifications once the 13 are live. If a payment still
-slides through CC before 7/21 (Sid due 7/9, Cody due 7/17), Dallas reports
+slides through CC before 7/21 (one due 7/9, another due 7/17), Dallas reports
 it and we bump that event's external_paid/amount_paid (small documented
 update path, no payment rows). Then CC cancellation.
 

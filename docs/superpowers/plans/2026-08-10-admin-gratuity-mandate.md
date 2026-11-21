@@ -1083,4 +1083,4 @@ The consumer suites (`crud.demotion`, `cancelLineItem`, `invoiceHelpers.gratuity
 
 1. Run the Task 1 DDL block on PROD (Neon `round-tooth-34649976` default branch) and verify the amended constraint definition (`pg_get_constraintdef` contains `gratuity_floor_rate`).
 2. Merge the lane (full review fleet), then push per the standard push model (fleet + `/second-opinion` on these sensitive commits).
-3. Post-deploy walk: set a $100 mandate on a scratch proposal, view the public page (line + total), verify checkout shows the stated copy and refuses a below-floor election on the jar-yes branch, flip the radio (floor unchanged), then clear the mandate. Then set the real mandate on Lauren Karcz's proposal 719 (unpaid, unsigned, 1 bartender x 2h: the $100 standard fill).
+3. Post-deploy walk: set a $100 mandate on a scratch proposal, view the public page (line + total), verify checkout shows the stated copy and refuses a below-floor election on the jar-yes branch, flip the radio (floor unchanged), then clear the mandate. Then set the real mandate on proposal 719 (unpaid, unsigned, 1 bartender x 2h: the $100 standard fill).

@@ -242,8 +242,8 @@ async function amountOf(id) {
 Then the eight behavior tests:
 
 ```js
-// Mechanism A: a paid deposit with NO Deposit invoice backing it (the David
-// Luebke shape). The old locked-invoice-sum proxy read $0 collected and
+// Mechanism A: a paid deposit with NO Deposit invoice backing it (the prop 51
+// shape). The old locked-invoice-sum proxy read $0 collected and
 // re-billed the full total.
 test('Balance derives from amount_paid when no locked invoice backs the payment', async () => {
   const f = await fixture({ total: 1100, paid: 100, invoices: [{ label: 'Balance', due: 110000 }] });
@@ -263,7 +263,7 @@ test('external_paid is not subtracted twice', async () => {
   } finally { await cleanup(f); }
 });
 
-// Mechanism B: the bespoke label the old code `continue`d past (Brandon Martin).
+// Mechanism B: the bespoke label the old code `continue`d past (the over-billed invoice on prop 557).
 test('a bespoke remainder label re-derives on a price decrease', async () => {
   const f = await fixture({ total: 420, paid: 350, invoices: [{ label: 'Additional Services', due: 15000 }] });
   try {
@@ -272,7 +272,7 @@ test('a bespoke remainder label re-derives on a price decrease', async () => {
   } finally { await cleanup(f); }
 });
 
-// Cathy Murphy: fully paid, stranded Additional Services invoice.
+// Prop 491: fully paid, stranded Additional Services invoice.
 test('a remainder invoice deriving to zero is voided, not left open at $0', async () => {
   const f = await fixture({ total: 1192.5, paid: 1192.5, invoices: [{ label: 'Additional Services', due: 18500 }] });
   try {
@@ -298,7 +298,7 @@ test('an open Deposit is capped when it exceeds what is still owed', async () =>
   } finally { await cleanup(f); }
 });
 
-// Eve Thornton. The extras invoice is capped, never raised.
+// Prop 556. The extras invoice is capped, never raised.
 test('Drink Plan Extras is capped at owed and a sharing remainder gets the rest', async () => {
   const f = await fixture({
     total: 500, paid: 100,
@@ -623,10 +623,10 @@ Do NOT run this against prod from inside the lane. It runs after the lane merges
 
 | Prop | Invoice | Before | After |
 |---|---|---|---|
-| 51 David Luebke | INV-0016 | $1,000 (hand-corrected 7/28) | $1,000, unchanged |
-| 557 Brandon Martin | INV-0199 | $150 | $70 |
-| 491 Cathy Murphy | INV-0216 | $185 | voided |
-| 556 Eve Thornton | INV-0168 | $155 | voided |
+| 51 | INV-0016 | $1,000 (hand-corrected 7/28) | $1,000, unchanged |
+| 557 | INV-0199 | $150 | $70 |
+| 491 | INV-0216 | $185 | voided |
+| 556 | INV-0168 | $155 | voided |
 
 No client email on any of these.
 
@@ -653,11 +653,11 @@ Read `docs/superpowers/specs/2026-07-21-balance-invoice-reconciler-design.md` fi
 
 ```js
 // OVER direction, one per live shape from the incident.
-test('alerts when a bespoke invoice exceeds what is owed (Brandon shape)', ...)
+test('alerts when a bespoke invoice exceeds what is owed (over-billed invoice shape)', ...)
   // total 420, paid 350, open 'Additional Services' $150 → payable 15000 > owed 7000
-test('alerts when an invoice is open against a fully paid proposal (Cathy shape)', ...)
+test('alerts when an invoice is open against a fully paid proposal (paid-proposal open-invoice shape)', ...)
   // total 1192.50, paid 1192.50, open 'Additional Services' $185 → 18500 > 0
-test('alerts when a Balance ignores a payment with no locked invoice (David shape)', ...)
+test('alerts when a Balance ignores a payment with no locked invoice (paid-deposit-without-invoice shape)', ...)
   // total 1100, paid 100, open 'Balance' $1100 → 110000 > 100000
 
 // UNDER direction, from the 2026-07-21 spec.
@@ -667,7 +667,7 @@ test('alerts when the only open invoice is zero-due', ...)
 
 // Quiet.
 test('quiet when an open invoice exactly carries the balance', ...)
-test('quiet when a bespoke-label invoice carries the balance (Iga shape)', ...)
+test('quiet when a bespoke-label invoice carries the balance (gratuity-balance shape)', ...)
   // total 600, paid 500, open 'Gratuity Balance' $100 → payable == owed
 test('quiet at deposit stage: open Deposit under owed on a sent proposal', ...)
 test('quiet for archived, balance_paid, completed, clientless, zero-balance, NULL money columns', ...)
@@ -868,6 +868,6 @@ git commit -m "feat(admin): void action on open invoices, wiring the existing PA
 
 **Spec coverage.** §1 → Tasks 1-2. §2 → Tasks 4-5. §3 → Task 6 (due-date editing is folded into the same panel change; if it adds scope, ship Void alone, it is the part that unblocks void-and-recreate). §4 → Task 3. The spec's `PARTIAL_BILL_LABELS` refinement is Task 1.
 
-**Known gaps carried from the spec, deliberately not tasked.** The seven locked-unpaid `Balance` invoices are not protected by Lane 1 and are covered only by Lane 2's alerting. The `refreshUnlockedInvoices` vs `lab.js:418-457` locked-total inconsistency is untouched. Backfilling missing Deposit invoices for historical proposals is out of scope, which means the David shape can recur on other old proposals until the monitor catches it.
+**Known gaps carried from the spec, deliberately not tasked.** The seven locked-unpaid `Balance` invoices are not protected by Lane 1 and are covered only by Lane 2's alerting. The `refreshUnlockedInvoices` vs `lab.js:418-457` locked-total inconsistency is untouched. Backfilling missing Deposit invoices for historical proposals is out of scope, which means the paid-deposit-without-invoice shape can recur on other old proposals until the monitor catches it.
 
 **Ordering risk.** Lane 1 Task 2 changes a function called from four production paths including the Stripe-adjacent drink-plan submit. Its Step 5 suite list is the gate; an unexplained failure there stops the lane rather than being worked around.

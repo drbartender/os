@@ -688,7 +688,7 @@ Add to the fix-list, matching the file's existing entry style:
 ```markdown
 - **`generateLineItemsFromProposal` is override-blind.** Any proposal with a
   `total_price_override` that differs from catalog gets an invoice whose total is
-  correct but whose line items do not match it (Shiralee INV-0120: $450 of lines on a
+  correct but whose line items do not match it (proposal 527's INV-0120: $450 of lines on a
   $270 invoice). Pre-existing and cosmetic. Deliberately NOT fixed alongside the
   2026-07-16 drink-plan money fix: every invoice flows through that generator, and an
   honest reconciling line for the CC events would depend on the "bar included" fact that

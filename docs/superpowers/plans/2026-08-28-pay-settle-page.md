@@ -46,7 +46,7 @@
 // client/src/pages/proposal/proposalView/paidState.test.js
 import { PAID_STATES, isPaidState, paidState, readRedirect } from './paidState';
 
-// The exact row Mike Boswell's browser received at 17:04:11 on 2026-08-28:
+// The exact row the proposal 774 client's browser received at 17:04:11 on 2026-08-28:
 // the webhook had not committed, so the row still said unpaid and pre-tip.
 const mikePreCommit = { status: 'accepted', amount_paid: '0', total_price: '350.00' };
 
@@ -1565,7 +1565,7 @@ Find and replace the two show flags:
   const showPayOnly = !isPaid && !settling && isAlreadySigned && proposal.status === 'accepted';
 ```
 
-(Without `!settling` on `showPayOnly`, a signed-but-unsettled row, which is exactly Mike's `accepted` row, renders the pay-only section beside the settling card with no client secret and the red "Unable to load payment form" line.)
+(Without `!settling` on `showPayOnly`, a signed-but-unsettled row, which is exactly proposal 774's `accepted` row, renders the pay-only section beside the settling card with no client secret and the red "Unable to load payment form" line.)
 
 Delete the two lines:
 
@@ -1673,7 +1673,7 @@ survives an options switch, the acknowledged_total comment says what the
 field carries, a stale intent error no longer survives the below-floor
 state, and both error messages show when both exist.
 
-Mike Boswell's page load on 2026-08-28 read the row 0.4 seconds before the
+The proposal 774 client's page load on 2026-08-28 read the row 0.4 seconds before the
 webhook committed and told him he had paid 100 dollars and owed 250 by the
 next day. This is the fix for that.
 MSG

@@ -29,11 +29,11 @@ Two mechanisms, four live over-billings, discovered 2026-07-28.
 
 The locked-invoice sum stands in for money already collected. That proxy fails whenever a payment exists with no locked invoice backing it, and nothing in the system enforces that such backing exists.
 
-**David Luebke (prop 51).** Paid a $100 Stripe deposit on 2026-05-26. He has no Deposit invoice at all, only INV-0016. So the proxy read $0 collected, and each re-price (7/22, 7/25, 7/27) rewrote INV-0016 to the full total. It read $1,100 against a $1,000 debt.
+**Prop 51.** Paid a $100 Stripe deposit on 2026-05-26. He has no Deposit invoice at all, only INV-0016. So the proxy read $0 collected, and each re-price (7/22, 7/25, 7/27) rewrote INV-0016 to the full total. It read $1,100 against a $1,000 debt.
 
 Meanwhile `createBalanceInvoice`, twenty lines away in the same file, computes the same quantity correctly as `total_price − amount_paid`. Two formulas, one number.
 
-A second latent fault sits in the same expression: `external_paid` is already contained in `amount_paid`, verified on Emiline Mccoy (prop 599: `amount_paid` 360 = payments 260 + `external_paid` 100). The current code subtracts `external_paid` from `total_price` without subtracting `amount_paid`, which is a different basis entirely.
+A second latent fault sits in the same expression: `external_paid` is already contained in `amount_paid`, verified on prop 599 (`amount_paid` 360 = payments 260 + `external_paid` 100). The current code subtracts `external_paid` from `total_price` without subtracting `amount_paid`, which is a different basis entirely.
 
 ### Mechanism B: bespoke labels are exempt from refresh, with no manual path
 
@@ -43,10 +43,10 @@ This is the dominant failure mode: three of the four live over-billings.
 
 | Client | Prop | Invoice | Shows | Owes | Over-billed |
 |---|---|---|---|---|---|
-| Cathy Murphy | 491 | INV-0216 `Additional Services` | $185 | $0 | $185 |
-| Eve Thornton | 556 | INV-0168 `Drink Plan Extras` | $155 | $0 | $155 |
-| Brandon Martin | 557 | INV-0199 `Additional Services` | $150 | $70 | $80 |
-| David Luebke | 51 | INV-0016 `Balance` (mechanism A) | $1,100 | $1,000 | $100 |
+| Paid-in-full client | 491 | INV-0216 `Additional Services` | $185 | $0 | $185 |
+| Extras client | 556 | INV-0168 `Drink Plan Extras` | $155 | $0 | $155 |
+| Over-billed bespoke client | 557 | INV-0199 `Additional Services` | $150 | $70 | $80 |
+| Deposit-without-invoice client | 51 | INV-0016 `Balance` (mechanism A) | $1,100 | $1,000 | $100 |
 
 None had paid the wrong amount (`amount_paid = 0` on every one), so no refunds are owed.
 
@@ -73,16 +73,16 @@ Invoices split into two kinds, named by a new `PARTIAL_BILL_LABELS` constant in 
 **Partial bills** (`Deposit`, `Drink Plan Extras`) deliberately bill a subset of what is owed. They keep their intended amount, **capped** at `min(intended, owed)`. A partial bill's intended amount is owned elsewhere and this derivation never raises it, only caps it.
 
 - `Deposit`'s intended amount is `deposit_amount`. This carve-out is load-bearing: 154 open unlocked Deposit invoices exist in prod, and any rule handing every open invoice the full `owed` would rewrite all of them to the full contract price.
-- `Drink Plan Extras`'s intended amount is its current `amount_due`, because `findOrRefreshExtrasInvoice` (`server/utils/invoiceExtras.js:240-260`) already writes that column and remains its authority. Capping is the only safe interaction between the two writers: a cap can reduce an over-bill but can never contradict the extras owner's figure. This is what retires Eve Thornton's row.
+- `Drink Plan Extras`'s intended amount is its current `amount_due`, because `findOrRefreshExtrasInvoice` (`server/utils/invoiceExtras.js:240-260`) already writes that column and remains its authority. Capping is the only safe interaction between the two writers: a cap can reduce an over-bill but can never contradict the extras owner's figure. This is what retires prop 556's row.
 
-**Remainder bills** (everything else: `Balance`, `Full Payment`, `Additional Services`, `Gratuity Balance`) get `owed − Σ(open partial bills)`. Deleting the `continue` is what fixes Brandon and Cathy.
+**Remainder bills** (everything else: `Balance`, `Full Payment`, `Additional Services`, `Gratuity Balance`) get `owed − Σ(open partial bills)`. Deleting the `continue` is what fixes props 557 and 491.
 
-Worked against every shape in prod: David `Balance` → $1,000. Brandon `Additional Services` → $70. Cathy `Additional Services` → $0. Eve `Drink Plan Extras` → `min(155, 0)` = $0. Iga `Gratuity Balance` → $100, unchanged. The 154 open Deposits → `min(deposit_amount, owed)`, unchanged.
+Worked against every shape in prod: Prop 51 `Balance` → $1,000. Prop 557 `Additional Services` → $70. Prop 491 `Additional Services` → $0. Prop 556 `Drink Plan Extras` → `min(155, 0)` = $0. The gratuity-balance client's `Gratuity Balance` → $100, unchanged. The 154 open Deposits → `min(deposit_amount, owed)`, unchanged.
 
-- **A derived amount of `0` voids the invoice** rather than leaving a $0 bill open. The 2026-07-21 spec flagged that a zero-due invoice can capture `open_invoice_token`. This retires Cathy's and Eve's rows.
+- **A derived amount of `0` voids the invoice** rather than leaving a $0 bill open. The 2026-07-21 spec flagged that a zero-due invoice can capture `open_invoice_token`. This retires prop 491's and prop 556's rows.
 - **Two or more non-Deposit unlocked invoices: write nothing, log, capture to Sentry.** Zero such rows exist in prod, so rather than invent an allocation rule with no reality to validate against, it refuses to guess and escalates.
 
-**Line items.** Contract labels (`Deposit` / `Balance` / `Full Payment`) keep today's behavior, regenerated from the proposal. Bespoke labels get a single line carrying the invoice's own label at the new amount, so Brandon's reads "Additional Services, $70". That keeps lines summing to `amount_due` without dumping a paid-for package breakdown onto the invoice.
+**Line items.** Contract labels (`Deposit` / `Balance` / `Full Payment`) keep today's behavior, regenerated from the proposal. Bespoke labels get a single line carrying the invoice's own label at the new amount, so prop 557's reads "Additional Services, $70". That keeps lines summing to `amount_due` without dumping a paid-for package breakdown onto the invoice.
 
 **Locked invoices are never touched.** This leaves a known, accepted gap: seven locked-but-unpaid `Balance` invoices exist (the 2026-07-20 remediation batch, INV-0193 and INV-0205 through INV-0210). All seven are correct today, and all seven would be stranded by a price edit exactly as mechanism B strands bespoke ones. §2 is what catches that; §1 does not prevent it.
 
@@ -108,7 +108,7 @@ No amount or line-item editing, per the Decision above.
 
 The born-draft trap noted in the 2026-07-21 spec is **already fixed** and needs no work here: `ProposalDetailPaymentPanel.js` has Create and Send buttons, and `server/utils/comms/actions/invoiceSend.js` performs the draft→sent flip behind a `WHERE status = 'draft'` guard that touches nothing else.
 
-The one case left uncovered is a bill that legitimately lives outside the contract total. No such thing exists in prod (Iga Taraska's `Gratuity Balance` is exactly her `owed`, so gratuity sits inside `total_price`; `OFF_LEDGER_INVOICE_LABELS` is deliberately empty). If that need appears, the answer is a real off-ledger label added to that constant, which is the mechanism already built for it.
+The one case left uncovered is a bill that legitimately lives outside the contract total. No such thing exists in prod (the gratuity-balance client's `Gratuity Balance` is exactly her `owed`, so gratuity sits inside `total_price`; `OFF_LEDGER_INVOICE_LABELS` is deliberately empty). If that need appears, the answer is a real off-ledger label added to that constant, which is the mechanism already built for it.
 
 ### §4. Remediation
 
@@ -116,16 +116,16 @@ A one-time script calls `refreshUnlockedInvoices` on the affected proposals and 
 
 | Client | Invoice | Now | After |
 |---|---|---|---|
-| David Luebke | INV-0016 | $1,000 (hand-corrected 7/28) | $1,000, unchanged |
-| Brandon Martin | INV-0199 | $150 | $70 |
-| Cathy Murphy | INV-0216 | $185 | voided |
-| Eve Thornton | INV-0168 | $155 | voided |
+| Prop 51 | INV-0016 | $1,000 (hand-corrected 7/28) | $1,000, unchanged |
+| Prop 557 | INV-0199 | $150 | $70 |
+| Prop 491 | INV-0216 | $185 | voided |
+| Prop 556 | INV-0168 | $155 | voided |
 
 **No client email.** Every change is in the client's favor and the corrected invoice speaks for itself.
 
 **Already done on prod, 2026-07-28:** INV-0016 corrected $1,100 → $1,000 under a guarded single-row UPDATE, with a `proposal_activity_log` row recording the reason. Line items were deliberately left at the contract breakdown, matching every other Balance invoice (INV-0144 shows a $350 package line against a $250 balance). **This holding action is fragile: any price edit on proposal 51 before §1 ships will revert it to $1,100.**
 
-**Emiline Mccoy (prop 599) is out of scope.** Her invoices are internally consistent and fully paid; she has simply paid $360 against a $300 total and is up $60. That is a refund-or-credit decision, not a derivation fault.
+**The prop 599 client is out of scope.** Her invoices are internally consistent and fully paid; she has simply paid $360 against a $300 total and is up $60. That is a refund-or-credit decision, not a derivation fault.
 
 ## Testing
 
@@ -133,12 +133,12 @@ Against the shared dev DB, one suite at a time via `node -r dotenv/config`.
 
 `invoiceLifecycle` derivation:
 
-1. Balance with a paid deposit and **no** Deposit invoice derives to `total − amount_paid` (the David shape, mechanism A).
+1. Balance with a paid deposit and **no** Deposit invoice derives to `total − amount_paid` (the prop 51 shape, mechanism A).
 2. `external_paid` is not double-subtracted: a proposal with `external_paid` inside `amount_paid` derives correctly.
-3. A bespoke-label open invoice re-derives on a price decrease (the Brandon shape, mechanism B).
-4. A bespoke-label invoice deriving to `0` is voided, not zeroed (Cathy / Eve).
+3. A bespoke-label open invoice re-derives on a price decrease (the prop 557 shape, mechanism B).
+4. A bespoke-label invoice deriving to `0` is voided, not zeroed (props 491 / 556).
 5. An open unlocked `Deposit` keeps `deposit_amount`, not `owed`, and is capped by `min(..., owed)`.
-5b. An open unlocked `Drink Plan Extras` keeps its own `amount_due` when it fits inside `owed`, and is capped when it does not (the Eve shape). A remainder invoice sharing the proposal is reduced by the open extras amount, so the two together never exceed `owed`.
+5b. An open unlocked `Drink Plan Extras` keeps its own `amount_due` when it fits inside `owed`, and is capped when it does not (the prop 556 shape). A remainder invoice sharing the proposal is reduced by the open extras amount, so the two together never exceed `owed`.
 6. Locked invoices are never modified.
 7. Two non-Deposit unlocked invoices: nothing written, Sentry captured.
 8. Bespoke-label line items collapse to one line summing to the new `amount_due`; contract labels regenerate from the proposal.
@@ -155,7 +155,7 @@ Deployment gate, per the 2026-07-21 spec: after §1 and §4, the monitor's first
 
 - Collapsing the label taxonomy to one open invoice per proposal (the "Option B" structural rewrite). The better end state, deferred because the harm here was silence, not complexity, and §2 buys the protection without betting live client money on a rewrite. Revisit if the monitor starts firing on shapes §1 does not cover.
 - Amount and line-item editing on invoices.
-- Emiline Mccoy's $60 overpayment.
+- Prop 599's $60 overpayment.
 - Backfilling Deposit invoices for historical proposals that lack them.
 
 ---
@@ -172,7 +172,7 @@ The derivation rewrite was built, reviewed by a 6-agent fleet, fixed, and re-rev
 ## What is still broken in `refreshUnlockedInvoices` (unchanged, live)
 
 1. It derives a Balance as `total_price − external_paid − Σ(locked invoice amount_due)`, using locked invoices as a proxy for money collected. Nothing enforces that a payment has a backing locked invoice (prop 51 did not), so a re-price re-bills the deposit.
-2. It skips every label outside Deposit / Balance / Full Payment, so a price DECREASE strands an `Additional Services` / `Drink Plan Extras` / `Enhancement Lab` invoice at its old amount. This produced Brandon Martin, Cathy Murphy, Eve Thornton, and prop 527.
+2. It skips every label outside Deposit / Balance / Full Payment, so a price DECREASE strands an `Additional Services` / `Drink Plan Extras` / `Enhancement Lab` invoice at its old amount. This produced prop 557, prop 491, prop 556, and prop 527.
 3. `external_paid` is subtracted from a basis that does not subtract `amount_paid`, which is a second latent double-count.
 
 ## Why the rewrite failed, and what any retry must resolve FIRST

@@ -150,7 +150,7 @@ seams:                 # shared files across lanes — push-time sweep watchlist
 ops:
   - id: OPS1
     title: Prod data cleanup (requires Dallas explicit confirm at execution)
-    detail: archive proposal 528 (duplicate TT lead), remove/merge empty client 1461; then verify Allyson Gietl portal focus post-P1 deploy.
+    detail: archive proposal 528 (duplicate TT lead), remove/merge empty client 1461; then verify the proposal 626 client's portal focus post-P1 deploy.
   - id: OPS2
     title: Post-P4 floor values
     detail: verify prod service_packages rows show min_billed_guests=25 + min_total=550 on exactly the non-class per_guest tiers after deploy (idempotent schema.sql UPDATE runs at boot); confirm classes/BYOB stayed NULL.

@@ -125,9 +125,9 @@ Drink-plan extras have collected once ever ($20). Three uncollected pay-now extr
 
 | Client | Extra | Stripe status | Plan state | Event |
 |---|---|---|---|---|
-| Anna Simpson | $60 (syrup-only) | requires_payment_method | finalized, list approved | 2026-07-03 (owner handling manually) |
-| Julia Frye | $70 | requires_payment_method | list approved | 2026-06-27 (past) |
-| Shiralee Mack Perkins | $20 (3 abandoned PIs, one submit) | requires_payment_method | submitted | 2026-07-11 |
+| Owner-handled client | $60 (syrup-only) | requires_payment_method | finalized, list approved | 2026-07-03 (owner handling manually) |
+| Past-event client | $70 | requires_payment_method | list approved | 2026-06-27 (past) |
+| Proposal 527 client | $20 (3 abandoned PIs, one submit) | requires_payment_method | submitted | 2026-07-11 |
 
 ## Goals
 
@@ -178,8 +178,8 @@ Reuse `PATCH /api/invoices/:id {status:'void'}` (admin/manager gated; `'void'` i
 
 The three abandoned extras predate this change, so no invoice exists for them. Derive `amount_due` from the **abandoned PaymentIntent's amount** (authoritative for what the client attempted to pay), not the persisted selections (which may have drifted since). Scope:
 
-- Backfill the live/future one (Shiralee, 2026-07-11): create the unpaid "Drink Plan Extras" invoice from her PI amount so it surfaces, and cancel her stale `requires_payment_method` PIs so they cannot surprise-charge later.
-- Leave the past event (Julia, 2026-06-27) and the owner-handled one (Anna) to manual judgment.
+- Backfill the live/future one (proposal 527, 2026-07-11): create the unpaid "Drink Plan Extras" invoice from her PI amount so it surfaces, and cancel her stale `requires_payment_method` PIs so they cannot surprise-charge later.
+- Leave the past event (2026-06-27) and the owner-handled one to manual judgment.
 
 Keep this as a one-time script, out of the automated path.
 
@@ -194,7 +194,7 @@ No schema changes. Reuses `invoices` (`label='Drink Plan Extras'`, `status='void
 | Pay-now, payment completes (happy path: client awaits submit before `confirmPayment`, `ConfirmationStep.js:49-63`) | One extras invoice (created at submit), linked and marked paid by the webhook. No second invoice. |
 | Pay-now, payment abandoned (`requires_payment_method`) | Unpaid extras invoice remains. Badge shows; finalize warns. Collectable via invoice link. |
 | Success webhook lands before the submit commit (out-of-order) | Webhook create-if-missing (inside `isFirstDelivery`) makes the invoice; B1's find (match any non-void) reuses it, no duplicate. |
-| Repeat pay attempts (Shiralee: 3 PIs, one submit) | One invoice; the submit-once gate (`:166-168`) blocks re-submit, so find-or-refresh is only exercised on the admin reset-to-draft path. |
+| Repeat pay attempts (proposal 527: 3 PIs, one submit) | One invoice; the submit-once gate (`:166-168`) blocks re-submit, so find-or-refresh is only exercised on the admin reset-to-draft path. |
 | Comp, syrup-only | Void the extras invoice; no `total_price` change. |
 | Comp, add-on/bar-rental portion present | Void + reduce `total_price` by that portion + re-eval payment status. |
 | Reset-to-draft then re-submit as add-to-balance | Standing extras invoice voided before `refreshUnlockedInvoices`; extras invoiced once (on the balance). |

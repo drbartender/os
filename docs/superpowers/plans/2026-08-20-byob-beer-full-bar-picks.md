@@ -20,7 +20,7 @@ lanes:
       - README.md                                  # scripts table: applyBeerCatalog2026
       - ARCHITECTURE.md                            # note pars100Spirits slice + resolver
     blockedBy: []
-    review: full-fleet   # fires PRE-MERGE per house model, re-confirmed against main's new HEAD at merge; generator seam from the Sidney incident
+    review: full-fleet   # fires PRE-MERGE per house model, re-confirmed against main's new HEAD at merge; generator seam from the hosted-plan BYOB-fallback incident
 ---
 
 # BYOB beer catalog + full-bar picks — implementation plan (rev 2)
