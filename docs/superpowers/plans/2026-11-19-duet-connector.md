@@ -444,9 +444,9 @@ To connector-tools:
 The review cap split three more lanes off, each built and reviewed at the full set like the five above, none in the front matter:
 - connector-text-guards-3 (merged c59cc7d9): the findings connector-text-guards-2 split off (sentence breaks read as hosts, reported-speech overrides, the plain override's sibling forms, number-named hosts with a path, units eaten).
 - connector-tools-2 (merged ad802599): the findings connector-tools split off (email fields screened whole and by shape, no address in refs or marks, readable trip and withheld marks in the settings block, the list mask's dash and international forms, budgets kept).
-- connector-tools-3 (building): the findings connector-tools-2 split off (the digest label screened like the guard, word reads on every piece, contractions kept, the bracket branch screened whole, address lists, budgets in a sentence, dates after an international number, time ranges).
+- connector-tools-3 (merged 4b878f41): the findings connector-tools-2 split off (the digest label screened like the guard, word reads on every piece, contractions kept, the bracket branch screened whole, address lists, budgets in a sentence, dates after an international number, time ranges), then its two fix rounds (apostrophes kept only as a contraction or possessive, the name read with an address's local parts and host labels, an email field's addresses read in order as one sentence, an international number with a date-looking group before its eighth digit masked whole, time ranges only on the quarter hour).
 
-The connector stays switched off (CLAUDE_CONNECTOR_ENABLED unset in Render) until connector-tools-3 is merged and shipped.
+The connector stays switched off (CLAUDE_CONNECTOR_ENABLED unset in Render) until main ships; then the owner steps above switch it on.
 
 Accepted as the two-tier design's limit (my call, spec 7.6): wordings the screen does not catch reach the reader unflagged; the destination strip, the bulk-read tripwire, no write tools and Duet's own send approval do the stopping. Known trades left in the strip: a capital id or a number-named host on a word ending (J88.to, 777.to), a spaced dot before an everyday-word ending (example. us), a Title Case host on an unlisted ending (Evil.To).
 
@@ -456,3 +456,6 @@ Follow-ups, each small, none blocking the switch-on:
 - The trip flag lives per process and per instance; a second instance can trip on its own.
 - Pre-existing, outside this plan: the admin Outstanding figure (qOutstanding) counts paid off-contract invoices against the contract total; the admin Inbox treats nothing as held if the hold constant is missing.
 - The Gemini external reviewer (Antigravity CLI) failed to authenticate this session; codex is off.
+- A contraction ending hung on an ordinary word ("on't") reads as one word, so some withhold wordings main caught come back unflagged; the total that comes back is level with main (233 against 231 of 280 suite wordings). A rule that keeps the apostrophe only when the word before it takes that ending cut the pairwise count to 4 in verify's scratch run, but flagged the lane's possessive test line again, so it needs its own small lane (verify pass 2 of connector-tools-3, its L40).
+- Small trades in the list mask: an international number whose last group is written with a dot or slash shows that group's four digits after the marker; a bare compact time range with no lead word or am or pm is masked (the safe direction).
+- Comment drift in text.js: the at sign in the word-ending note, and till missing from the time-range note.
