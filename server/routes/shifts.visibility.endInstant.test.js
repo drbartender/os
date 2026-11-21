@@ -162,7 +162,12 @@ before(async () => {
   // Chicago midnight — it must NOT vanish when the GMT day rolls at 19:00.
   await seedShift('tonightNull', { date: clock.chi_today, endTime: null, startTime: '6:00 PM', visible: true });
   // YESTERDAY_NULL: the same shape one day back. Must NOT linger a second day.
-  await seedShift('yesterdayNull', { date: clock.chi_yesterday, endTime: null, startTime: '6:00 PM', visible: false });
+  // It starts at 10 AM, not 6 PM: with no end time a shift runs its booked
+  // length plus the overrun grace (shiftEndInstant.js rule 2: 4h + 4h here),
+  // so a 6 PM start is truly unfinished until 2 AM and this premise failed
+  // every night from Chicago midnight to 2 AM. A 10 AM start ended at 6 PM
+  // yesterday, which is finished at any hour (2026-11-21).
+  await seedShift('yesterdayNull', { date: clock.chi_yesterday, endTime: null, startTime: '10:00 AM', visible: false });
   // NO PROPOSAL: 5 of 78 prod shifts have none, and those five are five of the
   // fourteen with no end time. The zone must fall back to Chicago, not raise.
   await seedShift('noProposal', { date: clock.chi_today, endTime: null, withProposal: false, visible: true });
