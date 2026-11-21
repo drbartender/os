@@ -60,42 +60,35 @@ const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
 const { dispatchPending } = require('./utils/scheduledMessageDispatcher');
 
-// Startup guards — fail fast if critical env vars are missing
+// Startup guards — fail fast if critical env vars are missing. The lists and
+// their reasons live in utils/bootEnvCheck.js. A Render boot whose NODE_ENV is
+// not exactly 'production' refuses first.
+const { renderEnvRefusal, missingRequiredEnv, reportMissingBootSecrets } = require('./utils/bootEnvCheck');
+const { ADMIN_URL } = require('./utils/urls');
+if (renderEnvRefusal(process.env)) {
+  console.error(`FATAL: ${renderEnvRefusal(process.env)}`);
+  process.exit(1);
+}
+
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('FATAL: JWT_SECRET must be set and at least 32 characters');
   process.exit(1);
 }
 
-// Production-only required-env assertion. These integrations have no safe
-// degraded mode in prod — a missing one is a silent-failure trap (DB never
-// connects, no email/SMS goes out, every file upload 500s). Fail fast at boot
-// with the full list instead of surfacing hours later as scattered runtime
-// errors. Dev is exempt (local work runs without Twilio/R2/etc). Optional
-// integrations (Cal.com, Telegram, VAPID, Places) warn or fail closed on their
-// own and are intentionally excluded. R2_* names are exactly what
-// server/utils/storage.js reads.
+// Production-only required-env assertion (REQUIRED_PROD_ENV in bootEnvCheck.js).
 if (process.env.NODE_ENV === 'production') {
-  const requiredEnv = [
-    'DATABASE_URL',
-    'RESEND_API_KEY',
-    'TWILIO_ACCOUNT_SID',
-    'TWILIO_AUTH_TOKEN',
-    'TWILIO_PHONE_NUMBER',
-    'R2_ACCOUNT_ID',
-    'R2_ACCESS_KEY_ID',
-    'R2_SECRET_ACCESS_KEY',
-    'R2_BUCKET_NAME',
-  ];
-  const missing = requiredEnv.filter((name) => !process.env[name]);
+  const missing = missingRequiredEnv(process.env);
   if (missing.length > 0) {
     console.error(`FATAL: missing required env vars in production: ${missing.join(', ')}`);
     process.exit(1);
   }
+  reportMissingBootSecrets(process.env, Sentry); // logged and reported, never fatal
 }
 
 // Cal.com webhook secret presence check. Emits a one-shot warning so the
 // missed-config alarm fires even when no Cal.com traffic hits the endpoint.
-if (!process.env.CAL_WEBHOOK_SECRET) {
+// Production reports it through the secrets loop above, so it is not doubled.
+if (!process.env.CAL_WEBHOOK_SECRET && process.env.NODE_ENV !== 'production') {
   const msg = 'CAL_WEBHOOK_SECRET is not set; Cal.com webhook will return 503 on every request';
   console.warn(`[startup] ${msg}`);
   try {
@@ -209,7 +202,7 @@ app.use(compression());
 
 // Middleware — allow requests from public site, admin, hiring, and staff subdomains
 const allowedOrigins = [
-  process.env.CLIENT_URL || 'http://localhost:3000',
+  ADMIN_URL, // CLIENT_URL or the admin domain, never a localhost fallback (dev uses isDev below)
   'https://drbartender.com',
   'https://www.drbartender.com',
   'https://admin.drbartender.com',

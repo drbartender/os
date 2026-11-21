@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
+const { ADMIN_URL } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError } = require('../utils/errors');
 const { seedContractorProfileFromApplication } = require('../utils/contractorSeed');
@@ -419,8 +420,9 @@ router.post('/forgot-password', authLimiter, asyncHandler(async (req, res) => {
     );
 
     // Build reset URL with the raw token (the only place it ever exists in plaintext)
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-    const resetUrl = `${clientUrl}/reset-password/${rawToken}`;
+    // ADMIN_URL (CLIENT_URL, else the admin domain): the reset page is routed on
+    // the admin app, and a localhost fallback would mail a dead link from prod.
+    const resetUrl = `${ADMIN_URL}/reset-password/${rawToken}`;
 
     await sendEmail({
       to: user.email,

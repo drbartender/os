@@ -3,7 +3,7 @@
 // recomputeNewYearHelloForProposal and 3 more. Header generated from the file's exports by
 // migrate-headers on 2026-10-27; replace with what it does.
 
-const jwt = require('jsonwebtoken');
+const { signUnsubscribeToken } = require('./unsubscribeToken');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { DRIP_TOUCHES, hasLiveSiblingDrip, handOffDripToSibling } = require('./dripSiblings');
@@ -56,14 +56,10 @@ function dayOfWeek(eventDate) {
 
 function buildUnsubscribeUrl(clientId) {
   if (!clientId) return '';
-  const token = jwt.sign(
-    // typ is ADVISORY: it labels what this token was minted for. The reader
-    // does not require it, because 365-day tokens are already in inboxes
-    // without it and rejecting those would break live unsubscribe links.
-    { clientId, marketing: true, typ: 'unsub' },
-    process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
-    { expiresIn: '365d' }
-  );
+  // typ:'unsub' is stamped by the helper and is ADVISORY: the reader does not
+  // require it, because 365-day tokens are already in inboxes without it and
+  // rejecting those would break live unsubscribe links.
+  const token = signUnsubscribeToken({ clientId, marketing: true });
   // /api/email-marketing/unsubscribe branches on the token shape: this
   // {clientId, marketing} token flips clients.communication_preferences
   // .marketing_enabled, which the dispatcher's marketing gate then honors.

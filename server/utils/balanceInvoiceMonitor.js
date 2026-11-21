@@ -31,6 +31,7 @@ const { notifyAdminCategory } = require('./adminNotifications');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 const { findStaleProcessingPayments, STALE_PROCESSING_DAYS } = require('./paymentInFlight');
 const { heldProposalIds } = require('./legalHold');
+const { ADMIN_URL } = require('./urls');
 
 const OVER_ACTION = 'invoice_over_bill';
 const UNDER_ACTION = 'balance_invoice_missing';
@@ -177,7 +178,7 @@ function renderEmail(over, under) {
     `<li><strong>${r.client_name}</strong> (proposal #${r.id}, ${r.status}` +
     `${r.event_date ? ', event ' + new Date(r.event_date).toISOString().slice(0, 10) : ''})` +
     ` ${figure}. Invoices: ${r.labels || 'none'}. ` +
-    `<a href="${process.env.CLIENT_URL || ''}/admin/proposals/${r.id}">Open</a></li>`;
+    `<a href="${ADMIN_URL}/admin/proposals/${r.id}">Open</a></li>`;
 
   const parts = [];
   const textParts = [];

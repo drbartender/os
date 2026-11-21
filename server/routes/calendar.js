@@ -9,6 +9,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError, PermissionError } = require('../utils/errors');
 const { buildBeoConfirmVEvents, detectCalendarApp } = require('../utils/staffCalendarFeedExt');
 const { requireUuidToken } = require('../utils/tokens');
+const { API_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -566,9 +567,8 @@ router.get('/token', auth, asyncHandler(async (req, res) => {
   if (!result.rows[0]) throw new NotFoundError('User not found');
 
   const token = result.rows[0].calendar_token;
-  // Build the feed URL using the server's own origin
-  const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
-  const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
+  // The server's own origin, from utils/urls.js (API_URL wins over RENDER_EXTERNAL_URL)
+  const feedUrl = `${API_URL}/api/calendar/feed/${token}`;
 
   res.json({ token, feed_url: feedUrl });
 }));
@@ -582,8 +582,7 @@ router.post('/token/regenerate', auth, asyncHandler(async (req, res) => {
   if (!result.rows[0]) throw new NotFoundError('User not found');
 
   const token = result.rows[0].calendar_token;
-  const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
-  const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
+  const feedUrl = `${API_URL}/api/calendar/feed/${token}`;
 
   res.json({ token, feed_url: feedUrl });
 }));

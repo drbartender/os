@@ -20,18 +20,15 @@
 
 const { pool } = require('../../db');
 const asyncHandler = require('../../middleware/asyncHandler');
+const { API_URL } = require('../../utils/urls');
 
-// Mirrors the apiBase composition in server/routes/calendar.js (token + token/
-// regenerate). Keep them in sync so the URL we hand the AccountPage matches
+// Takes the backend origin from server/utils/urls.js, as server/routes/calendar.js
+// (token + token/regenerate) does, so the URL we hand the AccountPage matches
 // what calendar.js serves. Server-side composition is convenient for the
 // client (one source of truth) and harmless because the token is the secret —
 // the URL is not.
 function feedUrlForToken(token) {
-  const apiBase =
-    process.env.RENDER_EXTERNAL_URL ||
-    process.env.API_URL ||
-    `http://localhost:${process.env.PORT || 5000}`;
-  return `${apiBase}/api/calendar/feed/${token}`;
+  return `${API_URL}/api/calendar/feed/${token}`;
 }
 
 function register(router) {

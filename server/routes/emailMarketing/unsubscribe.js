@@ -24,7 +24,7 @@
  */
 
 const express = require('express');
-const jwt = require('jsonwebtoken');
+const { verifyUnsubscribeToken } = require('../../utils/unsubscribeToken');
 const { pool } = require('../../db');
 const asyncHandler = require('../../middleware/asyncHandler');
 
@@ -59,14 +59,12 @@ function attr(s) {
  */
 function readToken(token) {
   if (!token) return null;
-  let decoded;
-  try {
-    decoded = jwt.verify(token, process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET);
-  } catch (err) {
-    return null;
-  }
+  // Valid under UNSUBSCRIBE_SECRET or JWT_SECRET (utils/unsubscribeToken.js),
+  // so links signed before the dedicated secret was set keep working.
+  const decoded = verifyUnsubscribeToken(token);
+  if (!decoded) return null;
   // Accept an ABSENT typ (legacy links), reject a CONFLICTING one. Every token
-  // in this app is signed with the same key when UNSUBSCRIBE_SECRET is unset,
+  // in this app verifies under JWT_SECRET, whether or not UNSUBSCRIBE_SECRET is set,
   // so a future token type that happens to carry leadId, or clientId plus a
   // truthy marketing, would otherwise become a live 365-day unsubscribe
   // credential. Nothing minted today collides; this keeps it that way without

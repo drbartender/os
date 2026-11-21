@@ -7,7 +7,7 @@
  */
 
 const express = require('express');
-const jwt = require('jsonwebtoken');
+const { signUnsubscribeToken } = require('../../utils/unsubscribeToken');
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../../db');
@@ -105,17 +105,16 @@ router.post('/campaigns/:id/test', auth, requireAdminOrManager, asyncHandler(asy
     });
   }
 
-  const unsubSecret = process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET;
   let unsubToken = 'preview';
   const leadRow = await pool.query(
     'SELECT id FROM email_leads WHERE lower(btrim(email)) = lower(btrim($1)) LIMIT 1', [to]);
   if (leadRow.rows[0]) {
-    unsubToken = jwt.sign({ leadId: leadRow.rows[0].id, typ: 'unsub' }, unsubSecret, { expiresIn: '365d' });
+    unsubToken = signUnsubscribeToken({ leadId: leadRow.rows[0].id });
   } else {
     const clientRow = await pool.query(
       'SELECT id FROM clients WHERE lower(btrim(email)) = lower(btrim($1)) LIMIT 1', [to]);
     if (clientRow.rows[0]) {
-      unsubToken = jwt.sign({ clientId: clientRow.rows[0].id, marketing: true, typ: 'unsub' }, unsubSecret, { expiresIn: '365d' });
+      unsubToken = signUnsubscribeToken({ clientId: clientRow.rows[0].id, marketing: true });
     }
   }
   const sampleUnsub = `${API_URL}/api/email-marketing/unsubscribe?token=${unsubToken}`;

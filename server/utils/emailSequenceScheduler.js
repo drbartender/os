@@ -1,6 +1,6 @@
 // Drip sequence step processor (every 15 min)
 
-const jwt = require('jsonwebtoken');
+const { signUnsubscribeToken } = require('./unsubscribeToken');
 const { clientOptedOutByEmail } = require('./marketingAudience');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -156,13 +156,8 @@ async function processSequenceSteps() {
           continue;
         }
 
-        // Build unsubscribe URL — use UNSUBSCRIBE_SECRET if set, else JWT_SECRET fallback
-        const unsubscribeToken = jwt.sign(
-          // typ is advisory; see marketingHandlers.buildUnsubscribeUrl.
-          { leadId: enrollment.lead_id, typ: 'unsub' },
-          process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
-          { expiresIn: '365d' }
-        );
+        // Build unsubscribe URL (utils/unsubscribeToken.js picks the key).
+        const unsubscribeToken = signUnsubscribeToken({ leadId: enrollment.lead_id });
         const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
 
         // Replace template variables ({{name}}, {{resume_url}}) in both HTML and plaintext

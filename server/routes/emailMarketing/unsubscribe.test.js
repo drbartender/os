@@ -222,3 +222,26 @@ test('a CASE-VARIANT client row sharing the address is silenced too', async () =
     await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [[a.rows[0].id, b.rows[0].id]]);
   }
 });
+
+// ─── UNSUBSCRIBE_SECRET rollout (the 2026-11-16 hygiene audit) ─────
+
+test('with UNSUBSCRIBE_SECRET set, a link signed with JWT_SECRET still verifies', async () => {
+  // Setting the dedicated secret must not break the 365-day links already in
+  // inboxes, which were all signed with JWT_SECRET.
+  const saved = process.env.UNSUBSCRIBE_SECRET;
+  process.env.UNSUBSCRIBE_SECRET = `unsub-test-${NONCE}-${'k'.repeat(32)}`;
+  try {
+    const old = jwt.sign({ clientId, marketing: true, typ: 'unsub' }, process.env.JWT_SECRET, { expiresIn: '365d' });
+    assert.equal((await req('GET', `/api/email-marketing/unsubscribe?token=${old}`)).status, 200);
+    const fresh = jwt.sign({ clientId, marketing: true, typ: 'unsub' }, process.env.UNSUBSCRIBE_SECRET, { expiresIn: '365d' });
+    assert.equal((await req('GET', `/api/email-marketing/unsubscribe?token=${fresh}`)).status, 200);
+    const foreign = jwt.sign({ clientId, marketing: true, typ: 'unsub' }, `other-${'z'.repeat(40)}`, { expiresIn: '365d' });
+    assert.equal((await req('GET', `/api/email-marketing/unsubscribe?token=${foreign}`)).status, 400);
+    // The typ check holds under either key.
+    const conflicting = jwt.sign({ clientId, marketing: true, typ: 'auth' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    assert.equal((await req('GET', `/api/email-marketing/unsubscribe?token=${conflicting}`)).status, 400);
+  } finally {
+    if (saved === undefined) delete process.env.UNSUBSCRIBE_SECRET;
+    else process.env.UNSUBSCRIBE_SECRET = saved;
+  }
+});
