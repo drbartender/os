@@ -273,7 +273,7 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false, skipNu
   // reaches here. Non-blocking: a scheduling failure must not roll back the
   // plan. skipNudge (cc-transfer 2026-07-07): transferred CC events get their
   // plan SILENTLY — Dallas intro-notes those clients personally first, then
-  // re-enrolls via the admin reenroll-drink-plan-nudge button when ready.
+  // re-enrolls via the admin re-enroll modal (drink_plan_nudge_reenroll) when ready.
   if (!skipNudge) {
     try {
       await scheduleDrinkPlanNudge(proposalId, pool);

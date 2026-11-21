@@ -6,7 +6,7 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { NotFoundError, PermissionError } = require('../utils/errors');
+const { NotFoundError } = require('../utils/errors');
 const { buildBeoConfirmVEvents, detectCalendarApp } = require('../utils/staffCalendarFeedExt');
 const { requireUuidToken } = require('../utils/tokens');
 const { API_URL } = require('../utils/urls');
@@ -487,75 +487,6 @@ router.get('/feed/:token', requireUuidToken('token', 'Calendar feed not found'),
       [user.id, JSON.stringify(detectedApp)]
     ).catch(() => { /* best-effort; never break feed */ });
   } catch { /* best-effort; never break feed */ }
-}));
-
-/** GET /api/calendar/event/:shiftId.ics — single event download (auth required) */
-router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
-  const shiftId = parseInt(req.params.shiftId, 10);
-  // `:shiftId.ics` captures everything before `.ics`; a non-numeric path (foo.ics) yields
-  // NaN, which casts-and-throws (22P02) into a 500. Reject it as a clean 404 first.
-  if (!Number.isFinite(shiftId)) throw new NotFoundError('Event not found');
-  const isAdmin = req.user.role === 'admin' || req.user.role === 'manager';
-
-  // Verify access
-  if (!isAdmin) {
-    const check = await pool.query(
-      "SELECT id FROM shift_requests WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' AND dropped_at IS NULL",
-      [shiftId, req.user.id]
-    );
-    if (!check.rows[0]) throw new PermissionError('Access denied');
-  }
-
-  // Fetch shift
-  const result = await pool.query(`
-    SELECT s.*,
-      c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
-      p.total_price AS proposal_total, p.amount_paid, p.guest_count,
-      sr.position
-    FROM shifts s
-    LEFT JOIN proposals p ON p.id = s.proposal_id
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $2 AND sr.status = 'approved' AND sr.dropped_at IS NULL
-    WHERE s.id = $1
-  `, [shiftId, req.user.id]);
-
-  if (!result.rows[0]) throw new NotFoundError('Shift not found');
-  const s = result.rows[0];
-
-  // Fetch team
-  const teamsMap = await fetchTeamsByShiftIds([shiftId]);
-  const team = teamsMap.get(shiftId) || [];
-  const teamStr = formatTeamList(team, isAdmin ? null : req.user.id);
-
-  let summary, description;
-  const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
-  if (isAdmin) {
-    summary = s.client_name ? `${s.client_name} — ${eventTypeLabel}` : eventTypeLabel;
-    description = buildAdminDescription(s, teamStr);
-  } else {
-    summary = `Bartending — ${eventTypeLabel}`;
-    description = buildStaffDescription(s, teamStr);
-  }
-
-  const event = {
-    id: s.id,
-    event_date: s.event_date,
-    start_time: s.start_time,
-    end_time: s.end_time,
-    location: s.location,
-    updated_at: s.updated_at,
-    summary,
-    description,
-    cancelled: s.status === 'closed' || s.status === 'cancelled',
-  };
-
-  const ical = buildICalFeed([event], 'Dr. Bartender');
-  const eventTypeLabelFn = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
-  const filename = eventTypeLabelFn.replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-').toLowerCase();
-
-  res.set('Content-Type', 'text/calendar; charset=utf-8');
-  res.set('Content-Disposition', `attachment; filename="${filename}.ics"`);
-  res.send(ical);
 }));
 
 /** GET /api/calendar/token — get current user's feed URL */

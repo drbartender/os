@@ -376,29 +376,12 @@ test('finalizeDrinkPlan (manual) on a draft plan with selections works and stamp
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-test('PATCH /:id/status is a plain setter now: reviewed on an approved-list plan does not finalize and carries no beo report', async () => {
-  const { proposalId, planId } = await seedPlan({ status: 'submitted' });
-  const res = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'reviewed' } });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'reviewed');
-  assert.equal(res.body.finalized_at, null);
-  assert.equal(res.body.beo, undefined);
-  assert.ok(!('shopping_list_approved_snapshot' in res.body));
-  assert.equal((await logRows(proposalId, 'beo_finalized')).length, 0);
-});
-
-test('the lock holds after a derived finalize: status PATCH 409s, list PUT 409s, list GET seeds finalized_at', async () => {
+test('the lock holds after a derived finalize: list PUT 409s, list GET seeds finalized_at', async () => {
   const { planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
   const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
   assert.equal(r.beo.finalized, true);
 
-  // The lock is inside the status UPDATE itself (no pre-check to race): the
-  // write matches zero rows, the route translates that to the lock 409, and
-  // the finalized plan keeps its status.
-  const again = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'submitted' } });
-  assert.equal(again.status, 409);
-  assert.equal(again.body.code, 'finalized');
-  assert.equal((await planRow(planId)).status, 'reviewed', 'a finalized plan never changes status');
+  assert.equal((await planRow(planId)).status, 'reviewed');
 
   const put = await request('PUT', `/api/drink-plans/${planId}/shopping-list`, {
     token: adminToken, body: { shopping_list: JSON.parse(LIST) },

@@ -8,8 +8,7 @@
 // nudges — idempotent, since scheduleDrinkPlanNudge no-ops on a pending
 // duplicate and setting nudge_suppressed=false twice changes nothing. dispatch
 // is the NEW compose-modal capability: an immediate drink-plan nudge on the
-// selected channels (the legacy route only scheduled — see the deprecated route
-// note, which preserves schedule-only behavior and does not auto-dispatch).
+// selected channels (the legacy route, removed 2026-11-19, only scheduled).
 const { pool } = require('../../../db');
 const { sendEmail } = require('../../email');
 const { sendSMS, normalizePhone } = require('../../sms');

@@ -2,12 +2,9 @@
 // Each sends one stored R2 object through sendR2Object (utils/r2Proxy.js),
 // which runs assertKeyUnder on the prefix named here before anything is read:
 //   GET /:id/menu-draft/pieces/:pieceKey/image   a done piece, under menu-art/<id>/
-//   GET /:id/menu-draft/reference                the uploaded reference, under menu-art/<id>/ref-,
-//                                                only while reference_source is upload (has_reference)
 //   GET /:id/menu-draft/planner-image            the plan's client image, under drink-plan-logos/<planId>-
 // The piece and planner routes take ?w=240 or ?w=480 (a sharp downscale, PNG
-// keeping alpha); any other w is a 400, never ignored. The reference has no
-// downscale, so any w there is a 400 too. No key leaves the server.
+// keeping alpha); any other w is a 400, never ignored. No key leaves the server.
 
 const express = require('express');
 const { pool } = require('../../db');
@@ -44,20 +41,6 @@ router.get('/:id/menu-draft/pieces/:pieceKey/image', ...guard, asyncHandler(asyn
     [id, pieceKey]);
   if (!rows.length) throw new NotFoundError('That image is not ready.');
   await sendR2Object(res, rows[0].r2_key, { prefix: `menu-art/${id}/`, width });
-}));
-
-// Sends the uploaded reference; the key must sit under `menu-art/<id>/ref-`. No downscale: any `w`
-// is 400.
-router.get('/:id/menu-draft/reference', ...guard, asyncHandler(async (req, res) => {
-  const id = parseId(req.params.id);
-  if (req.query.w !== undefined) throw new ValidationError({ w: 'The reference is sent at full size only.' });
-  await requireProposal(id);
-  const { rows } = await pool.query(
-    `SELECT inputs->>'reference_key' AS key FROM menu_drafts
-      WHERE proposal_id = $1 AND inputs->>'reference_source' = 'upload'`, [id]);
-  const key = rows[0] ? rows[0].key : null;
-  if (!key) throw new NotFoundError('This draft has no reference image.');
-  await sendR2Object(res, key, { prefix: `menu-art/${id}/ref-` });
 }));
 
 // The event's plan is the lowest-id plan (loadEventPlan), and its key comes

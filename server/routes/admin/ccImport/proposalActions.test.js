@@ -174,62 +174,24 @@ function req(method, path, token, body) {
   });
 }
 
-// ── /proposals/:id/reenroll-drink-plan-nudge ─────────────────────────
+// ── /proposals/:id/reaccrue-payout ───────────────────────────────────
 
-test('POST /proposals/:id/reenroll-drink-plan-nudge rejects non-integer id', async () => {
-  const r = await req('POST', '/api/admin/proposals/abc/reenroll-drink-plan-nudge', adminToken, {});
-  assert.equal(r.status, 400);
-});
-
-test('POST /proposals/:id/reenroll-drink-plan-nudge 401 without token', async () => {
-  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, null, {});
+test('POST /proposals/:id/reaccrue-payout 401 without token', async () => {
+  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reaccrue-payout`, null, {});
   assert.equal(r.status, 401);
 });
 
-test('POST /proposals/:id/reenroll-drink-plan-nudge 403 for staff role', async () => {
-  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, staffToken, {});
+test('POST /proposals/:id/reaccrue-payout 403 for staff role', async () => {
+  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reaccrue-payout`, staffToken, {});
   assert.equal(r.status, 403);
 });
 
-// Audit batch 3c-roles: cc-import is admin-only; managers (previously allowed by
-// requireAdminOrManager) now get 403. The guard runs before the handler.
-test('POST /proposals/:id/reenroll-drink-plan-nudge is admin-only — manager 403 (audit batch 3c-roles)', async () => {
-  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, managerToken, {});
+// Audit batch 3c-roles: cc-import is admin-only; managers get 403 before the handler.
+test('POST /proposals/:id/reaccrue-payout is admin-only (manager 403)', async () => {
+  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reaccrue-payout`, managerToken, {});
   assert.equal(r.status, 403);
   assert.equal(JSON.parse(r.body).code, 'PERMISSION_DENIED');
 });
-
-test('POST /proposals/:id/reenroll-drink-plan-nudge 404 on unknown proposal', async () => {
-  const r = await req('POST', '/api/admin/proposals/999999999/reenroll-drink-plan-nudge', adminToken, {});
-  assert.equal(r.status, 404);
-});
-
-test('POST /proposals/:id/reenroll-drink-plan-nudge 409 when no drink plan exists', async () => {
-  const r = await req('POST', `/api/admin/proposals/${proposalNoPlanId}/reenroll-drink-plan-nudge`, adminToken, {});
-  assert.equal(r.status, 409);
-});
-
-test('POST /proposals/:id/reenroll-drink-plan-nudge succeeds + writes audit row', async () => {
-  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, adminToken, {});
-  assert.equal(r.status, 200);
-  const body = JSON.parse(r.body);
-  assert.equal(body.ok, true);
-  assert.match(body.message, /scheduled/i);
-
-  const audit = await pool.query(
-    `SELECT actor_user_id, target_user_id, action, metadata FROM admin_audit_log
-      WHERE action = 'cc_drink_plan_nudge_reenrolled'
-        AND actor_user_id = $1
-      ORDER BY id DESC LIMIT 1`,
-    [adminId]
-  );
-  assert.equal(audit.rowCount, 1, 'audit row exists');
-  assert.equal(audit.rows[0].target_user_id, null);
-  assert.equal(audit.rows[0].metadata.proposal_id, proposalWithPlanId);
-  assert.equal(audit.rows[0].metadata.client_id, clientId);
-});
-
-// ── /proposals/:id/reaccrue-payout ───────────────────────────────────
 
 test('POST /proposals/:id/reaccrue-payout rejects non-integer id', async () => {
   const r = await req('POST', '/api/admin/proposals/abc/reaccrue-payout', adminToken, {});

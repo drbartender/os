@@ -30,7 +30,6 @@ const { accruePayoutsForProposal } = require('../utils/payrollAccrual');
 const { suggestOutOfAreaCents } = require('../utils/serviceArea');
 const shiftsRouter = require('./shifts');
 const staffShiftActionsRouter = require('./staffShiftActions');
-const adminCoverSwapsRouter = require('./adminCoverSwaps');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('shifts.bonus.test.js refuses to run against production');
@@ -213,7 +212,6 @@ before(async () => {
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/shifts', shiftsRouter);
   app.use('/api/shifts', staffShiftActionsRouter);
-  app.use('/api/admin', adminCoverSwapsRouter);
   app.use((err, _req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -440,31 +438,6 @@ test('cover swap via the staffing dashboard moves the lock from the covered staf
   assert.equal(row.out_of_area_locked_user_id, bId, 'the claimer now holds the bonus');
   assert.ok(row.out_of_area_locked_at, 'still locked');
   assert.equal(Number(row.out_of_area_bonus_cents), 2000, 'amount untouched by the swap');
-});
-
-test('cover swap via the ADMIN EMAIL one-click link moves the lock identically', async () => {
-  const { shiftId, aReq, bReq } = await seedCoverSwap();
-  assert.equal((await shiftRow(shiftId)).out_of_area_locked_user_id, aId);
-
-  // Same payload shape adminCoverSwaps.js reads off the signed URL segment.
-  const swapToken = jwt.sign(
-    { original_request_id: aReq, new_request_id: bReq, jti: crypto.randomUUID() },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-  const r = await req('POST', `/api/admin/cover-swaps/${swapToken}`, { token: adminToken, body: {} });
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(r.body.status, 'approved');
-
-  const row = await shiftRow(shiftId);
-  assert.equal(row.out_of_area_locked_user_id, bId,
-    'the email approver must move the bonus too, or it pays someone who did not work');
-  assert.ok(row.out_of_area_locked_at);
-  assert.equal(Number(row.out_of_area_bonus_cents), 2000);
-  // The covered staffer is off the shift and holds nothing.
-  const aRow = await pool.query('SELECT status, dropped_at FROM shift_requests WHERE id = $1', [aReq]);
-  assert.equal(aRow.rows[0].status, 'denied');
-  assert.ok(aRow.rows[0].dropped_at);
 });
 
 test('DELETE /shifts/requests/:id (the ShiftDrawer Remove button) releases the lock', async () => {

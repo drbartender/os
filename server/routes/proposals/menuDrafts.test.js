@@ -696,10 +696,6 @@ test('generate: a reference uploads under menu-art/<id>/ref-, a PDF is refused, 
   assert.match(key, new RegExp(`^menu-art/${id}/ref-[0-9a-f-]{36}\\.png$`));
   assert.equal((await draftOf(id)).inputs.reference_key, key);
   assert.ok(reads.includes(key), 'the job read the reference by its key');
-  const got = await request('GET', `${base(id)}/reference`);
-  assert.equal(got.status, 200);
-  assert.ok(got.raw.equals(img.reference));
-  assert.equal((await request('GET', `${base(id)}/reference?w=240`)).status, 400, 'the reference has no downscale');
 
   const again = await generate(id, { reference_source: 'upload' });
   assert.equal(again.status, 202);
@@ -713,7 +709,6 @@ test('generate: a reference uploads under menu-art/<id>/ref-, a PDF is refused, 
   assert.equal(dropped.status, 202);
   await idle();
   assert.equal((await draftOf(id)).inputs.reference_key, null);
-  assert.equal((await request('GET', `${base(id)}/reference`)).status, 404);
 });
 
 test('generate: Start over upserts in place, keeps the approved stamps, resets added_by_sync and frees stranded reservations', async () => {
@@ -879,8 +874,6 @@ test('PATCH: refuses inputs.reference_key, inputs.image_model, added_by_sync and
   r2.set(refKey, { buffer: img.reference, contentType: 'image/png' });
   reads.length = 0;
   assert.equal((await request('GET', base(id))).body.draft.inputs.has_reference, false, 'no longer the reference');
-  assert.equal((await request('GET', `${base(id)}/reference`)).status, 404, 'and the reference GET agrees');
-  assert.deepEqual(reads, []);
 });
 
 test('versions: a number past int4 is a 400 on PATCH, dismiss and sync, never a 500, and nothing is written', async () => {
@@ -1115,7 +1108,7 @@ test('piece image: a done piece streams; ?w=240 and ?w=480 downscale with alpha;
   assert.equal((await request('GET', pieceUrl(id, 'Background', 'image'))).status, 400);
 });
 
-test('key guards: a key outside its prefix is a 404 and is never read, for the piece, the reference and the planner image', async () => {
+test('key guards: a key outside its prefix is a 404 and is never read, for the piece and the planner image', async () => {
   const { id, planId } = await ready();
   const other = proposalIds.find((p) => p !== id) || id + 1;
   for (const bad of [`menu-art/${other}/x.png`, `menu-art/${id}0/x.png`, `menu-art/${id}/../x.png`, `menu-art/${id}//x.png`, `drink-plan-logos/${planId}-x.png`]) {
@@ -1123,15 +1116,6 @@ test('key guards: a key outside its prefix is a 404 and is never read, for the p
     await setPiece(id, 'background', 'r2_key = $3', [bad]);
     reads.length = 0;
     assert.equal((await request('GET', pieceUrl(id, 'background', 'image'))).status, 404, bad);
-    assert.deepEqual(reads, [], `${bad} never read`);
-  }
-  for (const bad of [`menu-art/${id}/bg.png`, `menu-art/${other}/ref-x.png`, `menu-art/${id}/ref-../x.png`]) {
-    r2.set(bad, { buffer: img.reference, contentType: 'image/png' });
-    await pool.query(
-      "UPDATE menu_drafts SET inputs = inputs || jsonb_build_object('reference_source', 'upload', 'reference_key', $2::text) WHERE proposal_id = $1",
-      [id, bad]);
-    reads.length = 0;
-    assert.equal((await request('GET', `${base(id)}/reference`)).status, 404, bad);
     assert.deepEqual(reads, [], `${bad} never read`);
   }
   for (const bad of [`drink-plan-logos/${planId}0-x.png`, `drink-plan-logos/${planId}-../x.png`, `menu-art/${id}/ref-x.png`]) {

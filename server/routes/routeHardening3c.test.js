@@ -15,8 +15,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Audit 3c-route hardening: input that previously cast-and-threw a Postgres 22P02 -> 500
-// now returns a clean response. calendar /event/:shiftId.ics with a non-numeric id; clients
-// list with a non-numeric / oversized limit.
+// now returns a clean response: the clients list with a non-numeric / oversized limit.
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, baseUrl, adminId, adminToken;
@@ -31,7 +30,6 @@ before(async () => {
 
   const app = express();
   app.use(express.json());
-  app.use('/api/calendar', require('./calendar'));
   app.use('/api/clients', require('./clients'));
   app.use((err, req, res, _next) => {
     if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
@@ -59,11 +57,6 @@ function get(path, token) {
     r.end();
   });
 }
-
-test('calendar GET /event/:shiftId.ics with a non-numeric id -> 404 (not 500)', async () => {
-  const r = await get('/api/calendar/event/not-a-number.ics', adminToken);
-  assert.equal(r.status, 404, `expected 404, got ${r.status} ${JSON.stringify(r.body)}`);
-});
 
 test('clients GET / with a non-numeric limit -> 200 (not a 22P02 500)', async () => {
   const r = await get('/api/clients?limit=abc', adminToken);

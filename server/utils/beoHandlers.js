@@ -130,7 +130,7 @@ async function suppressBeoNudgesForProposal(proposalId, executor, reason) {
  * UPDATE pending BEO rows for the given staffers on the given proposal to
  * suppressed, BUT only when the staffer has no remaining approved active
  * shift on the same proposal. Used by cancel-or-unassign, PUT request deny,
- * DELETE shift, DELETE request, generic PUT cancel.
+ * DELETE shift, DELETE request and the shift reap (shiftReap.js).
  *
  * @param {number} proposalId
  * @param {number[]} userIds

@@ -1,13 +1,12 @@
 /**
  * Cover-approval cascade (spec §6.5 step 2).
  *
- * Shared between two callers:
- *   1. PUT /api/shifts/requests/:requestId (when the approved request has
- *      `replaced_by_request_id` set — admin approving a teammate's claim via
- *      the normal staffing dashboard).
- *   2. POST /api/admin/cover-swaps/:swapToken (one-click admin email link).
+ * Called from PUT /api/shifts/requests/:requestId (when the approved request
+ * has `replaced_by_request_id` set — admin approving a teammate's claim via
+ * the staffing dashboard). The one-click email route (adminCoverSwaps.js) was
+ * removed on 2026-11-19.
  *
- * Both run the same 4-step cascade inside a transaction:
+ * It runs the same 4-step cascade inside a transaction:
  *   1. Mark the original request `status='denied'`, `dropped_at=NOW()`,
  *      `drop_reason='covered_by_request:<newId>'`, `cover_requested_at=NULL`.
  *   2. Suppress remaining `cover_broadcast` scheduled_messages for the shift
@@ -45,11 +44,9 @@ const Sentry = require('@sentry/node');
 const { ConflictError } = require('./errors');
 const { scheduleStaffShiftMessages, computeEventStartUtc } = require('./staffShiftHandlers');
 const { insertBeoNudgeIfMissing } = require('./beoHandlers');
-// Out-of-Area lock (spec 2026-08-06 §6). It lives HERE, not in the callers,
-// because a cover swap is approved from two places — the staffing dashboard
-// (PUT /api/shifts/requests/:id) and the one-click admin email link (POST
-// /api/admin/cover-swaps/:swapToken) — and a lock that moved on only one of
-// them would pay the bonus to a staffer who did not work the shift.
+// Out-of-Area lock (spec 2026-08-06 §6). It lives HERE, inside the cascade, so
+// any approver of a cover swap moves the lock with it: a lock left behind
+// would pay the bonus to a staffer who did not work the shift.
 const { stampOutOfAreaLock, releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
@@ -194,8 +191,8 @@ async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
 
 /**
  * Convenience wrapper for callers that need the full transaction (approve the
- * new request + run the cascade in one atomic unit). Used by both the PUT
- * approval branch in shifts.js and the cover-swap POST in adminCoverSwaps.js.
+ * new request + run the cascade in one atomic unit). Used by the PUT approval
+ * branch (shifts.approval.js).
  *
  * @param {{connect: Function}} pool pg pool (NOT a transaction client)
  * @param {number} originalRequestId

@@ -1,7 +1,6 @@
 // Email-lead attribution vocabulary (email_leads.lead_source).
-// Mirrors server/utils/clientSources.js (LEAD_SOURCES) — the canonical list.
-// Keep both files in sync when adding a value, and also update:
-//   - server/routes/emailMarketing.js VALID_LEAD_SOURCES validator
+// The canonical set is the CHECK below. When adding a value, update all of:
+//   - server/routes/emailMarketing/leads.js VALID_LEAD_SOURCES validator
 //   - the email_leads_lead_source_check CHECK in server/db/schema.sql
 //     (base def + migration)
 // Consumers (filter dropdowns, edit forms, audience selector) pick up new

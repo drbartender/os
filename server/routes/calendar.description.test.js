@@ -12,17 +12,16 @@
 // purges every one in after().
 //
 // WHY route-level (not a pure buildAdminDescription unit): the bug this pins is
-// a SELECT-column bug — `p.amount_paid` must be projected at BOTH admin query
-// sites (the feed query AND the single-shift /event route) or the Balance line
-// renders `NaN`. A pure builder test would pass even with the column missing
-// from the query. So both routes are exercised end-to-end here.
+// a SELECT-column bug — `p.amount_paid` must be projected by the admin feed
+// query or the Balance line renders `NaN`. A pure builder test would pass even
+// with the column missing from the query. So the feed route is exercised
+// end-to-end here (the single-shift /event route was removed as uncalled).
 require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const express = require('express');
-const jwt = require('jsonwebtoken');
 
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
@@ -31,7 +30,6 @@ const calendarRouter = require('./calendar');
 // ─── Shared harness state ──────────────────────────────────────────────────
 let server;
 let baseUrl;
-let adminToken;        // JWT for the admin user (single-shift /event route)
 let calendarToken;     // the admin user's calendar_token UUID (feed route)
 let shiftId;
 
@@ -87,10 +85,6 @@ before(async () => {
   const admin = adminRes.rows[0];
   created.userIds.push(admin.id);
   calendarToken = admin.calendar_token;
-  adminToken = jwt.sign(
-    { userId: admin.id, tokenVersion: admin.token_version },
-    process.env.JWT_SECRET, { expiresIn: '1h' }
-  );
 
   // Staff teammate + contractor profile (preferred_name drives the Team line).
   const staffRes = await pool.query(
@@ -219,14 +213,3 @@ test('admin feed DESCRIPTION uses iCal-escaped real newlines, ordered lines, and
   assert.ok(idx('Notes:') < idx('Open in OS:'), 'notes before open-in-os');
 });
 
-// ─── Single-shift /event route Balance (2nd SELECT site) ──────────────────
-test('single-shift .ics route projects amount_paid so Balance renders (no NaN)', async () => {
-  const res = await request('GET', `/api/calendar/event/${shiftId}.ics`, { token: adminToken });
-  assert.equal(res.status, 200);
-
-  const desc = descForShift(res.raw, shiftId);
-  assert.ok(desc, 'expected a DESCRIPTION property in the single-shift feed');
-  assert.ok(desc.includes('Balance: paid'), `expected "Balance: paid"; got: ${desc}`);
-  assert.ok(!desc.includes('NaN'), 'Balance must not render NaN (amount_paid missing from SELECT)');
-  assert.ok(desc.includes(`/events/shift/${shiftId}`), 'OS shift deep-link missing in single-shift feed');
-});

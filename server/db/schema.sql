@@ -859,8 +859,8 @@ CREATE TABLE IF NOT EXISTS clients (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(50),
-  -- Value set mirrors server/utils/clientSources.js (CLIENT_SOURCES). Keep in
-  -- sync; the live definition is the clients_source_check migration block below.
+  -- The live definition is the clients_source_check migration block below; keep
+  -- server/routes/clients.js VALID_SOURCES and client/src/utils/clientSources.js in sync.
   source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other')),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1528,9 +1528,9 @@ CREATE TABLE IF NOT EXISTS email_leads (
   company VARCHAR(255),
   event_type VARCHAR(100),
   location VARCHAR(255),
-  -- Value set mirrors server/utils/clientSources.js (LEAD_SOURCES). Keep in
-  -- sync; the replayed email_leads_lead_source_check migration below is the
-  -- live definition.
+  -- The replayed email_leads_lead_source_check migration below is the live
+  -- definition; keep server/routes/emailMarketing/leads.js VALID_LEAD_SOURCES
+  -- and client/src/utils/leadSources.js in sync.
   lead_source VARCHAR(100) DEFAULT 'manual'
     CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other')),
   notes TEXT,
@@ -1816,8 +1816,8 @@ ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list JSONB;
 
 -- Admin-review gate for shopping lists. The list is auto-generated server-side
 -- when the plan is submitted (status='pending_review'); admin reviews/edits in
--- the existing modal then approves (PATCH /shopping-list/approve flips to
--- 'approved') which is when the public client view starts returning the list.
+-- the modal then approves (shopping_list_approve via POST /api/comms/send flips
+-- to 'approved') which is when the public client view starts returning the list.
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_status VARCHAR(20);
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_approved_at TIMESTAMPTZ;
 DO $$ BEGIN
@@ -2730,7 +2730,7 @@ END $$;
 -- constraint omitted it, causing every wizard lead capture to fail with a
 -- constraint violation. Replace the constraint to include wizard + lab
 -- sources used by public funnels.
--- Value set mirrors server/utils/clientSources.js (LEAD_SOURCES) — canonical.
+-- This CHECK is canonical; leads.js VALID_LEAD_SOURCES and client leadSources.js mirror it.
 ALTER TABLE email_leads DROP CONSTRAINT IF EXISTS email_leads_lead_source_check;
 ALTER TABLE email_leads ADD CONSTRAINT email_leads_lead_source_check
   CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other'));
@@ -3560,7 +3560,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- replayed every boot, so any new source value MUST be added HERE (a second
 -- drop-and-re-add block later in the file would make this one's VALIDATE
 -- fail once rows with the new value exist).
--- Value set mirrors server/utils/clientSources.js (CLIENT_SOURCES) — canonical.
+-- This CHECK is canonical; routes/clients.js VALID_SOURCES and client clientSources.js mirror it.
 ALTER TABLE clients
   ADD CONSTRAINT clients_source_check
   CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other'))
@@ -4639,7 +4639,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_transferred_cc_id
 -- Durable drink-plan nudge suppression (cc-transfer per-lane review BLOCKER):
 -- deleting pending nudge rows is not durable — any admin PATCH re-runs
 -- schedulePreEventReminders and re-inserts them. The flag survives every
--- automatic re-run; the admin reenroll-drink-plan-nudge endpoint clears it.
+-- automatic re-run; drink_plan_nudge_reenroll (POST /api/comms/send) clears it.
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS nudge_suppressed BOOLEAN NOT NULL DEFAULT false;
 
 -- ─── Potions: par catalog + structured recipes ───────────────────

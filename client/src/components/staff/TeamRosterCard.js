@@ -7,7 +7,7 @@ import React from 'react';
  * TeamRosterCard — "On the team" card for the staff portal ShiftDetail
  * page (spec §6.4, §6.18).
  *
- * Consumes the `team_roster[]` projection from GET /api/beo/:proposalId.
+ * Consumes the `team_roster[]` projection from GET /api/shifts/:shiftId/event-details.
  * Each roster row is a server-derived shape:
  *   { user_id, display_name, initials, is_me, role,
  *     phone (string|null — gated by viewer's approved status),

@@ -7,7 +7,7 @@ const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
-const { ValidationError, NotFoundError } = require('../utils/errors');
+const { ValidationError } = require('../utils/errors');
 const { getCurrentAgreement, CURRENT_VERSION } = require('../data/contractorAgreement');
 const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
@@ -46,18 +46,6 @@ router.get('/', auth, asyncHandler(async (req, res) => {
     [req.user.id]
   );
   res.json(result.rows[0] || {});
-}));
-
-// ── GET /api/agreement/download — signed R2 URL to the PDF ───────────
-router.get('/download', auth, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    'SELECT pdf_storage_key FROM agreements WHERE user_id = $1',
-    [req.user.id]
-  );
-  const key = result.rows[0]?.pdf_storage_key;
-  if (!key) throw new NotFoundError('Signed agreement PDF not available.');
-  const url = await getSignedUrl(key);
-  res.json({ url });
 }));
 
 // ── POST /api/agreement — sign ───────────────────────────────────────

@@ -19,7 +19,6 @@ const ROUTES_DIR = path.join(__dirname, '..', 'routes');
 // composition routers under it). Only used to make a sample look like the real
 // URL: the value rules redact a UUID or a JWT wherever it sits.
 const MOUNTS = {
-  'adminCoverSwaps.js': '/api/admin',
   'calendar.js': '/api/calendar',
   'clientPortal.js': '/api/client-portal',
   'clientPortal/changeRequests.js': '/api/client-portal',
@@ -46,7 +45,6 @@ const MOUNTS = {
 // system mints for it. A new token route goes here; if its token is neither
 // a UUID nor a JWT, it also needs a path rule in scrubUrl and a shape below.
 const TOKEN_ROUTES = {
-  'adminCoverSwaps.js /cover-swaps/:swapToken': 'jwt',
   'calendar.js /feed/:token': 'uuid',
   'clientPortal.js /proposals/:token': 'uuid',
   'clientPortal/changeRequests.js /proposals/:token/calculate': 'uuid',

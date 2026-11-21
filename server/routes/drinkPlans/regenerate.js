@@ -1,7 +1,7 @@
 // POST /api/drink-plans/:id/shopping-list/regenerate — build a FRESH list
 // from the plan's stored inputs and the live par catalog, and return it
-// WITHOUT saving. The modal's existing PUT /:id/shopping-list and
-// PATCH /:id/shopping-list/approve remain the only writers.
+// WITHOUT saving. The modal's existing PUT /:id/shopping-list and the
+// shopping_list_approve comms action remain the only writers.
 //
 // This is the server-side replacement for the client-side generator mirror
 // (there was no server manual-generate path before this). Mounted in

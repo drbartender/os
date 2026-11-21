@@ -430,31 +430,6 @@ function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiri
   };
 }
 
-// ─── Abandoned Quote Email ──────────────────────────────────────────
-
-/**
- * Reference template for abandoned quote followup emails.
- * The actual email content is stored in the email_sequence_steps table
- * for the "Abandoned Quote Followup" campaign, using {{name}} and
- * {{resume_url}} placeholders that the scheduler replaces at send time.
- */
-function abandonedQuote({ clientName, resumeUrl }) {
-  const name = clientName || 'there';
-  return {
-    subject: 'Still planning your event? Your quote is waiting',
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
-      <p>Hi ${esc(firstNameOf(name))},</p>
-      <p>We noticed you started putting together a quote for your event but didn't finish.
-         No worries, your progress is saved and ready for you!</p>
-      ${ctaButton(resumeUrl, 'Continue Your Quote')}
-      <p style="margin-top:24px;">If you have any questions, just reply to this email, we'd love to help.</p>
-      <p>Cheers, Dallas</p>
-    `),
-    text: `Hi ${firstNameOf(name)}, your quote is waiting! Continue where you left off: ${resumeUrl}`,
-  };
-}
-
 // ─── Marketing Email Template ──────────────────────────────────────
 
 /**
@@ -907,7 +882,6 @@ module.exports = {
   // applicationHired). staffHiringEmailTemplates.js is a leaf module (duplicates
   // the shared helpers, no require back into this file), so the spread is safe.
   ...require('./staffHiringEmailTemplates'),
-  abandonedQuote,
   newThumbtackLeadAdmin,
   missedLeadCallAdmin,
   consultCallAdmin,

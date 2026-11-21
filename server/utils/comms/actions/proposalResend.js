@@ -192,8 +192,7 @@ async function buildMessages(proposalId) {
 /**
  * Validate-only, no state change: the legacy resend never bumped status or
  * sent timestamps. This refuses a legal-hold proposal (409 LEGAL_HOLD, law 15;
- * POST /api/comms/send and the deprecated POST /api/proposals/:id/resend both
- * call it before dispatch) and enforces the resendable-status guard (throws), so
+ * POST /api/comms/send calls it before dispatch) and enforces the resendable-status guard (throws), so
  * a retry-after-failed-send is safe (nothing to un-apply). Second call is an
  * identical no-op.
  */

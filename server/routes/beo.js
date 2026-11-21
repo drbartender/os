@@ -1,13 +1,12 @@
-// Event-details read routes for staff + admin, proposal-keyed.
+// Event-details logo and acknowledge routes for staff + admin, proposal-keyed.
 //
-// GET /api/beo/:proposalId       — full event-details payload (shared builder).
 // GET /api/beo/:proposalId/logo  — proxied download of the drink-plan logo (R2 stays private).
 // POST /api/beo/:proposalId/acknowledge — a worker confirms they have read it.
 //
-// The staff portal calls the shift-keyed sibling (GET /api/shifts/:shiftId/
-// event-details, server/routes/eventDetails.js); these paths stay for the admin
-// "View event details" link and already-sent nudge links. Both share
-// server/utils/eventDetailsPayload.js.
+// The payload itself is read through the shift-keyed GET /api/shifts/:shiftId/
+// event-details (server/routes/eventDetails.js, built by
+// server/utils/eventDetailsPayload.js); the proposal-keyed GET had no caller
+// and was removed on 2026-11-19.
 //
 // Route paths and the `beo_*` column/key names are deliberately frozen: the
 // 2026-07-22 spec renamed only the words staff read, never the identifiers.
@@ -26,16 +25,9 @@ const { beoReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
 const { getSignedUrl } = require('../utils/storage');
-const { authorizeEventRead, buildEventDetailsPayload } = require('../utils/eventDetailsPayload');
+const { authorizeEventRead } = require('../utils/eventDetailsPayload');
 
 const router = express.Router();
-
-router.get('/:proposalId', auth, requireOnboarded, beoReadLimiter, asyncHandler(async (req, res) => {
-  const proposalId = parseInt(req.params.proposalId, 10);
-  if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
-  await authorizeEventRead(req, proposalId);
-  res.json(await buildEventDetailsPayload(req, proposalId));
-}));
 
 // Staff-authenticated logo proxy. Reads `drink_plans.selections->>'_logoFilename'` (validated to
 // start with `drink-plan-logos/`), fetches the signed URL from R2 with an 8 s timeout, streams the

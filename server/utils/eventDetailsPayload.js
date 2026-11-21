@@ -1,8 +1,9 @@
 // Staff event-details payload builder (spec 2026-07-22).
 //
-// Extracted from server/routes/beo.js so two routes can share one body:
-//   GET /api/beo/:proposalId                  (proposal-keyed, legacy + admin)
+// Extracted from server/routes/beo.js. Its one reader is
 //   GET /api/shifts/:shiftId/event-details     (shift-keyed, the staff page)
+// (the proposal-keyed GET /api/beo/:proposalId was removed as uncalled on
+// 2026-11-19); authorizeEventRead also gates beo.js's logo route.
 //
 // READ AUTHORIZATION (loosened by the 2026-07-22 spec). Staff decide whether to
 // REQUEST a shift from this payload, so gating the read behind an approved

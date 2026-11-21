@@ -1,6 +1,6 @@
 // Warn-only heuristic flagging email domains one edit from a common TLD
 // (.com/.net/.org) or a major mail provider. Not a format validator.
-// Kept in sync manually with client/src/utils/emailValidation.js (same pattern as eventTypes.js ESM/CJS pair).
+// Server-only since 2026-11-19 (the uncalled client copy was removed).
 
 const LEGIT_TLDS = ['co', 'com', 'net', 'org', 'io', 'us', 'biz', 'info', 'edu', 'gov', 'me'];
 const TYPO_TLD_TARGETS = ['com', 'net', 'org'];

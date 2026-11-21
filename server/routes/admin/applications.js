@@ -252,15 +252,6 @@ router.post('/applications/:userId/notes', auth, adminOnly, asyncHandler(async (
   res.status(201).json(notesRes.rows);
 }));
 
-// Delete interview note
-router.delete('/notes/:noteId', auth, adminOnly, asyncHandler(async (req, res) => {
-  const noteId = parseInt(req.params.noteId, 10);
-  if (!Number.isFinite(noteId)) throw new ValidationError({ note_id: 'Invalid note id' });
-  const result = await pool.query('DELETE FROM interview_notes WHERE id = $1 RETURNING id', [noteId]);
-  if (!result.rows[0]) throw new NotFoundError('Note not found');
-  res.json({ success: true });
-}));
-
 // ─── Interview scheduling ─────────────────────────────────────────
 
 // Schedule (or reschedule) an interview. Body: { interview_at, notes?, send_email? }.

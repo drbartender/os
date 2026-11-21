@@ -1,6 +1,5 @@
 // Client acquisition source vocabulary (clients.source dropdown + badges).
-// Mirrors server/utils/clientSources.js (CLIENT_SOURCES) — the canonical list.
-// Keep both files in sync when adding a source, and also update:
+// The canonical set is the CHECK below. When adding a source, update all of:
 //   - server/routes/clients.js VALID_SOURCES validator
 //   - the clients_source_check CHECK in server/db/schema.sql (base def + migration)
 //   - the local `SOURCE` badge maps in client/src/pages/admin/ClientsDashboard.js

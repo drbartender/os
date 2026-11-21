@@ -8,7 +8,6 @@ const router = express.Router();
 router.use('/', require('./users'));
 router.use('/', require('./contractorTipPage'));
 router.use('/', require('./applications'));
-router.use('/', require('./managers'));
 router.use('/', require('./blog'));
 router.use('/', require('./settings'));
 router.use('/', require('./hiring'));

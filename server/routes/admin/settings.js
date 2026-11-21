@@ -1,9 +1,8 @@
-// /settings + /test-email + /backfill-geocodes + /badge-counts
+// /settings + /backfill-geocodes + /badge-counts
 
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
-const { sendEmail } = require('../../utils/email');
 const { geocodeAddress, buildAddressString, delay } = require('../../utils/geocode');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
@@ -18,32 +17,6 @@ const { getWaitingCount } = require('../../utils/inbox/engine');
 const { BADGE_TIMEOUT_MS } = require('../../utils/inbox/constants');
 
 const router = express.Router();
-
-// ─── Test Email ──────────────────────────────────────────────────
-
-// Send test email via Resend
-router.post('/test-email', auth, adminOnly, asyncHandler(async (req, res) => {
-  const { to } = req.body;
-  if (!to) throw new ValidationError({ to: 'Recipient email (to) is required.' });
-
-  const result = await sendEmail({
-    to,
-    subject: 'Dr. Bartender - Test Email',
-    html: `
-      <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-        <h1 style="color: #2d1810; text-align: center;">Dr. Bartender</h1>
-        <p style="color: #333; font-size: 16px; text-align: center;">
-          If you're reading this, email sending is working!
-        </p>
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;" />
-        <p style="color: #999; font-size: 12px; text-align: center;">
-          This is a test email from drbartender.com
-        </p>
-      </div>
-    `,
-  });
-  res.json({ success: true, id: result.id });
-}));
 
 // ─── App Settings ────────────────────────────────────────────────
 

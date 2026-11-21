@@ -1,5 +1,5 @@
 /**
- * Two-way lead conversations: threads, replies, read and replied state.
+ * Two-way lead conversations: threads, replies and replied state.
  *
  * Extracted from the single 987-line emailMarketing.js. Paths and mount
  * order are unchanged; see ./index.js for why the order still matters.
@@ -75,16 +75,6 @@ router.post('/conversations/:leadId/reply', auth, requireAdminOrManager, asyncHa
   );
 
   res.status(201).json(convo.rows[0]);
-}));
-
-/** PUT /conversations/:conversationId/read — mark as read */
-router.put('/conversations/:conversationId/read', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    'UPDATE email_conversations SET read_at = NOW() WHERE id = $1 RETURNING *',
-    [req.params.conversationId]
-  );
-  if (!result.rows[0]) throw new NotFoundError('Conversation not found.');
-  res.json(result.rows[0]);
 }));
 
 /** POST /conversations/:leadId/mark-replied — manual mark as replied */

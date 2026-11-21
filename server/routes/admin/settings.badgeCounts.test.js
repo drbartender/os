@@ -6,7 +6,7 @@ require('dotenv').config();
 // Closes Sentry DRBARTENDER-SERVER-R, where a manager's 60s dashboard poll 403'd
 // and emitted a role_denial warning every minute.
 //
-// Hand-rolled harness mirrors adminCoverSwaps.test.js: a minimal express() app with
+// Hand-rolled harness (the repo's usual pattern): a minimal express() app with
 // the real router + real auth/role middleware, driven via node:http + node:test.
 
 const { test, before, after } = require('node:test');

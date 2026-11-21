@@ -80,7 +80,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       }
     }
 
-    // Grouped proposals are sent together via POST /:id/send-group (one compare
+    // Grouped proposals are sent together via the proposal_send_group comms action (one compare
     // email, deferred invoicing). Block the solo send path so a grouped option
     // never gets its own proposalSent email + eager invoice. Applies even under
     // force: solo-sending a grouped option is always wrong (dissolve it first).
@@ -303,82 +303,6 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
   }
 
   res.json(result.rows[0]);
-}));
-
-/**
- * POST /api/proposals/:id/resend — DEPRECATED direct resend, kept mounted for
- * API compatibility. Delegates to the proposal_resend comms action (plan P1):
- * validate-only side effects (the resendable-status guard; status/timestamps
- * stay untouched, as before), then the default unedited proposalSent email +
- * initial-proposal SMS on the action's default channels, awaited and ledgered
- * by the action (skipLog inside), never fire-and-forget. The action honors the
- * legacy SMS suppression (opted-out / bad phone -> SMS unavailable). New UI goes
- * through POST /api/comms/send instead. A 'resent' activity row still records it.
- */
-router.post('/:id/resend', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const { getAction } = require('../../utils/comms/registry');
-  const action = getAction('proposal_resend');
-  const proposalId = parseInt(req.params.id, 10);
-
-  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
-  const results = await action.dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: req.user.id });
-
-  // The activity log is secondary to the send that already went out — never let
-  // a logging blip 500 the request (that would prompt a duplicate resend).
-  try {
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-       VALUES ($1, 'resent', 'admin', $2, $3)`,
-      [proposalId, req.user.id, JSON.stringify({ via: 'admin_resend' })]
-    );
-  } catch (logErr) {
-    console.error('Resend activity-log insert failed (non-blocking) for proposal', proposalId, logErr.code || logErr.name);
-  }
-
-  res.json({
-    ok: true,
-    email: results.email,
-    sms: results.sms,
-    email_error: results.email_error || null,
-    sms_error: results.sms_error || null,
-    skip_reasons: results.skip_reasons,
-    recipient_email: results.recipient_email || null,
-    recipient_phone: results.recipient_phone || null,
-  });
-}));
-
-/**
- * POST /api/proposals/:id/portal-invite — DEPRECATED direct portal invite, kept
- * mounted for API compatibility. Delegates to the portal_invite comms action
- * (plan P1): no state side effect (the OTP portal mints no token), then the
- * default unedited invite email on the action's default (email-only) channel,
- * awaited and ledgered by the action. New UI goes through POST /api/comms/send.
- * The activity log is secondary and never 500s an already-sent invite.
- */
-router.post('/:id/portal-invite', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const { getAction } = require('../../utils/comms/registry');
-  const action = getAction('portal_invite');
-  const proposalId = parseInt(req.params.id, 10);
-
-  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
-  const results = await action.dispatch(proposalId, undefined, ['email'], { sentBy: req.user.id });
-
-  try {
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-       VALUES ($1, 'portal_invite_sent', 'admin', $2, $3)`,
-      [proposalId, req.user.id, JSON.stringify({ via: 'admin_invite' })]
-    );
-  } catch (logErr) {
-    console.error('Portal-invite activity-log insert failed (non-blocking) for proposal', proposalId, logErr.code || logErr.name);
-  }
-
-  res.json({
-    ok: true,
-    email: results.email,
-    email_error: results.email_error || null,
-    recipient_email: results.recipient_email || null,
-  });
 }));
 
 module.exports = router;

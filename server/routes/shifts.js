@@ -3,8 +3,6 @@
 const express = require('express');
 const { pool } = require('../db');
 const { auth, requireOnboarded } = require('../middleware/auth');
-const { geocodeAddress } = require('../utils/geocode');
-const { autoAssignShift } = require('../utils/autoAssign');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
@@ -290,60 +288,6 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
     .filter(r => { const ds = getDateStr(r.event_date); return !ds || ds < today; });
 
   res.json({ upcoming, past });
-}));
-
-/** GET /shifts/my-requests — current user's shift history (with team for approved) */
-router.get('/my-requests', auth, asyncHandler(async (req, res) => {
-  const result = await pool.query(`
-    SELECT sr.*, s.event_type, s.event_type_custom, s.client_name,
-           s.event_date, s.start_time, s.end_time, s.location,
-           s.setup_minutes_before, s.status AS shift_status
-    FROM shift_requests sr
-    JOIN shifts s ON s.id = sr.shift_id
-    WHERE sr.user_id = $1
-    ORDER BY s.event_date DESC
-    LIMIT 500
-  `, [req.user.id]);
-
-  const requests = result.rows;
-
-  // Fetch approved teammates for shifts where this user is approved
-  const approvedShiftIds = requests
-    .filter(r => r.status === 'approved')
-    .map(r => r.shift_id);
-
-  let teamsMap = new Map();
-  if (approvedShiftIds.length > 0) {
-    const teamRes = await pool.query(`
-      SELECT sr.shift_id, sr.user_id, sr.position,
-        COALESCE(cp.display_name, cp.preferred_name, u.email) AS name
-      FROM shift_requests sr
-      JOIN users u ON u.id = sr.user_id
-      LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-      WHERE sr.shift_id = ANY($1) AND sr.status = 'approved' AND sr.dropped_at IS NULL
-      ORDER BY name ASC
-    `, [approvedShiftIds]);
-
-    for (const row of teamRes.rows) {
-      if (!teamsMap.has(row.shift_id)) teamsMap.set(row.shift_id, []);
-      teamsMap.get(row.shift_id).push(row);
-    }
-  }
-
-  // Attach team to each request, moving current user to top
-  const enriched = requests.map(r => {
-    const team = teamsMap.get(r.shift_id) || [];
-    // Move current user to top of list
-    const sorted = [...team];
-    const myIdx = sorted.findIndex(t => t.user_id === req.user.id);
-    if (myIdx > 0) {
-      const [me] = sorted.splice(myIdx, 1);
-      sorted.unshift(me);
-    }
-    return { ...r, team: r.status === 'approved' ? sorted : [] };
-  });
-
-  res.json(enriched);
 }));
 
 /** GET /shifts/by-proposal/:proposalId — return every shift attached to a
@@ -802,24 +746,5 @@ router.get('/:id/requests', auth, requireStaffing, asyncHandler(async (req, res)
  *  position is resolved from the staffer's ranked requested_positions or an
  *  admin override (the money seam); see shifts.approval.js. */
 router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(approveOrDenyRequestHandler));
-
-/** POST /shifts/:id/auto-assign — run auto-assign algorithm on pending requests */
-router.post('/:id/auto-assign', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const { dry_run } = req.body;
-  // Ensure shift has lat/lng; geocode if missing
-  const shiftRes = await pool.query('SELECT id, location, lat, lng FROM shifts WHERE id = $1', [req.params.id]);
-  if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
-
-  const shift = shiftRes.rows[0];
-  if (shift.lat === null && shift.lng === null && shift.location) {
-    const coords = await geocodeAddress(shift.location);
-    if (coords) {
-      await pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
-    }
-  }
-
-  const result = await autoAssignShift(req.params.id, { dryRun: !!dry_run });
-  res.json(result);
-}));
 
 module.exports = router;

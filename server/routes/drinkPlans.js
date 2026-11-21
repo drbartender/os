@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
-const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
+const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter } = require('../middleware/rateLimiters');
 const { requireUuidToken } = require('../utils/tokens');
 
 const asyncHandler = require('../middleware/asyncHandler');
@@ -521,39 +521,8 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
   res.json(result.rows[0]);
 }));
 
-/** PATCH /api/drink-plans/:id/status — update plan status. A plain setter
- *  since 2026-09-22 (approving the shopping list is the review and the only
- *  derived-finalize trigger; nothing in the UI sends 'reviewed' any more).
- *  Carries the drink-plan write limiter like finalize/unfinalize. The
- *  finalize lock lives INSIDE the UPDATE (not a pre-check): an approve in
- *  another tab can finalize the plan between a check and the write, and a
- *  status change must never land on a finalized plan. Zero rows on an
- *  existing plan is that lock. */
-router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
-  const planId = parseInt(req.params.id, 10);
-  if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');
-  const { status } = req.body;
-  if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
-    throw new ValidationError({ status: 'Invalid status.' });
-  }
-  const result = await pool.query(
-    'UPDATE drink_plans SET status = $1 WHERE id = $2 AND finalized_at IS NULL RETURNING *',
-    [status, planId]
-  );
-  if (!result.rows[0]) {
-    await ensureNotFinalized(planId); // throws the lock 409 when that is why
-    throw new NotFoundError('Plan not found.');
-  }
-  // Snapshot blob stays off the wire (same as the by-proposal create path).
-  // A plain setter since 2026-09-22: approving the shopping list is the
-  // review and the only derived-finalize trigger, so flipping status here
-  // finalizes nothing (no UI sends 'reviewed' any more; it is kept for API
-  // callers and for resetting a plan to draft/pending).
-  const { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
-  res.json(statusRow);
-}));
 registerFinalizeRoute(router); registerUnfinalizeRoute(router);
-// GET /:id/shopping-list, PUT /:id/shopping-list, PATCH /:id/shopping-list/approve
+// GET /:id/shopping-list and PUT /:id/shopping-list
 // — extracted to ./drinkPlans/shoppingList.js. Registered here, immediately
 // after the finalize routes and before POST /:id/logo, to preserve their
 // original position in the router's matching order.
@@ -636,50 +605,6 @@ router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res)
   const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json({ success: true });
-}));
-
-/**
- * POST /api/drink-plans/:id/resend-nudge — DEPRECATED direct resend, kept
- * mounted for API compatibility. Delegates to the drink_plan_nudge comms action
- * (spec 4.4): the action resolves the LIVE client email + phone via the proposal
- * join, enforces the archived block (ensureSideEffects), honors the SMS opt-out
- * / bad-phone gate through channel availability, and OWNS its ledger writes
- * (sent + failed) so a provider throw can never leave a sent-but-unlogged
- * message. This is the admin "Resend planner link" button; unlike the scheduled
- * T-21 nudge it does NOT suppress on an already-filled plan (deliberate admin
- * override). Links use the DRINK-PLAN token, which is what /plan/:token
- * resolves. New UI goes through POST /api/comms/send instead.
- */
-router.post('/:id/resend-nudge', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const { getAction } = require('../utils/comms/registry');
-  const action = getAction('drink_plan_nudge');
-  const planId = parseInt(req.params.id, 10);
-
-  const recipient = await action.resolveRecipient(planId);
-  // Archived block first (matches the legacy ordering) — throws before any send;
-  // no other bookkeeping.
-  await action.ensureSideEffects(planId, { sentBy: req.user.id });
-
-  const channels = [];
-  if (recipient.channels.email.available) channels.push('email');
-  if (recipient.channels.sms.available) channels.push('sms');
-  if (channels.length === 0) {
-    // No live email AND no sendable phone (missing, opted out, or bad status).
-    throw new ValidationError({}, 'No client email or phone on file to resend to.');
-  }
-
-  const results = await action.dispatch(planId, undefined, channels, { sentBy: req.user.id });
-
-  // Additive, backward-compatible response ({ ok: true } preserved).
-  res.json({
-    ok: true,
-    email: results.email,
-    sms: results.sms,
-    email_error: results.email_error || null,
-    sms_error: results.sms_error || null,
-    recipient_email: results.recipient_email || null,
-    recipient_phone: results.recipient_phone || null,
-  });
 }));
 
 module.exports = router;

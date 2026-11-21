@@ -363,10 +363,6 @@ app.use('/api/admin/thumbtack', require('./routes/thumbtackAgent'));
 app.use('/api/gv-agent', require('./routes/gvAgent'));
 app.use('/api/admin/packages', require('./routes/packages'));
 app.use('/api/admin', require('./routes/admin'));
-// Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
-// so the routing-table audit lines up with the other admin surfaces. JWT
-// swap-token + auth + admin-role guard is inside the router.
-app.use('/api/admin', require('./routes/adminCoverSwaps'));
 app.use('/api/shifts', require('./routes/shifts'));
 // Staff portal Drop / Cover marketplace endpoints (spec §6.5). Mounted AFTER
 // routes/shifts.js so the existing shifts.js routes have first-match priority

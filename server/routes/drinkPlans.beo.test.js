@@ -327,12 +327,6 @@ async function reFinalize() {
   );
 }
 
-test('PATCH /:id/status > 409 when finalized', async () => {
-  await reFinalize();
-  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/status`, { token: adminToken, body: { status: 'submitted' } });
-  assert.strictEqual(res.status, 409);
-});
-
 test('PATCH /:id/notes > 409 when finalized', async () => {
   await reFinalize();
   const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/notes`, { token: adminToken, body: { admin_notes: 'updated' } });
@@ -342,12 +336,6 @@ test('PATCH /:id/notes > 409 when finalized', async () => {
 test('PUT /:id/shopping-list > 409 when finalized', async () => {
   await reFinalize();
   const res = await request('PUT', `/api/drink-plans/${drinkPlanId}/shopping-list`, { token: adminToken, body: { shopping_list: { items: [] } } });
-  assert.strictEqual(res.status, 409);
-});
-
-test('PATCH /:id/shopping-list/approve > 409 when finalized', async () => {
-  await reFinalize();
-  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/shopping-list/approve`, { token: adminToken });
   assert.strictEqual(res.status, 409);
 });
 

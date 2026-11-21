@@ -429,8 +429,8 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   );
 
   // 12. Schedule the day-before reminder + post-event thank-you SMS for every
-  // approved staffer on this shift (idempotent). Best-effort: covers both the
-  // POST /shifts/:id/auto-assign route and the hourly auto-assign scheduler.
+  // approved staffer on this shift (idempotent). Best-effort; the hourly
+  // auto-assign scheduler is the one caller.
   try {
     await scheduleStaffShiftMessages(shiftId);
   } catch (schedErr) {

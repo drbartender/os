@@ -169,3 +169,63 @@ test('placeholder .invalid email is unavailable at resolve and never reported se
     await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [TEST_EMAIL, clientId]);
   }
 });
+
+test('a finalized plan refuses a FRESH approve with 409 finalized and leaves the list unapproved', async () => {
+  // The finalize lock: the approve UPDATE carries finalized_at IS NULL, and a
+  // list not yet approved on a finalized plan is refused, not silently no-oped.
+  await pool.query(
+    `UPDATE drink_plans
+        SET shopping_list_status = 'pending_review', shopping_list_approved_at = NULL,
+            shopping_list_approved_snapshot = NULL, finalized_at = NOW()
+      WHERE id = $1`,
+    [planId]
+  );
+  try {
+    await assert.rejects(
+      getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: null }),
+      (err) => err.statusCode === 409 && err.code === 'finalized'
+    );
+    const { rows } = await pool.query(
+      'SELECT shopping_list_status, shopping_list_approved_at FROM drink_plans WHERE id = $1',
+      [planId]
+    );
+    assert.equal(rows[0].shopping_list_status, 'pending_review', 'the lock wrote nothing');
+    assert.equal(rows[0].shopping_list_approved_at, null);
+  } finally {
+    await pool.query('UPDATE drink_plans SET finalized_at = NULL WHERE id = $1', [planId]);
+  }
+});
+
+// The drink-plan re-enroll action's two refusals, pinned through
+// ensureSideEffects now that the direct admin route that carried them is gone.
+test('drink_plan_nudge_reenroll refuses an unknown proposal with 404', async () => {
+  const { rows } = await pool.query('SELECT COALESCE(MAX(id), 0) + 1000000 AS id FROM proposals');
+  await assert.rejects(
+    getAction('drink_plan_nudge_reenroll').ensureSideEffects(rows[0].id),
+    (err) => err.statusCode === 404 && err.code === 'NOT_FOUND'
+  );
+});
+
+test('drink_plan_nudge_reenroll refuses a proposal with no drink plan with 409 NO_DRINK_PLAN', async () => {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, total_price, amount_paid)
+     VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'sent', 'wedding-reception', 100000, 0)
+     RETURNING id`,
+    [clientId]
+  );
+  const noPlanId = p.rows[0].id;
+  try {
+    await assert.rejects(
+      getAction('drink_plan_nudge_reenroll').ensureSideEffects(noPlanId),
+      (err) => err.statusCode === 409 && err.code === 'NO_DRINK_PLAN'
+    );
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1",
+      [noPlanId]
+    );
+    assert.equal(rows[0].n, 0, 'the refusal scheduled nothing');
+  } finally {
+    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [noPlanId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [noPlanId]);
+  }
+});

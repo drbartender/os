@@ -43,7 +43,7 @@ async function loadShift(shiftId) {
   return row;
 }
 
-// Same payload as `GET /api/beo/:proposalId` plus `shift_id`. A cancelled or unknown shift 404s. A
+// The shared event-details payload (utils/eventDetailsPayload.js) plus `shift_id`. A cancelled or unknown shift 404s. A
 // legacy shift with no `proposal_id` returns a shift-only brief (`proposal: null`,
 // `menu_print: {status:'not_required'}` so consumers never branch on null, one row in `shifts[]`)
 // so a requestable manual shift still renders.

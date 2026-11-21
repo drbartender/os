@@ -122,7 +122,7 @@ async function buildMessages(proposalId) {
  * per-option invoice (deferred to the winner) and NO per-option proposalSent
  * (suppressed in favor of the one compare email dispatch sends). Idempotent: a
  * re-run finds no draft members, flips nothing, and reports applied:false, so
- * the deprecated route skips the compare email exactly as groupSend's
+ * POST /api/comms/send skips dispatch (bar an explicit retry) exactly as groupSend's
  * "only-email-when-newly-sent" dedupe did. One pooled connection for the whole
  * transaction (no bare pool.query inside).
  */

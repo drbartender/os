@@ -1,6 +1,11 @@
 require('dotenv').config();
 
-// Route-level tests for GET /api/beo/:proposalId and /:proposalId/logo.
+// Route-level tests for GET /api/beo/:proposalId/logo (including the event read
+// gate's refusals) and POST /acknowledge, plus
+// the shared event-details payload, read through its one live route (GET
+// /api/shifts/:shiftId/event-details) since the proposal-keyed GET was removed
+// as uncalled on 2026-11-19. eventDetails.test.js owns that route's 404 and
+// onboarding cases; these cover the payload (redaction, roster, menu_print).
 //
 // HARNESS NOTES
 // -------------
@@ -27,6 +32,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
 const beoRouter = require('./beo');
+const eventDetailsRouter = require('./eventDetails');
 
 // ─── Shared harness state ──────────────────────────────────────────────────
 let server;
@@ -301,6 +307,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/beo', beoRouter);
+  app.use('/api/shifts', eventDetailsRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -342,13 +349,8 @@ after(async () => {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
-test('GET /api/beo/:proposalId > 404 for missing proposal', async () => {
-  const res = await request('GET', '/api/beo/99999999', { token: staffToken });
-  assert.strictEqual(res.status, 404);
-});
-
-test('GET /api/beo/:proposalId > admin always allowed', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: adminToken });
+test('GET /api/shifts/:shiftId/event-details > admin always allowed', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: adminToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.proposal.id, proposalId);
   assert.strictEqual(res.body.drink_plan.id, drinkPlanId);
@@ -357,8 +359,8 @@ test('GET /api/beo/:proposalId > admin always allowed', async () => {
   assert.ok(!('token' in (res.body.drink_plan || {})), 'drink_plan.token must not appear in response');
 });
 
-test('GET /api/beo/:proposalId > staff with approved shift allowed', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > staff with approved shift allowed', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.viewer.is_admin, false);
   // The viewer's shift_request must carry request_id so the staff ShiftDetail
@@ -371,8 +373,8 @@ test('GET /api/beo/:proposalId > staff with approved shift allowed', async () =>
 // Read auth loosened by the 2026-07-22 staff event-details spec: any staffer
 // may READ an event that has a non-cancelled shift, because staff decide whether
 // to REQUEST a shift from this payload. Contact fields are redacted instead.
-test('GET /api/beo/:proposalId > unassigned staffer gets 200 with contact fields redacted', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: otherStaffToken });
+test('GET /api/shifts/:shiftId/event-details > unassigned staffer gets 200 with contact fields redacted', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: otherStaffToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.client.phone, null, 'client phone hidden from non-assigned staff');
   assert.ok(
@@ -382,30 +384,15 @@ test('GET /api/beo/:proposalId > unassigned staffer gets 200 with contact fields
   assert.strictEqual(res.body.viewer.is_assigned, false);
 });
 
-test('GET /api/beo/:proposalId > assigned staffer sees client phone and is_assigned true', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > assigned staffer sees client phone and is_assigned true', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(typeof res.body.client.phone, 'string');
   assert.strictEqual(res.body.viewer.is_assigned, true);
 });
 
-test('GET /api/beo/:proposalId > proposal whose only shift is cancelled 404s for staff, 200s for admin', async () => {
-  // finally-restore: a bare restore after the asserts would be skipped on
-  // failure, leaving the shared fixture cancelled and cascading into every
-  // later test in this file.
-  await pool.query("UPDATE shifts SET status='cancelled' WHERE id=$1", [shiftId]);
-  try {
-    const rs = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
-    assert.strictEqual(rs.status, 404, 'no staffable shift reads as not-found, never 403 (no existence probe)');
-    const ra = await request('GET', `/api/beo/${proposalId}`, { token: adminToken });
-    assert.strictEqual(ra.status, 200);
-  } finally {
-    await pool.query("UPDATE shifts SET status='open' WHERE id=$1", [shiftId]);
-  }
-});
-
-test('GET /api/beo/:proposalId > payload carries shifts[] and the menu_print tri-state', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > payload carries shifts[] and the menu_print tri-state', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   const s = (res.body.shifts || []).find((x) => x.id === shiftId);
   assert.ok(s, 'shifts[] carries the event shift');
@@ -416,22 +403,17 @@ test('GET /api/beo/:proposalId > payload carries shifts[] and the menu_print tri
   assert.deepStrictEqual(res.body.menu_print, { status: 'pending' });
 });
 
-test('GET /api/beo/:proposalId > menu_print flips to ready and not_required', async () => {
+test('GET /api/shifts/:shiftId/event-details > menu_print flips to ready and not_required', async () => {
   try {
     await pool.query("UPDATE proposals SET menu_print_key='menu-print/1/x.pdf' WHERE id=$1", [proposalId]);
-    const ready = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+    const ready = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
     assert.deepStrictEqual(ready.body.menu_print, { status: 'ready' });
     await pool.query("UPDATE proposals SET menu_print_key=NULL, menu_not_required=true WHERE id=$1", [proposalId]);
-    const nr = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+    const nr = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
     assert.deepStrictEqual(nr.body.menu_print, { status: 'not_required' });
   } finally {
     await pool.query("UPDATE proposals SET menu_print_key=NULL, menu_not_required=false WHERE id=$1", [proposalId]);
   }
-});
-
-test('GET /api/beo/:proposalId > non-numeric proposal id 404s (never a 22P02 500)', async () => {
-  const res = await request('GET', '/api/beo/abc', { token: staffToken });
-  assert.strictEqual(res.status, 404);
 });
 
 // ─── POST /api/beo/:proposalId/acknowledge ─────────────────────────────────
@@ -515,29 +497,29 @@ test('POST /api/beo/:proposalId/acknowledge > 409 when not finalized', async () 
 // staff-portal confirm/drop/cover UI shows; their ack must round-trip. A manager
 // who is only VIEWING stays an admin-style viewer (is_admin:true).
 
-test('GET /api/beo/:proposalId > staffed manager is a worker (is_admin false) and their ack round-trips', async () => {
+test('GET /api/shifts/:shiftId/event-details > staffed manager is a worker (is_admin false) and their ack round-trips', async () => {
   await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
-  let res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  let res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: managerStaffedToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.viewer.is_admin, false, 'a staffed manager is a worker, not an admin viewer');
   assert.strictEqual(res.body.viewer.is_acknowledged, false);
   await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerStaffedToken });
-  res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: managerStaffedToken });
   assert.strictEqual(res.body.viewer.is_admin, false);
   assert.strictEqual(res.body.viewer.is_acknowledged, true, 'the manager ack round-trips to the GET payload');
   await pool.query('UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2', [shiftId, managerStaffedId]);
 });
 
-test('GET /api/beo/:proposalId > viewing manager (no shift) stays an admin-style viewer (is_admin true)', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: managerViewerToken });
+test('GET /api/shifts/:shiftId/event-details > viewing manager (no shift) stays an admin-style viewer (is_admin true)', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: managerViewerToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.viewer.is_admin, true, 'a manager with NO shift is a viewer, not a worker');
 });
 
 // ─── team_roster (spec §6.18) ──────────────────────────────────────────────
 
-test('GET /api/beo/:proposalId > team_roster: display_name uses preferred + last initial', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: display_name uses preferred + last initial', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   assert.ok(Array.isArray(res.body.team_roster), 'team_roster must be an array');
   const row = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
@@ -550,8 +532,8 @@ test('GET /api/beo/:proposalId > team_roster: display_name uses preferred + last
   assert.strictEqual(row.needs_cover, false);
 });
 
-test('GET /api/beo/:proposalId > team_roster: fallback to applications.full_name when preferred missing', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: fallback to applications.full_name when preferred missing', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterAppsOnlyId);
   assert.ok(row);
   // No preferred_name; applications.full_name="Diego Ruiz" → "Diego R."
@@ -559,8 +541,8 @@ test('GET /api/beo/:proposalId > team_roster: fallback to applications.full_name
   assert.strictEqual(row.initials, 'DR');
 });
 
-test('GET /api/beo/:proposalId > team_roster: fallback to agreements.full_name when applications missing', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: fallback to agreements.full_name when applications missing', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterAgreementsId);
   assert.ok(row);
   // No preferred, no applications; agreements.full_name="Noor El-Amin" → "Noor E."
@@ -568,16 +550,16 @@ test('GET /api/beo/:proposalId > team_roster: fallback to agreements.full_name w
   assert.strictEqual(row.initials, 'NE');
 });
 
-test('GET /api/beo/:proposalId > team_roster: fallback to email-local-part when name rows missing', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: fallback to email-local-part when name rows missing', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterEmailOnlyId);
   assert.ok(row);
   // Email like beo-route-roster-email-<NONCE>@example.com → local-part as-is.
   assert.ok(row.display_name.startsWith('beo-route-roster-email'), 'display_name should be email local-part');
 });
 
-test('GET /api/beo/:proposalId > team_roster: is_me flips on own row', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: is_me flips on own row', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const self = res.body.team_roster.find((m) => m.user_id === staffUserId);
   const other = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
   assert.ok(self, 'viewer must appear on own roster');
@@ -586,37 +568,37 @@ test('GET /api/beo/:proposalId > team_roster: is_me flips on own row', async () 
   assert.strictEqual(other.is_me, false);
 });
 
-test('GET /api/beo/:proposalId > team_roster: dropped_at IS NOT NULL is excluded', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+test('GET /api/shifts/:shiftId/event-details > team_roster: dropped_at IS NOT NULL is excluded', async () => {
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const droppedRow = res.body.team_roster.find((m) => m.user_id === rosterDroppedId);
   assert.strictEqual(droppedRow, undefined, 'emergency-dropped staffer must not appear on roster');
 });
 
-test('GET /api/beo/:proposalId > team_roster: phone surfaces when viewer is approved', async () => {
+test('GET /api/shifts/:shiftId/event-details > team_roster: phone surfaces when viewer is approved', async () => {
   // staffToken is for staffUserId, who is approved+active on the proposal.
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterPhoneFromCpId);
   assert.ok(row);
   assert.strictEqual(row.phone, ROSTER_PHONE, 'phone must surface to an approved viewer');
 });
 
-test('GET /api/beo/:proposalId > team_roster: phone is null when viewer is admin (not approved as staff)', async () => {
+test('GET /api/shifts/:shiftId/event-details > team_roster: phone is null when viewer is admin (not approved as staff)', async () => {
   // Admin/manager hits the BEO via the role bypass in authorize(), but does
   // NOT satisfy the §6.18 "viewer is approved on this proposal" predicate.
   // Phones must be null to keep the gate strict — admin contact paths use
   // the existing admin UI, not the team-roster card.
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: adminToken });
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: adminToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterPhoneFromCpId);
   assert.ok(row);
   assert.strictEqual(row.phone, null);
 });
 
-test('GET /api/beo/:proposalId > team_roster: needs_cover flips when cover_requested_at is set', async () => {
+test('GET /api/shifts/:shiftId/event-details > team_roster: needs_cover flips when cover_requested_at is set', async () => {
   await pool.query(
     'UPDATE shift_requests SET cover_requested_at = NOW() WHERE shift_id = $1 AND user_id = $2',
     [shiftId, rosterPreferredId]
   );
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: staffToken });
   const row = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
   assert.ok(row);
   assert.strictEqual(row.needs_cover, true);
@@ -630,19 +612,40 @@ test('GET /api/beo/:proposalId > team_roster: needs_cover flips when cover_reque
 // ─── Onboarding gate (lane-1 review fleet, 2026-07-22) ─────────────────────
 //
 // Registration is public and mints a live JWT for an in_progress staff row, so
-// the read ungating rests entirely on requireOnboarded. These three assert it
-// is mounted on the proposal-keyed half; eventDetails.test.js covers the
-// shift-keyed half. If a future edit reorders a middleware list, this goes red.
-
-test('GET /api/beo/:proposalId > a not-yet-onboarded account is refused', async () => {
-  const res = await request('GET', `/api/beo/${proposalId}`, { token: unonboardedToken });
-  assert.strictEqual(res.status, 403);
-  assert.strictEqual(res.body.proposal, undefined, 'no payload leaked with the rejection');
-});
+// the read ungating rests entirely on requireOnboarded. These two assert it
+// is mounted on the proposal-keyed routes; eventDetails.test.js covers the
+// shift-keyed read. If a future edit reorders a middleware list, this goes red.
 
 test('GET /api/beo/:proposalId/logo > a not-yet-onboarded account is refused', async () => {
   const res = await request('GET', `/api/beo/${proposalId}/logo`, { token: unonboardedToken });
   assert.strictEqual(res.status, 403);
+});
+
+// The event read gate (eventDetailsPayload.authorizeEventRead) through the logo
+// route. Both refusals assert the gate's own message: the logo lookup after it
+// would also 404 ("No logo uploaded"; the fixture plan has none), so a bare
+// status would pass with the gate gone.
+test('GET /api/beo/:proposalId/logo > a missing proposal is refused by the read gate', async () => {
+  // Admin, because admin skips the shift check: only the existence check can
+  // refuse here (a staffer would also be refused by the shift check).
+  const res = await request('GET', '/api/beo/99999999/logo', { token: adminToken });
+  assert.strictEqual(res.status, 404);
+  assert.strictEqual(res.body.error, 'Event not found.');
+});
+
+test('GET /api/beo/:proposalId/logo > staffer whose every shift is cancelled is refused, admin is not', async () => {
+  // finally-restore: a skipped restore would leave the shared fixture cancelled
+  // and cascade into every later test in this file.
+  await pool.query("UPDATE shifts SET status='cancelled' WHERE id=$1", [shiftId]);
+  try {
+    const rs = await request('GET', `/api/beo/${proposalId}/logo`, { token: staffToken });
+    assert.strictEqual(rs.status, 404, 'no staffable shift reads as not-found, never 403 (no existence probe)');
+    assert.strictEqual(rs.body.error, 'Event not found.');
+    const ra = await request('GET', `/api/beo/${proposalId}/logo`, { token: adminToken });
+    assert.strictEqual(ra.body.error, 'No logo uploaded for this plan.', 'admin passes the gate to the logo lookup');
+  } finally {
+    await pool.query("UPDATE shifts SET status='open' WHERE id=$1", [shiftId]);
+  }
 });
 
 test('POST /api/beo/:proposalId/acknowledge > a not-yet-onboarded account is refused', async () => {

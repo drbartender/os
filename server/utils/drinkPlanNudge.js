@@ -210,7 +210,7 @@ async function scheduleDrinkPlanNudge(proposalId, executor) {
   // DURABLY suppressed (cc-transfer: Dallas intro-notes those clients first)
   // stays silent through every automatic re-run — schedulePreEventReminders
   // fires on any proposal PATCH, so deleting the pending rows was not enough.
-  // The admin reenroll-drink-plan-nudge endpoint clears the flag.
+  // The drink_plan_nudge_reenroll comms action (the admin re-enroll modal) clears the flag.
   const planRes = await exec.query(
     'SELECT nudge_suppressed FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
     [proposalId]

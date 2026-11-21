@@ -5,7 +5,7 @@
  *
  * Email only, by deliberate cost rule (SMS costs money; the staff BEO page is
  * the durable record and already renders live tip-jar status via
- * GratuityTipsCard <- GET /api/beo/:proposalId). Recipients are the same
+ * GratuityTipsCard <- GET /api/shifts/:shiftId/event-details). Recipients are the same
  * people a reschedule notice reaches: approved, non-dropped shift_requests
  * for the proposal's shift(s) (query copied from
  * staffShiftHandlers.notifyStaffOfScheduleChange).

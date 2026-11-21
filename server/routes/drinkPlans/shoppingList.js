@@ -4,19 +4,18 @@
 // soft cap). Behavior-inert extraction: these are the exact handler bodies,
 // their comments, middleware order, and auth verbatim. They register back onto
 // the SAME drinkPlans router at their original positions (public token route at
-// the top of the file; the three admin /:id routes after the finalize routes),
+// the top of the file; the two admin /:id routes after the finalize routes),
 // so the router's middleware chain is byte-identical to before.
 //
 // Split into two register functions because the routes sat at two different
 // points in the original file: the public GET /t/:token/shopping-list mounted
 // early (before the other /t/:token handlers), and the admin /:id/shopping-list
-// trio mounted mid-file. Keeping both insertion points preserves the effective
+// pair mounted mid-file. Keeping both insertion points preserves the effective
 // Express matching order exactly.
 //
 // Shared helpers (ensureNotFinalized, etc.) are imported from where they live,
 // exactly as drinkPlans.js imports them — no ownership moves.
 
-const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { publicReadLimiter } = require('../../middleware/rateLimiters');
@@ -138,54 +137,6 @@ function registerAdminShoppingListRoutes(router) {
       throw new NotFoundError('Plan not found.');
     }
     res.json({ success: true });
-  }));
-
-  /** PATCH /api/drink-plans/:id/shopping-list/approve — DEPRECATED direct
-   *  approve, kept mounted for API compatibility. Delegates to the
-   *  shopping_list_approve comms action (spec 4.4): idempotent side effects
-   *  (atomic flip + approved snapshot), then the default unedited email on the
-   *  email channel, awaited and ledgered by the action, never fire-and-forget.
-   *  New UI goes through POST /api/comms/send instead. */
-  router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-    const { getAction } = require('../../utils/comms/registry');
-    const action = getAction('shopping_list_approve');
-    const planId = parseInt(req.params.id, 10);
-
-    const sideEffects = await action.ensureSideEffects(planId, { sentBy: req.user.id });
-    if (!sideEffects.applied) {
-      // Already approved by another click — idempotent success, no re-email,
-      // matching the old route's alreadyApproved contract.
-      const check = await pool.query(
-        'SELECT shopping_list_approved_at FROM drink_plans WHERE id = $1',
-        [planId]
-      );
-      return res.json({
-        success: true,
-        approved_at: check.rows[0]?.shopping_list_approved_at || null,
-        alreadyApproved: true,
-        side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
-      });
-    }
-
-    const results = await action.dispatch(planId, undefined, ['email'], { sentBy: req.user.id });
-    if (results.email === 'failed') {
-      console.error('Shopping-list-ready email failed:', results.email_error);
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(new Error(results.email_error || 'shopping-list email failed'), {
-          tags: { route: 'drinkPlans/approveShoppingList', step: 'email' },
-          extra: { planId },
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      approved_at: new Date().toISOString(),
-      side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
-      email: results.email,
-      email_error: results.email_error || null,
-      recipient_email: results.recipient_email || null,
-    });
   }));
 }
 

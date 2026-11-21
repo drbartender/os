@@ -1,5 +1,5 @@
 /**
- * Enrolling leads into a sequence, and reading enrollments.
+ * Enrolling leads into a sequence.
  *
  * Extracted from the single 987-line emailMarketing.js. Paths and mount
  * order are unchanged; see ./index.js for why the order still matters.
@@ -47,18 +47,6 @@ router.post('/campaigns/:id/enroll', auth, requireAdminOrManager, asyncHandler(a
   );
 
   res.json({ enrolled: bulkResult.rowCount });
-}));
-
-/** GET /campaigns/:id/enrollments — list enrollments */
-router.get('/campaigns/:id/enrollments', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    `SELECT e.*, el.name AS lead_name, el.email AS lead_email
-     FROM email_sequence_enrollments e
-     JOIN email_leads el ON el.id = e.lead_id
-     WHERE e.campaign_id = $1 ORDER BY e.enrolled_at DESC`,
-    [req.params.id]
-  );
-  res.json(result.rows);
 }));
 
 module.exports = router;
