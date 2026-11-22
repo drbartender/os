@@ -72,8 +72,8 @@ push-fail-stop push fail.*stop|push reject[a-z]* stops and reports
 never-scrap never scrap unmerged
 ships-after-gate push = deploy|ships after the gate
 
-# Main is prod: nothing reaches main without a review receipt (added 2026-10-29)
-receipt-required nothing reaches .*main.*review receipt
+# Main is prod (added 2026-10-29). The receipt-required key the notes above
+# name was removed on 2026-11-22, when review became the session's judgment.
 
 # Verification + discipline (carried)
 design-review-fleet spec-grounding|review-spec
