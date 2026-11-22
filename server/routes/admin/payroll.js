@@ -12,6 +12,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { healAccrualGaps } = require('../../utils/payrollAccrualGaps');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
 const Sentry = require('@sentry/node');
@@ -397,6 +398,22 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
     }
   }
 
+  // Accrual gaps: every accrual caller treats a failure as best-effort, so a
+  // completed event can reach processing with a staffer who has no pay line.
+  // Retry those events' accrual once; a gap that survives the retry refuses
+  // the process, naming the proposals. Open periods only: a reopened period
+  // refuses accrual by design, so a retry there could never heal.
+  let accrualGaps = { retried: [], remaining: [] };
+  if (periodRes.rows[0].status === 'open') {
+    accrualGaps = await healAccrualGaps(id, { accrue: accruePayoutsForProposal });
+    if (accrualGaps.remaining.length > 0) {
+      const ids = [...new Set(accrualGaps.remaining.map((g) => g.proposal_id))];
+      throw new ConflictError(
+        `${accrualGaps.remaining.length} staffer(s) on a completed event have no pay line and a retry did not fix it (proposal ${ids.join(', ')}). Check those events before processing.`
+      );
+    }
+  }
+
   // L5: heal gross-paying tips (null Stripe fee) BEFORE freezing the period.
   // On a re-process from 'reopened' the re-accrue step is refused by accrual
   // (pay_period_not_open), so affected lines stay gross and the existing
@@ -454,6 +471,7 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
     period: rows[0],
     period_status: finalized ? 'paid' : 'processing',
     fee_recapture: feeRecapture,
+    accrual_gaps_healed: accrualGaps.retried.length,
   });
 }));
 
