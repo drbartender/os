@@ -17,8 +17,9 @@ status: >
   Shipped in b75709a (2026-11-22): stale-rule-imports 2a725572, audit-small-fixes c6ac13fe,
   audit-env-guards 11b90ca8, audit-dead-routes 8df7ea03, cover-claim-cascade dc2230a3,
   audit-dead-routes-rest and audit-stale-comments together as audit-cleanup 2fefe67c, gate-smoke-reuse
-  5553cf27, the rule-file wording 07e496d0, two test fixture fixes 567dbe9a and 77ce0d10. Not built,
-  payroll-accrual-surface.
+  5553cf27, the rule-file wording 07e496d0, two test fixture fixes 567dbe9a and 77ce0d10. Merged
+  2026-11-22, not yet shipped: payroll-accrual-surface 7e1f4efa (a smaller version from another window,
+  payroll-accrual-gaps 30b5579d, was reverted in 0d625269 in its favor).
 afterShip: >
   The server booted on b75709a in Render, so the boot guard of audit-env-guards passed there
   (NODE_ENV is production and the required variables are set). The six boot secrets only log and
@@ -145,7 +146,16 @@ lanes:
       dated in it, with an approved roster and no legacy CC participant, holds no payout line or carries
       a recorded failure; a reopened period is not gated, since accrual refuses it and the gate could
       never clear.
-    status: not built
+    status: >
+      merged 7e1f4efa (2026-11-22), not yet shipped. Reviewed by money, concurrency, lifecycle, seams,
+      client, verify and access-egress with schema-data, plus Gemini (no findings); one full pass and
+      two fix re-passes. The review widened the design: "paid" is a wage-shaped, unheld line per
+      approved worker (never a tip or claw stub or a teammate's line), every skip but a closed period
+      clears the record, Dismiss is an audited stamp that holds for a closed-period row only while its
+      unpaid workers are the ones it was dismissed with, and the legal-hold booking is left out.
+      Left for a follow-up: a hand-paid, dismissed event whose date moves into an open week is listed
+      as no_lines and Retry pays it again (accrual has no hand-paid marker; before this lane any later
+      accrual hook did the same silently).
     blockedBy: []
     footprint:
       - server/utils/payrollAccrual.js (the wrapper; or a sibling payrollAccrualFailures.js)
