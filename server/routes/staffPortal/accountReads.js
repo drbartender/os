@@ -133,11 +133,11 @@ function register(router) {
   //                                  subscribed app pulls the feed)
   //   - calendar_subscribed_app    → users.ui_preferences ->> 'calendar_subscribed_app'
   //                                  (JSONB key, nullable)
-  //   - feed_url                   → composed server-side via the same
-  //                                  apiBase pattern calendar.js uses, so the
-  //                                  AccountPage doesn't have to second-guess
-  //                                  which env var to read. Keeps client +
-  //                                  server agreement on the feed URL.
+  //   - feed_url                   → composed server-side from API_URL in
+  //                                  server/utils/urls.js, the base calendar.js
+  //                                  uses, so the AccountPage doesn't have to
+  //                                  second-guess which env var to read. Keeps
+  //                                  client + server agreement on the feed URL.
   //
   // Returning the token to its OWNER is correct — they need it for the
   // subscribe URL. Same posture as POST /api/calendar/token/regenerate.

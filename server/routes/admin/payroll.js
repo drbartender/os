@@ -18,11 +18,6 @@ const Sentry = require('@sentry/node');
 
 const router = express.Router();
 
-// Cheap liveness probe. Real endpoints follow in subsequent tasks.
-router.get('/payroll/healthcheck', auth, adminOnly, asyncHandler(async (req, res) => {
-  res.json({ ok: true, ts: Date.now() });
-}));
-
 // Reusable: hydrate a period with its payouts and each payout's events.
 async function loadPeriodWithPayouts(periodRow) {
   const payoutsRes = await pool.query(

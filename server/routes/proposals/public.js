@@ -26,8 +26,8 @@ const router = express.Router();
 const { UUID_RE } = require('../../utils/tokens');
 const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 
-// Mirrors schema CHECK on email_leads.lead_source and emailMarketing.js
-// VALID_LEAD_SOURCES. Untrusted public input — anything outside this set
+// Mirrors schema CHECK on email_leads.lead_source and
+// server/routes/emailMarketing/leads.js VALID_LEAD_SOURCES. Untrusted public input — anything outside this set
 // must be coerced to 'website' or the INSERT 500s on the constraint.
 const VALID_LEAD_SOURCES = new Set([
   'manual', 'csv_import', 'website', 'quote_wizard', 'potion_lab',

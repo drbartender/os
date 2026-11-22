@@ -1,4 +1,4 @@
-// Boot env checks: refuses a Render boot whose NODE_ENV is not production and lists the webhook and crypto secrets missing in production.
+// Boot env checks: refuses a Render boot whose NODE_ENV is not production or a production boot missing a required var, and lists the webhook and crypto secrets missing in production.
 //
 // Most security gates in this app open on any NODE_ENV other than exactly
 // 'production' (the CORS localhost door, the encryption fail-closed, the
@@ -7,8 +7,9 @@
 // RENDER_EXTERNAL_URL on every service, so either one marks a deployed box.
 // The dev box and the gate worktree set neither and are untouched.
 //
-// The secrets below each fail closed on their own path (a webhook answers
-// 4xx or 503, encryption refuses), so a missing one is reported, never fatal.
+// The boot secrets below each fail closed on their own path (a webhook answers
+// 4xx or 503, encryption refuses), so a missing one is reported, never fatal;
+// the required list further down is fatal.
 // Pure functions over an env object, so tests call them without booting.
 
 // Production-only required env. These integrations have no safe degraded mode

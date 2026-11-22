@@ -14,7 +14,8 @@ const { ValidationError, ConflictError, NotFoundError } = require('../../utils/e
 const router = express.Router();
 
 // Must mirror the schema CHECK on email_leads.lead_source. If you add a new value
-// here, add it to client/src/utils/leadSources.js and the DDL in schema.sql.
+// here, add it to client/src/utils/leadSources.js, the DDL in schema.sql and
+// VALID_LEAD_SOURCES in server/routes/proposals/public.js.
 const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'quote_wizard', 'potion_lab', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 // ─── Lead Management ──────────────────────────────────────────────
 

@@ -192,14 +192,8 @@ function req(method, path, token, body) {
   });
 }
 
-test('GET /payroll/healthcheck > 200 for an admin', async () => {
-  const r = await req('GET', '/api/admin/payroll/healthcheck', adminToken);
-  assert.equal(r.status, 200);
-  assert.equal(JSON.parse(r.body).ok, true);
-});
-
-test('GET /payroll/healthcheck > 401 without a token', async () => {
-  const r = await req('GET', '/api/admin/payroll/healthcheck', null);
+test('GET /payroll/periods > 401 without a token', async () => {
+  const r = await req('GET', '/api/admin/payroll/periods', null);
   assert.equal(r.status, 401);
 });
 

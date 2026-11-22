@@ -63,7 +63,7 @@ const BADGE_MAX_AGE_MS = 120000;
 
 // Spec 5.4: a proposal send's activity row absorbs the message_log rows for
 // that proposal's send types written within this many minutes of it, before
-// or after (the resend route writes its activity row AFTER the dispatch).
+// or after (a send can write its activity row AFTER the dispatch).
 const PROPOSAL_ABSORB_MINUTES = 5;
 // Spec 5.4: the Thumbtack auto first reply is the Business message within this
 // many minutes of thumbtack_leads.first_reply_sent_at.

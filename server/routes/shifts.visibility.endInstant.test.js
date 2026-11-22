@@ -159,7 +159,7 @@ before(async () => {
   // SOON: ends about half an hour from now.
   await seedShift('soon', { date: clock.soon_d, endTime: clock.soon_t, visible: true });
   // TONIGHT_NULL: no end_time at all (14 of 78 prod shifts). Visible until
-  // Chicago midnight — it must NOT vanish when the GMT day rolls at 19:00.
+  // Chicago midnight. It must NOT vanish when the GMT day rolls at 19:00.
   await seedShift('tonightNull', { date: clock.chi_today, endTime: null, startTime: '6:00 PM', visible: true });
   // YESTERDAY_NULL: the same shape one day back. Must NOT linger a second day.
   // It starts at 10 AM, not 6 PM: with no end time a shift runs its booked

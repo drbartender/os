@@ -1,7 +1,7 @@
 'use strict';
 
-// Comms action: payment_reminder (plan P1). Ports POST
-// /api/proposals/:id/send-reminder (server/routes/proposals/actions.js:90). It
+// Comms action: payment_reminder (plan P1). Ports the old POST
+// /api/proposals/:id/send-reminder route (removed 2026-11-22, no caller). It
 // is a BALANCE reminder — named honestly so the modal copy never implies a
 // receipt. MONEY RULE: the outstanding balance is derived exactly as the legacy
 // route (total_price - amount_paid) and rendered by the SAME formula the parts

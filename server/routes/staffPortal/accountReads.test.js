@@ -307,8 +307,8 @@ test('GET /api/me/calendar-settings > fresh user: token + token_created_at prese
   // Fresh user has never had a feed fetch + has not picked an app.
   assert.strictEqual(res.body.last_ics_fetch_at, null);
   assert.strictEqual(res.body.calendar_subscribed_app, null);
-  // feed_url is composed server-side using the same apiBase pattern as
-  // calendar.js, so the client + server agree on the path.
+  // feed_url is composed server-side from API_URL in urls.js, the base
+  // calendar.js uses, so the client + server agree on the path.
   assert.ok(res.body.feed_url, 'feed_url is present');
   assert.ok(
     res.body.feed_url.endsWith(`/api/calendar/feed/${res.body.calendar_token}`),

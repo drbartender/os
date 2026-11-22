@@ -249,30 +249,6 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 // ─── Admin / Manager ─────────────────────────────────────────────────────────
 
 /**
- * GET /api/invoices/recent
- * Latest 20 non-void invoices with event and client names.
- * Must be defined BEFORE /:id to avoid param shadowing.
- */
-router.get('/recent', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    `SELECT
-       i.id, i.token, i.proposal_id, i.invoice_number, i.label,
-       i.amount_due, i.amount_paid, i.status, i.due_date,
-       i.locked, i.created_at,
-       p.event_type, p.event_type_custom,
-       c.name AS client_name
-     FROM invoices i
-     JOIN proposals p ON p.id = i.proposal_id
-     JOIN clients c ON c.id = p.client_id
-     WHERE i.status != 'void'
-     ORDER BY i.created_at DESC
-     LIMIT 20`
-  );
-
-  res.json({ invoices: result.rows });
-}));
-
-/**
  * GET /api/invoices/proposal/:proposalId
  * List all invoices for a proposal, ordered oldest → newest.
  */

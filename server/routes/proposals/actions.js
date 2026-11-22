@@ -1,5 +1,5 @@
-// Per-proposal admin actions: notes, create-shift, balance-due-date,
-// send-reminder, record-payment. Carved out of crud.js to keep that file
+// Per-proposal admin actions: notes, balance-due-date, record-payment,
+// archive. Carved out of crud.js to keep that file
 // under the file-size cap. These routes own sub-paths under /:id and never
 // collide with the core CRUD verbs (which match only the bare /:id segment),
 // so mount order with crud.js does not matter.
@@ -54,18 +54,6 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
   res.json(result.rows[0]);
 }));
 
-/** POST /api/proposals/:id/create-shift — manually create event shift from a proposal */
-router.post('/:id/create-shift', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
-  if (!proposal.rows[0]) throw new NotFoundError('Proposal not found');
-  if (!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.rows[0].status)) {
-    throw new ConflictError('Proposal must have deposit paid before creating a shift.', 'DEPOSIT_REQUIRED');
-  }
-  const shift = await createEventShifts(req.params.id);
-  if (!shift) throw new ConflictError('Shift already exists for this proposal.', 'SHIFT_EXISTS');
-  res.status(201).json(shift);
-}));
-
 /** PATCH /api/proposals/:id/balance-due-date — override balance due date */
 router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { balance_due_date } = req.body;
@@ -96,50 +84,6 @@ router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(
   );
 
   res.json(result.rows[0]);
-}));
-
-/** POST /api/proposals/:id/send-reminder — DEPRECATED direct balance reminder,
- *  kept mounted for API compatibility. Delegates to the payment_reminder comms
- *  action (plan P1): validate-only side effects (the NO_BALANCE_DUE guard; no
- *  money column is written), then the default unedited balance-reminder email +
- *  SMS on the action's default channels, awaited and ledgered by the action
- *  (per-channel truth, so a failed channel no longer 502s — it returns
- *  email/sms:'failed' + error). New UI goes through POST /api/comms/send. A
- *  'reminder_sent' activity row still records it. */
-router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { getAction } = require('../../utils/comms/registry');
-  const action = getAction('payment_reminder');
-  const proposalId = parseInt(req.params.id, 10);
-
-  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
-  const results = await action.dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: req.user.id });
-
-  // Activity log is best-effort — the send already went out, so a transient
-  // INSERT failure must not surface as a 5xx to the admin (which would prompt
-  // a retry and double-send the reminder).
-  try {
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-       VALUES ($1, 'reminder_sent', 'admin', $2, $3)`,
-      [proposalId, req.user.id, JSON.stringify({ to: results.recipient_email, email: results.email, sms: results.sms })]
-    );
-  } catch (logErr) {
-    Sentry.captureException(logErr, {
-      tags: { route: 'proposals/send-reminder', step: 'activity-log' },
-      extra: { proposalId },
-    });
-  }
-
-  res.json({
-    ok: true,
-    email: results.email,
-    sms: results.sms,
-    email_error: results.email_error || null,
-    sms_error: results.sms_error || null,
-    skip_reasons: results.skip_reasons,
-    recipient_email: results.recipient_email || null,
-    recipient_phone: results.recipient_phone || null,
-  });
 }));
 
 /** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */

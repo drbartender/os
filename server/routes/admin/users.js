@@ -26,45 +26,6 @@ const { loadShiftVenue, candidateMeta } = require('../../utils/staffingMeta');
 
 const router = express.Router();
 
-// ─── Onboarding Users (paginated) ─────────────────────────────────
-
-// Paginated user list, filterable by status
-router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
-  const page  = Math.max(1, parseInt(req.query.page)  || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
-  const offset = (page - 1) * limit;
-
-  const [usersResult, countResult] = await Promise.all([
-    pool.query(`
-      SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.updated_at, u.cc_id, u.import_source,
-        op.account_created, op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
-        op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
-        op.last_completed_step, op.updated_at as progress_updated_at,
-        cp.preferred_name, cp.display_name, cp.phone as profile_phone,
-        ag.full_name as signed_name, ag.signed_at
-      FROM users u
-      LEFT JOIN onboarding_progress op ON op.user_id = u.id
-      LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-      LEFT JOIN agreements ag ON ag.user_id = u.id
-      WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('hired','in_progress','submitted','reviewed','approved','deactivated')
-      ORDER BY u.created_at DESC
-      LIMIT $1 OFFSET $2
-    `, [limit, offset]),
-    pool.query(`SELECT COUNT(*) FROM users WHERE role IN ('staff', 'manager') AND onboarding_status IN ('hired','in_progress','submitted','reviewed','approved','deactivated')`)
-  ]);
-
-  res.json({
-    users: usersResult.rows,
-    total: parseInt(countResult.rows[0].count),
-    page,
-    pages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
-    limit
-  });
-}));
-
-// Get single user record (full detail — includes application data)
 router.get('/users/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = req.params.id;
 
@@ -167,9 +128,9 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     // The same UPDATE rotates calendar_token (audit 2026-11-05 AUTH-03): the
     // iCal feed (calendar.js) is token-gated with no `auth`, and the feed now
     // refuses these statuses, but a later re-activation must not resurrect the
-    // subscription a deactivated manager's calendar app still holds. Demotion
-    // (admin/managers.js) does not rotate: the feed re-reads the role per poll,
-    // so a demoted staffer's feed narrows to their own shifts on the next one.
+    // subscription a deactivated manager's calendar app still holds. A role
+    // change does not rotate: the feed re-reads the role per poll, so a demoted
+    // staffer's feed narrows to their own shifts on the next one.
     const clearPreHired = (status === 'rejected' || status === 'deactivated');
     result = clearPreHired
       ? await client.query(

@@ -410,8 +410,8 @@ test('emergency drop releases the lock too (status stays approved, dropped_at is
 });
 
 /**
- * Cover swap: the lock move lives inside applyCoverCascade, so BOTH approval
- * surfaces get it. Seeds a shift whose bonus is locked to A, has A requesting
+ * Cover swap: the lock move lives inside applyCoverCascade, so every approval
+ * path (the staffing dashboard PUT and the event page's /assign) gets it. Seeds a shift whose bonus is locked to A, has A requesting
  * cover, and has B's claim row pointing at A via replaced_by_request_id.
  */
 async function seedCoverSwap() {

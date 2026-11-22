@@ -101,11 +101,6 @@ async function resolveDrinkIds(ids, table, dbClient) {
     .map(id => ({ name: byId[id].name, ingredients: byId[id].ingredients || [] }));
 }
 
-// Back-compat alias (existing callers).
-async function resolveCocktailIds(cocktailIds, dbClient) {
-  return resolveDrinkIds(cocktailIds, 'cocktails', dbClient);
-}
-
 // Match client free-text custom-drink requests against drinks that HAVE
 // recipes (normalized EXACT equality only — a fuzzy server-side match could
 // put the wrong bottles on a list). Pure; exported for tests.
@@ -576,7 +571,6 @@ module.exports = {
   loadCatalog,
   reportUnresolvedIngredients,
   resolveDrinkIds,
-  resolveCocktailIds,
   matchKey,
   matchCustomNames,
   loadRecipeCandidates,

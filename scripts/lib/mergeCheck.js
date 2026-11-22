@@ -101,7 +101,9 @@
 //     is on main's sensitive list is related to the lane (staleRelated.js's
 //     rule: a direct import either way, a file in or beside a lane file's
 //     directory, the list, schema.sql for a lane with SQL-running code, any
-//     scripts/ or .husky/ path for a shell or hook lane file), else stale
+//     scripts/ or .husky/ path for a shell or hook lane file, a non-JS
+//     scripts/ or .husky/ file for a lane file there, a package.json whose
+//     scripts name a lane file), else stale
 //     with that overlap and the sensitive flag naming only related paths (the
 //     rest in result.unrelatedSensitivePaths); anything else refuses;
 //   - refs/heads/main, the staged status and the list on disk, read once more
