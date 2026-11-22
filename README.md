@@ -441,6 +441,7 @@ tests omitted
 │       │   ├── FieldError.js # FieldError (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── FileUpload.js # FileUpload (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── FormBanner.js # FormBanner (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   ├── GvPostStatus.js # GvPostStatus: the proposal page's "Thumbtack message" row, what became of the proposal's latest Google Voice post into the client's Thumbtack thread (spec 2026-10-17-tt-proposal-link-via-gv, plan Task 10).
 │       │   ├── InvoiceDropdown.js # InvoiceDropdown (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── Layout.js     # The onboarding shell: header, the step progress bar and the outstanding-documents notice around each onboarding page.
 │       │   ├── LeadImportModal.js # LeadImportModal (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

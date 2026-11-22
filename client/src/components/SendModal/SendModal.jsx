@@ -4,12 +4,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../../utils/api';
+import { channelResultLine, relayBodyLength, relayBodyProblem } from './sendResult';
 
 // Shared compose-and-confirm modal for the comms registry (spec 4.3). It runs
 // its own two-step flow: POST /comms/preview to load the recipient, channels,
 // and prefilled message, then POST /comms/send with only the channels the admin
 // keeps checked. The server does nothing until send, so a Cancel never touches
 // the client record. All requests go through the shared api instance.
+//
+// A Thumbtack relay client's Text row comes back via 'thumbtack' (spec
+// docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md, plan
+// Task 11): the text becomes a GV post into the client's Thumbtack thread, so
+// the row reads "Text via Thumbtack (GV)", counts to its max_chars (320), shows
+// the number's last 4, and blocks Send with the server's own words when the
+// body would be refused (relayBodyProblem). The send can answer sms 'queued'.
 
 const SMS_LIMIT = 640;
 
@@ -111,6 +119,8 @@ export default function SendModal({
           if (!channels.includes(k)) {
             merged[k] = prev[k];
             merged[`${k}_error`] = prev[`${k}_error`];
+            // The text's route rides with its outcome through an email-only Retry.
+            if (k === 'sms') merged.sms_route = prev.sms_route;
             merged.skip_reasons = {
               ...(merged.skip_reasons || {}),
               ...(prev.skip_reasons && prev.skip_reasons[k] !== undefined ? { [k]: prev.skip_reasons[k] } : {}),
@@ -155,8 +165,18 @@ export default function SendModal({
   const emailAvail = !!(channels.email && channels.email.available);
   const smsAvail = !!(channels.sms && channels.sms.available);
 
+  const smsChannel = channels.sms || {};
+  const viaThumbtack = smsChannel.via === 'thumbtack';
+  const smsLimit = Number(smsChannel.max_chars) > 0 ? Number(smsChannel.max_chars) : SMS_LIMIT;
+  const relayProblem = viaThumbtack && smsChecked
+    ? relayBodyProblem(smsBody, preview && preview.sms && preview.sms.body, smsLimit)
+    : null;
+
   const emailValid = !emailChecked || (emailSubject.trim() !== '' && emailBody.trim() !== '');
-  const smsValid = !smsChecked || (smsBody.trim() !== '' && smsBody.length <= SMS_LIMIT);
+  // A relay text counts its trimmed length, as the server does; today's text
+  // keeps its raw-length rule.
+  const smsCount = viaThumbtack ? relayBodyLength(smsBody) : smsBody.length;
+  const smsValid = !smsChecked || (smsBody.trim() !== '' && smsCount <= smsLimit && !relayProblem);
   const canSend = (emailChecked || smsChecked) && emailValid && smsValid && !inFlight;
 
   const recipient = (preview && preview.recipient) || {};
@@ -166,27 +186,25 @@ export default function SendModal({
     let line = 'To:';
     if (recipient.name) line += ` ${recipient.name}`;
     if (recipient.email) line += ` <${recipient.email}>`;
-    if (recipient.phone) line += ` · ${recipient.phone}`;
+    if (viaThumbtack && smsChannel.phone_last4) line += ` · ending ${smsChannel.phone_last4}`;
+    else if (recipient.phone) line += ` · ${recipient.phone}`;
     return line;
   };
 
-  const renderChannelResult = (key, sentVerb, contact) => {
+  const renderChannelResult = (key) => {
     if (!results || !submittedChannels.includes(key)) return null;
-    const status = results[key];
-    const err = results[`${key}_error`];
-    const skip = results.skip_reasons && results.skip_reasons[key];
-    if (status === 'sent') {
+    const line = channelResultLine(key, results, channels);
+    if (line.kind === 'sent' || line.kind === 'queued') {
       return (
         <p className="send-modal-result-line send-modal-result-sent">
-          ✓ {sentVerb} {contact}
+          ✓ {line.text}
         </p>
       );
     }
-    if (status === 'failed') {
-      const label = key === 'email' ? 'Email failed' : 'Text failed';
+    if (line.kind === 'failed') {
       return (
         <div className="send-modal-result-line send-modal-result-failed">
-          <span>{label}: {err || 'Please try again.'}</span>
+          <span>{line.text}</span>
           <button
             type="button"
             className="btn btn-sm btn-secondary"
@@ -199,11 +217,7 @@ export default function SendModal({
       );
     }
     // skipped (or any unexpected status): grey line with the reason if we have one
-    return (
-      <p className="send-modal-result-line send-modal-result-skipped">
-        {(key === 'email' ? 'Email skipped' : 'Text skipped')}{skip ? `: ${skip}` : ''}
-      </p>
-    );
+    return <p className="send-modal-result-line send-modal-result-skipped">{line.text}</p>;
   };
 
   let bodyContent;
@@ -255,8 +269,8 @@ export default function SendModal({
         {submittedChannels.length === 0 && results && results.ok && (
           <p className="send-modal-result-line send-modal-result-sent">✓ Done. No message was sent.</p>
         )}
-        {renderChannelResult('email', 'Emailed', results.recipient_email)}
-        {renderChannelResult('sms', 'Texted', results.recipient_phone)}
+        {renderChannelResult('email')}
+        {renderChannelResult('sms')}
         {sendError && <p className="send-modal-banner-error">{sendError}</p>}
         <div className="send-modal-footer">
           <button type="button" className="btn btn-primary" onClick={finishDone} disabled={inFlight}>
@@ -336,7 +350,7 @@ export default function SendModal({
               disabled={!smsAvail}
               onChange={(e) => setSmsChecked(e.target.checked)}
             />
-            <span>Text message</span>
+            <span>{viaThumbtack ? 'Text via Thumbtack (GV)' : 'Text message'}</span>
           </label>
           {smsAvail ? (
             <div className="send-modal-channel-body">
@@ -346,9 +360,10 @@ export default function SendModal({
                 value={smsBody}
                 onChange={(e) => setSmsBody(e.target.value)}
               />
-              <p className={`send-modal-counter${smsBody.length > SMS_LIMIT ? ' send-modal-counter-over' : ''}`}>
-                {smsBody.length} / {SMS_LIMIT}
+              <p className={`send-modal-counter${smsCount > smsLimit ? ' send-modal-counter-over' : ''}`}>
+                {smsCount} / {smsLimit}
               </p>
+              {relayProblem && <p className="send-modal-banner-error">{relayProblem}</p>}
             </div>
           ) : (
             channels.sms && channels.sms.unavailable_reason && (

@@ -11,15 +11,21 @@
 // normalized text equals the posted body is the post's echo (in_thread). A
 // message holding the proposal token without the body is a human paste: it
 // sets hand_pasted and never confirms the post, so a hand paste can't hide a
-// broken sender.
+// broken sender. The echo of the proposal's OWN earlier post (one the box
+// worked: sent, clicked_unverified or unknown) on the same conversation, stored
+// at or after that post was made, is not a paste: a reworded resend would
+// otherwise read hand_pasted from the first post's echo. It is the rule the
+// lease's paste check applies (server/routes/gvAgent.js tokenInThread).
 //
-// Reads only. Two plain queries on the passed db (a pool, or the caller's
+// Reads only. Three plain queries on the passed db (a pool, or the caller's
 // client), never a held connection of its own.
 
 const { pool } = require('../../db');
 const { GV_WINDOWS, normalizeGvBody } = require('./rules');
 
 const MINUTE_MS = 60 * 1000;
+// The statuses of a post the box worked, whose echo may be in the thread.
+const WORKED = new Set(['sent', 'clicked_unverified', 'unknown']);
 
 const msOf = (v) => (v === null || v === undefined ? NaN : new Date(v).getTime());
 
@@ -76,11 +82,16 @@ function statusDisplay(post, nowMs) {
  * the matching echoes, the earliest stamps in_thread_at.
  *
  * hand_pasted: an echo on the post's conversation that holds the proposal
- * token (case-insensitively) without the body. It never makes in_thread.
+ * token (case-insensitively) without the body. It never makes in_thread. An
+ * echo of one of post.prior_posts is left out: a worked earlier post of the
+ * same proposal on the same conversation, made at or before the echo was
+ * stored (sent_at, else created_at), whose normalized body is the echo's
+ * normalized text.
  *
  * @param {Object} post - the gv_posts row plus its proposal's token: status,
  *   fallback_status, body, token, negotiation_id, created_at, updated_at,
- *   clicked_at, reported_at
+ *   clicked_at, reported_at, and prior_posts (the proposal's other posts,
+ *   [{ status, body, negotiation_id, created_at }], optional)
  * @param {Array<{negotiation_id:string, text:string, sent_at:Date|null, created_at:Date|null}>} echoes
  *   thumbtack_messages rows that may be the post's echo or a paste
  * @param {Date} [now]
@@ -96,6 +107,14 @@ function deriveGvDisplay(post, echoes, now = new Date()) {
   const postMs = msOf(post.created_at);
   let inThreadAt = null;
   let handPasted = false;
+  const priors = (post.prior_posts || [])
+    .filter((p) => p && WORKED.has(p.status) && String(p.negotiation_id) === String(post.negotiation_id))
+    .map((p) => ({ body: normalizeGvBody(p.body), ms: msOf(p.created_at) }));
+  const isOwnEcho = (echo, text) => {
+    const storedMs = msOf(echo.sent_at ?? echo.created_at);
+    const normalized = normalizeGvBody(text);
+    return priors.some((p) => p.body && p.body === normalized && p.ms <= storedMs);
+  };
 
   for (const echo of echoes || []) {
     if (!echo || String(echo.negotiation_id) !== String(post.negotiation_id)) continue;
@@ -105,7 +124,7 @@ function deriveGvDisplay(post, echoes, now = new Date()) {
       if (Number.isFinite(postMs) && !(storedMs >= postMs)) continue;
       const at = echo.sent_at ?? echo.created_at;
       if (inThreadAt === null || msOf(at) < msOf(inThreadAt)) inThreadAt = at;
-    } else if (token && text.toLowerCase().includes(token)) {
+    } else if (token && text.toLowerCase().includes(token) && !isOwnEcho(echo, text)) {
       handPasted = true;
     }
   }
@@ -121,7 +140,8 @@ function deriveGvDisplay(post, echoes, now = new Date()) {
  * The proposal's latest GV post, as the proposal page shows it, or null when
  * the proposal has none. Reads the latest row with its proposal token and the
  * client's last 4, then the thumbtack_messages on the row's conversation from
- * pasteBeforeMin before the post onward whose text holds the token.
+ * pasteBeforeMin before the post onward whose text holds the token, then the
+ * proposal's other worked posts on that conversation (the own-echo rule).
  *
  * @param {number} proposalId
  * @param {Object} [db] pg pool or client
@@ -133,7 +153,7 @@ function deriveGvDisplay(post, echoes, now = new Date()) {
  */
 async function gvPostStatusForProposal(proposalId, db = pool) {
   const { rows } = await db.query(
-    `SELECT gp.status, gp.reason, gp.fallback_status, gp.body, gp.negotiation_id,
+    `SELECT gp.id, gp.status, gp.reason, gp.fallback_status, gp.body, gp.negotiation_id,
             gp.created_at, gp.updated_at, gp.clicked_at, gp.reported_at,
             p.token,
             NULLIF(RIGHT(REGEXP_REPLACE(COALESCE(c.phone, ''), '\\D', '', 'g'), 4), '') AS phone_last4
@@ -159,7 +179,17 @@ async function gvPostStatusForProposal(proposalId, db = pool) {
       LIMIT 50`,
     [post.negotiation_id, post.created_at, GV_WINDOWS.pasteBeforeMin, String(post.token)]
   );
-  const derived = deriveGvDisplay(post, echoes.rows);
+  // The proposal's other posts on this conversation, for the own-echo rule.
+  const priors = await db.query(
+    `SELECT status, body, negotiation_id, created_at
+       FROM gv_posts
+      WHERE proposal_id = $1 AND id <> $2 AND negotiation_id = $3
+        AND status IN ('sent','clicked_unverified','unknown')
+      ORDER BY created_at DESC, id DESC
+      LIMIT 20`,
+    [proposalId, post.id, post.negotiation_id]
+  );
+  const derived = deriveGvDisplay({ ...post, prior_posts: priors.rows }, echoes.rows);
 
   return {
     status: post.status,

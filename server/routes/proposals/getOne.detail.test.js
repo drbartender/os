@@ -46,7 +46,7 @@ const fx = {};
 const JOINED_KEYS = ['adjustments_token', 'budget_max', 'budget_min', 'budget_raw', 'client_cc_id', 'client_email',
   'client_name', 'client_phone', 'client_source', 'created_by_email', 'package_category', 'package_includes',
   'package_name', 'package_slug', 'user_cc_id'];
-const DERIVED_KEYS = ['activity', 'addons', 'consult_call', 'contract_floor_hours', 'first_reply', 'lead_call', 'legal_hold',
+const DERIVED_KEYS = ['activity', 'addons', 'consult_call', 'contract_floor_hours', 'first_reply', 'gv_post', 'lead_call', 'legal_hold',
   'max_overpayment_refundable_cents', 'max_refundable_cents', 'messageLog', 'off_contract_paid_cents', 'overpayment_cents',
   'settled_extension_hours', 'setup_time_display'];
 

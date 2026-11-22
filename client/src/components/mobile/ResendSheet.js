@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../utils/api';
 import useSheetFocus from '../../hooks/useSheetFocus';
 import { describeSendResult } from '../SendModal';
+import { channelResultLine } from '../SendModal/sendResult';
 import { formatPhone } from '../../utils/formatPhone';
 import { HOLD_NOTE, sheetRefusal } from '../../utils/proposalDetailView';
 import { READ_TIMEOUT_MS } from '../../utils/editSheetView';
@@ -39,7 +40,10 @@ import { holdTaps } from '../../utils/tapGuard';
 // the desktop's is. A send that got no answer, or a server error, may have
 // gone: it offers no Retry and no second Send, since another tap could reach
 // the client twice. A refusal before anything went out (a 4xx) reads in the
-// server's words, and Send stays.
+// server's words, and Send stays. A Thumbtack relay client's text can answer
+// sms 'queued' (a GV post into the client's Thumbtack thread, spec
+// 2026-10-17-tt-proposal-link-via-gv): it reads as the desktop's line does
+// (channelResultLine, "Queued for Thumbtack (ending 0123)"), as a good outcome.
 export const PREVIEW_FAILED = "Couldn't load the message. Sending needs a connection.";
 export const SEND_OFFLINE = 'No connection, nothing was sent.';
 export const SEND_NO_ANSWER = 'No answer. It may have gone. Check the message log in desktop view before sending again.';
@@ -70,7 +74,9 @@ const refusalText = (err) => {
 };
 
 // One channel's answer in the desktop's words, and whether it failed.
-function channelResult(results, ch) {
+function channelResult(results, ch, channels) {
+  const line = channelResultLine(ch, results, channels);
+  if (line.kind === 'queued') return { message: `${line.text}.`, failed: false, sent: true };
   const one = {
     [ch]: results[ch],
     [`${ch}_error`]: results[`${ch}_error`],
@@ -339,7 +345,7 @@ export default function ResendSheet({ proposal, onClose, onLateAnswer, onDesktop
           {phase === 'result' && results && (
             <div className="m-notify" role="status" tabIndex={-1} ref={resultRef}>
               {submitted.map((ch) => {
-                const r = channelResult(results, ch);
+                const r = channelResult(results, ch, channels);
                 if (r.failed) {
                   return (
                     <div key={ch} className="m-fail m-notify-fail" role="alert">

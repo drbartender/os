@@ -35,6 +35,7 @@ import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 import { ARCHIVE_REASONS } from '../../utils/archiveReasons';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import GvPostStatus from '../../components/GvPostStatus';
 import RemoteStaffingFeePrompt from './RemoteStaffingFeePrompt';
 import ProposalDetailPhone, { usePhoneFork } from '../mobile/ProposalDetailPhone';
 
@@ -103,6 +104,7 @@ function ProposalDetailBody() {
   // Which compose-and-send modal is open ('resend' | 'invite' | null). The old
   // direct-fire resend/invite handlers are gone; these buttons now open SendModal.
   const [sendModal, setSendModal] = useState(null);
+  const [gvRefresh, setGvRefresh] = useState(0); // bumped by a send so the Thumbtack message row re-reads
 
   // Drink plan — state stays here because autoAddedMap/cocktailNameById on the
   // Pricing card read drinkPlan.selections.addOns. The card itself is extracted
@@ -283,6 +285,7 @@ function ProposalDetailBody() {
   // onComplete reports the honest per-channel result via the existing toast.
   const onSendComplete = (results) => {
     const { hadFailure, message } = describeSendResult(results);
+    setGvRefresh((n) => n + 1);
     if (hadFailure) toast.error(message);
     else toast.success(message);
   };
@@ -311,7 +314,7 @@ function ProposalDetailBody() {
     try {
       const res = await api.patch(`/proposals/${id}/status`, { status });
       setProposal(prev => ({ ...prev, status: res.data.status }));
-      if (status === 'sent') toast.success('Proposal sent to client.');
+      if (status === 'sent') { toast.success('Proposal sent to client.'); setGvRefresh((n) => n + 1); }
       else if (status === 'accepted') toast.success('Marked as accepted.');
       else toast.success(`Status updated to ${status}.`);
     } catch (err) {
@@ -592,6 +595,7 @@ function ProposalDetailBody() {
                     {proposal.first_reply && (
                       <><dt>First reply</dt><dd className="muted">{firstReplyLabel(proposal.first_reply)}</dd></>
                     )}
+                    <GvPostStatus proposalId={id} initial={proposal.gv_post} refreshKey={gvRefresh} />
                   </dl>
                 </div>
               </div>

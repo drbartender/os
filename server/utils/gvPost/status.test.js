@@ -4,8 +4,8 @@
 // at read time", law 5; plan Task 8). deriveGvDisplay is pure; the last case
 // reads the dev DB. Run ALONE,
 //   node --test server/utils/gvPost/status.test.js
-// The DB case hand-inserts a stale row (its fallback already sent) and a sent
-// row, never a queued one, so no lease could offer them and no sweep arm
+// The DB case hand-inserts a stale row (its fallback already sent), a sent row
+// and a cancelled one, never a queued one, so no lease could offer them and no sweep arm
 // touches them. Every fixture is invented (names, 555-01xx numbers,
 // negotiation ids, Thumbtack customer ids) and deleted by id in after(). The
 // dev DB ties thumbtack_messages.negotiation_id to thumbtack_leads, so each
@@ -85,6 +85,41 @@ test('token-only echo is hand_pasted, not in_thread', () => {
   assert.deepEqual(deriveGvDisplay(mkPost(), [mkEcho('Thanks, we will take a look!')], NOW), {
     display: 'sent_not_seen', in_thread_at: null, hand_pasted: false,
   });
+});
+
+test('the echo of the proposal own earlier worked post is not a hand paste', () => {
+  // A reworded resend: the earlier post (sent 30 minutes ago with BODY) landed,
+  // and its echo holds the token without the new post's words.
+  const reworded = `Following up: ${proposalUrl(TOKEN)}`;
+  const prior = { status: 'sent', body: BODY, negotiation_id: NEG, created_at: ago(30) };
+  const echo = mkEcho(BODY.replace('Your proposal', '\nYour  proposal'), { sent_at: ago(28), created_at: ago(28) });
+  const post = mkPost({ body: reworded, prior_posts: [prior] });
+  assert.deepEqual(deriveGvDisplay(post, [echo], NOW), {
+    display: 'sent_not_seen', in_thread_at: null, hand_pasted: false,
+  });
+  // clicked_unverified and unknown posts were worked by the box too.
+  for (const status of ['clicked_unverified', 'unknown']) {
+    assert.equal(deriveGvDisplay(mkPost({ body: reworded, prior_posts: [{ ...prior, status }] }), [echo], NOW)
+      .hand_pasted, false, status);
+  }
+  // A post the box never worked (stale, failed_preclick, cancelled, skipped) has no echo of its own.
+  for (const status of ['stale', 'failed_preclick', 'cancelled', 'skipped_already_posted', 'queued']) {
+    assert.equal(deriveGvDisplay(mkPost({ body: reworded, prior_posts: [{ ...prior, status }] }), [echo], NOW)
+      .hand_pasted, true, status);
+  }
+  // Stored before the earlier post was made: not its echo.
+  const tooEarly = { ...prior, created_at: ago(27) };
+  assert.equal(deriveGvDisplay(mkPost({ body: reworded, prior_posts: [tooEarly] }), [echo], NOW).hand_pasted, true);
+  // The earlier post went to another conversation: not its echo.
+  const elsewhere = { ...prior, negotiation_id: 'gvst-neg-other' };
+  assert.equal(deriveGvDisplay(mkPost({ body: reworded, prior_posts: [elsewhere] }), [echo], NOW).hand_pasted, true);
+  // A hand paste in any other words still counts beside the left-out echo.
+  const paste = mkEcho(`link: https://drbartender.com/proposal/${TOKEN}`, { sent_at: ago(3), created_at: ago(3) });
+  assert.equal(deriveGvDisplay(post, [echo, paste], NOW).hand_pasted, true);
+  // A byte-identical resend still reads in_thread from its own echo.
+  const same = mkPost({ prior_posts: [prior] });
+  assert.equal(deriveGvDisplay(same, [echo, mkEcho(BODY)], NOW).display, 'in_thread');
+  assert.equal(deriveGvDisplay(same, [echo, mkEcho(BODY)], NOW).hand_pasted, false);
 });
 
 test('sent within 2 minutes is sent', () => {
@@ -285,4 +320,21 @@ test('gvPostStatusForProposal returns null with no post and the latest post othe
   assert.equal(unseen.display, 'sent_not_seen');
   assert.equal(unseen.in_thread_at, null);
   assert.equal(unseen.hand_pasted, false);
+
+  // A reworded resend after the latest post landed (cancelled, so no sweep arm
+  // touches it): the landed post's echo is the proposal's own, never a hand paste.
+  await mkMessage(negNew, body, 4);
+  const reworded = await pool.query(
+    `INSERT INTO gv_posts (proposal_id, client_id, negotiation_id, body, send_path, status, created_at)
+     VALUES ($1, $2, $3, $4, 'compose', 'cancelled', now() - interval '1 minute')
+     RETURNING id`,
+    [proposalId, c.rows[0].id, negNew, `Following up: ${proposalUrl(token)}`]
+  );
+  created.posts.push(reworded.rows[0].id);
+  const resend = await gvPostStatusForProposal(proposalId);
+  assert.equal(resend.status, 'cancelled');
+  assert.equal(resend.hand_pasted, false, 'own earlier echo left out');
+  // A hand paste in other words still reads.
+  await mkMessage(negNew, `link again: https://drbartender.com/proposal/${token}`, 0.5);
+  assert.equal((await gvPostStatusForProposal(proposalId)).hand_pasted, true);
 });
