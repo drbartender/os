@@ -63,8 +63,8 @@
 #
 #   present: node scripts/ship.js --foreground, the one push command, runs
 #     once per board write, with no guard of its own (spec 4.5): the range
-#     gate, the receipt check and the markers inside ship decide what ships,
-#     so another window's reviewed commits ride along and anything ship
+#     gate, the range check and the gate marker inside ship decide what ships,
+#     so another window's commits on main ride along and anything ship
 #     refuses keeps the board commit local.
 #     ship's exit code and its last stdout line (ship: result <state>
 #     <text>) decide the ending: ok or pushed-elsewhere is success; origin/main

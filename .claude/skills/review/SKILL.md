@@ -1,11 +1,27 @@
 ---
 name: review
-description: The per-lane review that writes a receipt (spec 2026-10-19 section 3). Run it before every lane merge, on a staged quick fix before its commit, and on a commit already on main with no receipt. Trigger words review, review the lane, run the review, per-lane review, review receipt, quick-fix review, review --commit, properly reviewed.
+description: How a change is reviewed here. Claude reads the change, picks the reviewers it deserves from .claude/agents and hands them the diff; use it before a lane merge and before a quick fix's commit. The receipt procedure in the second half is an optional record that nothing requires. Trigger words review, review the lane, run the review, per-lane review, review receipt, quick-fix review, review --commit, properly reviewed.
 ---
 
 # Review
 
-The procedure a session follows to review one change and write its receipt, in the order the plan gives (plan 2026-10-20, lane review-skill), over the scripts merged in step 2.
+## How to review
+
+This is the default, and it is judgment, not a procedure. Nothing here is checked by a script, and no merge or push refuses over a review. [Claude default 2026-11-22; Dallas on tools that do and never decide: "that sounds more like it"]
+
+- Read the diff yourself first and decide what could really go wrong with this change. That reading, not a file name or a list, sets the size of the review. A cosmetic change may need nothing past your own read; code that moves money, checks who may see what, or carries a client's or staff member's data gets the careful end.
+- The reviewers are resources to pick from, never a required set. Each agent under `.claude/agents/` is a checklist built from this codebase's real defects: money, lifecycle, concurrency, business-time, outcomes-providers, access-egress, seams, schema-data, client, and verify (an adversarial read of money math and of fixes). Pick the ones whose subject the change touches and say which you picked and why.
+- Hand a reviewer three things: the diff as a file (write `git diff <base>..<tip>` to the scratchpad, masked through `node scripts/lib/piiShapes.js --mask-diff` when it could carry a person's details), the list of changed files, and a few sentences that stand in for the brief its instructions mention: what the change is for, which tests ran and their counts, and for money the laws that apply (`docs/money-laws.md`). Tell it plain findings are enough; the verdict table is only for a receipt.
+- Check every finding against the code yourself; agreement between reviewers is not evidence. Fix what an ordinary flow can reach and anything that exposes a person's data or a secret; the reviewer that raised a finding rereads its fix and no one else does. The rest goes into the lane report. The bound is the project rule: one pass, at most two fix re-passes, then the lane splits.
+- Run the tests the change reaches (`node scripts/run-suites.js --changed <base>..<tip>`; server suites share one dev database, so never any other way), the money smoke for money code, and the client build for a client change. Read counts from the runner's summary, never from an exit code. The ship gate runs the smoke and the build again on what is pushed.
+- A finished review stays finished. Another window's merge never undoes it; when a merge conflicts, or main changed code this change calls or is called by, read that overlap and nothing more.
+- Reviewers run on model opus and verify on model fable, passed on every dispatch. [Dallas 2026-08-14]
+- No prompt, report or commit message carries a client's or staff member's name, phone number or email address: files by path, people by role, records by id. [Dallas 2026-10-19]
+- When the work lands, say in a sentence or two what it did, what review it got and what was not checked.
+
+## The receipt procedure (optional)
+
+The steps below write a receipt, a durable record of a review, through the receipt scripts. Nothing requires one. Use them when a record is worth its cost, and skip them otherwise. Where a line below says a tier, a selected lens set or a refusal binds, that holds inside this procedure only.
 
 ## Rules
 
@@ -13,7 +29,7 @@ The procedure a session follows to review one change and write its receipt, in t
 
 - Judgment sits above this procedure: the scripts enforce a floor, and the session prices the review (agents, runs, hours) before it starts and picks the lightest pass that covers the real risk; when the machinery forces more than a change needs, the session says so and changes the machinery as its own call, never as a question to the owner. Cosmetic changes get a light look. [Claude default 2026-11-06, restoring the pre-rewrite rule; the owner: "I rely on your judgement for how things should be done"]
 - The scripts are the mechanism and their usage headers name every flag: when a script and this file disagree, the script wins and this file is corrected in the same lane. [Claude default]
-- Review is standing: run this skill on every lane before its merge and on every quick fix before its commit, without asking; the computed tier sets the proportion, never a question to Dallas. [Dallas 2026-08-28]
+- Review is standing: every lane is reviewed before its merge and every quick fix before its commit, without asking; Claude's reading of the change sets the proportion, never a question to Dallas. [Dallas 2026-08-28]
 - In what follows, <wt> is the checkout under review (the lane's worktree, os for a quick fix), <branch> the lane branch, <base> the full sha of git merge-base main <branch>, <tip> the full sha of the branch tip, <plan> and <spec> the plan and spec paths, <name> and <work> the working name and directory init prints (<work> is <git-common-dir>/drb-review/_work/<name>/), and <rr> stands for node <wt>/scripts/review-receipt.js. [Claude default]
 - Lane mode is the default and its base is current main: rebase the lane onto main before init when main has moved, as standing practice, and never while a review is open (stale-base below covers main moving during one). [Claude default]
 - Before init the lane is checked out in exactly one worktree with nothing staged, changed or untracked, because position and every store refuse a dirty checkout and name only the counts. [Claude default]
@@ -141,5 +157,5 @@ The procedure a session follows to review one change and write its receipt, in t
 
 ### Merge and ship
 
-- The receipt is the record of the review; `merge-lane.sh` refuses a lane without one, and the pre-push gate refuses a range without one. [Claude default]
+- A receipt is a record of a review, and nothing refuses a merge or a push without one: `npm run ship` and the pre-push hook print a commit with no receipt as a note. `merge-lane.sh check` and the ship phase of `merge-lane.sh` still read one, so a lane reviewed without a receipt merges with plain `scripts/merge-lane.sh <branch> <plan>` and ships with `npm run ship`. [Claude default 2026-11-22]
 - This skill never merges, pushes or ships; a merge is `scripts/merge-lane.sh` and a push is `npm run ship` (or the merge script's ship phase, which runs the same flow). [Claude default]

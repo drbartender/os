@@ -103,7 +103,8 @@ function records(file) {
 // its path printed last. Modes: pass, fail (a failing receipt and the gate
 // marker, exit 1), noreceipt (exit 0, nothing written), sleep (holds until a
 // signal). locks: takes drb-push-gate.lock itself and probes the ship lock;
-// watch_marker: sets a watch marker while it runs; unflip: removes the flip
+// watch_marker: sets a watch marker while it runs; gate_marker: sets a gate
+// marker while it runs; unflip: removes the flip
 // marker while it runs; advance: pushes a second clone's main to origin
 // while it runs; clear: clears a gate marker it fixes; flag: a file it
 // writes as its very last act.
@@ -131,6 +132,7 @@ if (cfg.mode === 'sleep') {
   return;
 }
 if (cfg.watch_marker) lib('markers.js').setWatch({ sha, deploy_at: new Date().toISOString(), count: 3, by_issue: null, cwd });
+if (cfg.gate_marker) lib('markers.js').setGate({ sha, reason: 'set by the stub', gates: ['money'], cwd });
 if (cfg.unflip) fs.rmSync(path.join(out('rev-parse', '--path-format=absolute', '--git-common-dir'), 'drb-flip.json'));
 if (cfg.advance) execFileSync('git', ['-C', cfg.advance, 'push', '-q', 'origin', 'HEAD:refs/heads/main'], { stdio: 'ignore' });
 if (cfg.mode === 'noreceipt') {
@@ -531,16 +533,17 @@ test('two commits in the range are both listed and the result says 2', (t) => {
   hygiene(h, two);
 });
 
-test('a server/ commit with no receipt is refused naming its sha, before the gate, and nothing is pushed', (t) => {
+test('a server/ commit with no receipt is a note naming its sha, never a refusal: the gate runs and it ships', async (t) => {
   const h = makeRepo(t);
   const sha = commit(h.repo, 'server work', { 'server/a.js': 'a v2\n' });
   const r = ship(h);
-  assert.equal(r.status, 1, said(r));
-  assert.match(resultOf(h, sha), new RegExp(`^refused ${s7(sha)}: no review receipt`));
-  assert.match(r.stdout, new RegExp(`^ {2}- ${s7(sha)}: no review receipt`, 'm'));
-  assert.deepEqual(gateRuns(h), []);
-  assert.equal(originMain(h), h.seed);
-  assert.equal(manifest(h, sha).push_started_at, null);
+  assert.equal(r.status, 0, said(r));
+  assert.equal(textsOf(logLines(h, sha), 'receipts')[0], '1 commits: 0 docs-only, 0 with a receipt, 1 with no standing receipt (noted, not refused)');
+  assert.match(r.stdout, new RegExp(`^ {2}- note: ${s7(sha)}: no review receipt`, 'm'));
+  assert.equal(gateRuns(h).length, 1, 'the gate still runs');
+  assert.match(resultOf(h, sha), new RegExp(`^ok pushed ${s7(sha)}, 1 commits`));
+  assert.equal(originMain(h), sha);
+  await waitFor('the watch stub', () => watchedFor(h, sha).length === 1);
   hygiene(h, sha);
 });
 
@@ -605,15 +608,16 @@ test('a gate marker on HEAD itself is a re-test: the gate runs again on that sha
   await waitFor('the watch stub', () => watchedFor(h, lane.sha).length === 1);
 });
 
-test('a standing watch marker refuses with the ack line, before the gate', (t) => {
+test('a standing watch marker is a note with the ack line, never a refusal: the ship goes on and the marker stands until its ack', async (t) => {
   const h = makeRepo(t);
   const lane = landLane(h, { 'server/a.js': 'a v2\n' });
   h.lib('markers.js').setWatch({ sha: h.seed, deploy_at: new Date().toISOString(), count: 2, by_issue: null, cwd: h.repo });
   const r = ship(h);
-  assert.equal(r.status, 1, said(r));
-  assert.equal(resultOf(h, lane.sha), `refused BLOCKED: watch marker stands on ${s7(h.seed)} (2 events since deploy); read them, then npm run ship -- --ack-watch ${s7(h.seed)} --note <what you saw and decided>`);
-  assert.deepEqual(gateRuns(h), []);
-  assert.equal(originMain(h), h.seed);
+  assert.equal(r.status, 0, said(r));
+  assert.equal(textsOf(logLines(h, lane.sha), 'watch')[0], `a note, not a refusal: watch marker stands on ${s7(h.seed)} (2 events since deploy); read them, then npm run ship -- --ack-watch ${s7(h.seed)} --note <what you saw and decided>`);
+  assert.equal(originMain(h), lane.sha);
+  assert.ok(fs.existsSync(path.join(h.common, 'drb-markers', 'watch.json')), 'only its ack clears the marker');
+  await waitFor('the watch stub', () => watchedFor(h, lane.sha).length === 1);
 });
 
 test('--ack-watch clears the marker for its sha, writes the ack line and pushes nothing; another sha, or none standing, is refused', async (t) => {
@@ -667,16 +671,28 @@ test('a stub gate that exits 0 without writing a receipt ends failed before any 
   assert.equal(originMain(h), h.seed);
 });
 
-test('a watch marker that appears while the gate runs refuses right before the push stamp', (t) => {
+test('a gate marker that appears while the gate runs refuses right before the push stamp', (t) => {
+  const h = makeRepo(t);
+  const lane = landLane(h, { 'server/a.js': 'a v2\n' });
+  setCfg(h.gate, { gate_marker: true });
+  const r = ship(h);
+  assert.equal(r.status, 1, said(r));
+  assert.match(resultOf(h, lane.sha), new RegExp(`^refused BLOCKED: gate marker stands on ${s7(lane.sha)}`));
+  assert.equal(manifest(h, lane.sha).gate.result, 'ok');
+  assert.equal(manifest(h, lane.sha).push_started_at, null);
+  assert.equal(originMain(h), h.seed);
+});
+
+test('a watch marker that appears while the gate runs does not stop the push', async (t) => {
   const h = makeRepo(t);
   const lane = landLane(h, { 'server/a.js': 'a v2\n' });
   setCfg(h.gate, { watch_marker: true });
   const r = ship(h);
-  assert.equal(r.status, 1, said(r));
-  assert.match(resultOf(h, lane.sha), new RegExp(`^refused BLOCKED: watch marker stands on ${s7(lane.sha)} \\(3 events since deploy\\)`));
+  assert.equal(r.status, 0, said(r));
+  assert.match(resultOf(h, lane.sha), new RegExp(`^ok pushed ${s7(lane.sha)}, 1 commits`));
   assert.equal(manifest(h, lane.sha).gate.result, 'ok');
-  assert.equal(manifest(h, lane.sha).push_started_at, null);
-  assert.equal(originMain(h), h.seed);
+  assert.equal(originMain(h), lane.sha);
+  await waitFor('the watch stub', () => watchedFor(h, lane.sha).length === 1);
 });
 
 test('a flip marker removed while the gate runs refuses with the missing-marker line before the push stamp', (t) => {
@@ -1141,7 +1157,8 @@ test('a record that died before its push is moved aside: the ship goes on, or en
 
 test('a failed opening fetch with a record that did not ship standing for HEAD writes nothing and exits 1', (t) => {
   const h = makeRepo(t);
-  const sha = commit(h.repo, 'server work', { 'server/a.js': 'a v2\n' });
+  // A range the check still refuses: a token-shaped line.
+  const sha = commit(h.repo, 'server work', { 'server/a.js': `a v2 ${['ab12', 'cd34'].join('').repeat(5)}\n` });
   assert.equal(ship(h).status, 1);
   assert.match(resultOf(h, sha), /^refused /);
   const before = snapshot(h);
@@ -1184,7 +1201,7 @@ test('the real gate on a docs-only commit writes nothing_to_run with no worktree
   const rec = JSON.parse(fs.readFileSync(path.join(h.common, 'drb-gate', `${sha}.json`), 'utf8'));
   assert.deepEqual([rec.version, rec.nothing_to_run, rec.stubbed, rec.gates_needed], [2, true, [], []]);
   assert.ok(noGateWorktree(h));
-  assert.match(r.stdout + r.stderr, new RegExp(`pre-push: ${s7(sha)}: the sha receipt and the review receipts over origin/main are valid`));
+  assert.match(r.stdout + r.stderr, new RegExp(`pre-push: ${s7(sha)}: the sha receipt is valid and the range holds no PII hit`));
   assert.equal(originMain(h), sha);
   await waitFor('the watch stub', () => watchedFor(h, sha).length === 1);
 });
@@ -1221,7 +1238,7 @@ fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({ suites: [], to
   const rec = JSON.parse(fs.readFileSync(path.join(h.common, 'drb-gate', `${lane.sha}.json`), 'utf8'));
   assert.deepEqual([rec.gates_passed, rec.stubbed, rec.node_modules], [['money'], ['static', 'smoke'], 'linked']);
   assert.ok(noGateWorktree(h));
-  assert.match(r.stdout + r.stderr, /the sha receipt and the review receipts over origin\/main are valid \(stubbed: static, smoke\)/);
+  assert.match(r.stdout + r.stderr, /the sha receipt is valid and the range holds no PII hit \(stubbed: static, smoke\)/);
   assert.equal(originMain(h), lane.sha);
   await waitFor('the watch stub', () => watchedFor(h, lane.sha).length === 1);
 });
@@ -1323,7 +1340,7 @@ test('a revert of a shipped tier A commit ships the same way, the gate stub in p
   await waitFor('the watch stub', () => watchedFor(h, rev).length === 1);
 });
 
-test('a revert with a hand edit, or of a commit not on origin/main, gets no receipt and is refused naming its sha', (t) => {
+test('a revert with a hand edit, or of a commit not on origin/main, gets no revert receipt and ships with a note naming its sha', async (t) => {
   const h = makeRepo(t);
   const lane = landLane(h, { 'server/a.js': 'a v2\n' });
   pushByHand(h);
@@ -1333,20 +1350,22 @@ test('a revert with a hand edit, or of a commit not on origin/main, gets no rece
   git(h.repo, 'commit', '-q', '--no-edit');
   const edited = git(h.repo, 'rev-parse', 'HEAD');
   const r = ship(h);
-  assert.equal(r.status, 1, said(r));
+  assert.equal(r.status, 0, said(r));
   assert.equal(textsOf(logLines(h, edited), 'revert')[0], `no revert receipt for ${s7(edited)}: its tree is not ${s7(lane.sha)} reverted on its parent; the commit carries more than the revert`);
-  assert.match(resultOf(h, edited), new RegExp(`^refused ${s7(edited)}: no review receipt`));
-  assert.deepEqual(gateRuns(h), []);
+  assert.match(r.stdout, new RegExp(`^ {2}- note: ${s7(edited)}: no review receipt`, 'm'));
+  assert.equal(originMain(h), edited);
+  await waitFor('the watch stub', () => watchedFor(h, edited).length === 1);
 
   const g = makeRepo(t);
   const local = landLane(g, { 'server/a.js': 'a v2\n' });
   git(g.repo, 'revert', '--no-edit', local.sha);
   const rev = git(g.repo, 'rev-parse', 'HEAD');
   const s = ship(g);
-  assert.equal(s.status, 1, said(s));
+  assert.equal(s.status, 0, said(s));
   assert.equal(textsOf(logLines(g, rev), 'revert')[0], `no revert receipt for ${s7(rev)}: reverts ${s7(local.sha)}, which is not on origin/main (a revert receipt is for a shipped commit)`);
-  assert.match(resultOf(g, rev), new RegExp(`^refused ${s7(rev)}: no review receipt`));
-  assert.equal(originMain(g), g.seed);
+  assert.match(s.stdout, new RegExp(`^ {2}- note: ${s7(rev)}: no review receipt`, 'm'));
+  assert.equal(originMain(g), rev);
+  await waitFor('the watch stub', () => watchedFor(g, rev).length === 1);
 });
 
 test('a clean revert whose tree a quick fix keys gets its own revert receipt under its commit key and ships', async (t) => {
@@ -1380,7 +1399,7 @@ test('a clean revert whose tree a quick fix keys gets its own revert receipt und
   await waitFor('the watch stub', () => watchedFor(h, rev).length === 1);
 });
 
-test('a revert whose commit key holds a shipped twin\'s revert receipt replaces it and ships; an unshipped twin\'s is left and the run is refused naming the clash', async (t) => {
+test('a revert whose commit key holds a shipped twin\'s revert receipt replaces it and ships; an unshipped twin\'s is left and the clash is a note', async (t) => {
   const h = makeRepo(t);
   const R = h.lib('receipt.js');
   const keyOf = (sha) => R.commitKey(sha, { cwd: h.repo });
@@ -1417,14 +1436,15 @@ test('a revert whose commit key holds a shipped twin\'s revert receipt replaces 
   git(g.repo, 'revert', '--no-edit', gl2.sha);
   const gz = git(g.repo, 'rev-parse', 'HEAD');
   const s = ship(g);
-  assert.equal(s.status, 1, said(s));
+  assert.equal(s.status, 0, said(s));
   assert.deepEqual(textsOf(logLines(g, gz), 'revert'), [
     `revert receipt written for ${s7(gx1)}, reverting ${s7(ga.sha)}`,
     `no revert receipt for ${s7(gz)}: its commit key holds the revert receipt of ${s7(gx1)}, the same patch, which has not shipped`,
   ]);
-  assert.match(resultOf(g, gz), new RegExp(`^refused ${s7(gz)}: no review receipt of its own \\(its commit key \\S+ holds the revert receipt of ${s7(gx1)}, another commit with the same patch`));
+  assert.match(s.stdout, new RegExp(`^ {2}- note: ${s7(gz)}: no review receipt of its own \\(its commit key \\S+ holds the revert receipt of ${s7(gx1)}, another commit with the same patch`, 'm'));
   assert.equal(G.readReceipt(G.receiptDir(G.commitKey(gz, { cwd: g.repo }), { cwd: g.repo })).tip, gx1, 'the twin\'s receipt is left');
-  assert.equal(originMain(g), ga.sha);
+  assert.equal(originMain(g), gz);
+  await waitFor('the watch stub', () => watchedFor(g, gz).length === 1);
 });
 
 test('a revert receipt for this very commit under its key stands, a dry run\'s or one with no tip: the real ship writes no second one', async (t) => {
@@ -1483,7 +1503,7 @@ test('a twin rewritten away (its revert amended after a dry run) has its receipt
   await waitFor('the watch stub', () => watchedFor(h, amended).length === 1);
 });
 
-test('a twin git cannot place is left, failing closed, and the run refused; a twin that is gone on a clean miss is replaced', async (t) => {
+test('a twin git cannot place is left, failing closed, and the clash is a note on a ship that goes on', async (t) => {
   const h = makeRepo(t);
   const R = h.lib('receipt.js');
   const lane = landLane(h, { 'server/a.js': 'a v2\n' });
@@ -1498,17 +1518,12 @@ test('a twin git cannot place is left, failing closed, and the run refused; a tw
   fs.mkdirSync(path.dirname(alternates), { recursive: true });
   fs.writeFileSync(alternates, `${path.join(h.root, 'no-such-store')}\n`);
   const left = ship(h);
-  assert.equal(left.status, 1, said(left));
+  assert.equal(left.status, 0, said(left));
   assert.equal(textsOf(logLines(h, rev), 'revert')[0], `no revert receipt for ${s7(rev)}: git could not place abcdabc, whose revert receipt holds the same commit key; it is left`);
   assert.equal(R.readReceipt(R.receiptDir(key, { cwd: h.repo })).tip, ghost, 'the receipt is left');
-  assert.match(resultOf(h, rev), /holds the revert receipt of abcdabc, another commit with the same patch/);
-  assert.equal(originMain(h), lane.sha);
-  fs.rmSync(alternates);
-  const r = ship(h);
-  assert.equal(r.status, 0, said(r));
-  assert.equal(textsOf(logLines(h, rev), 'revert')[0], `revert receipt for ${s7(rev)} replaces the one abcdabc held under the same patch`);
-  assert.equal(R.readReceipt(R.receiptDir(key, { cwd: h.repo })).tip, rev);
+  assert.match(left.stdout, /^ {2}- note: [0-9a-f]{7}: no review receipt of its own [^\n]*holds the revert receipt of abcdabc, another commit with the same patch/m);
   assert.equal(originMain(h), rev);
+  fs.rmSync(alternates);
   await waitFor('the watch stub', () => watchedFor(h, rev).length === 1);
 });
 
@@ -1538,6 +1553,20 @@ test('a token-shaped line in a docs file is refused naming the file and line, ne
   assert.equal(resultOf(h, sha), `refused ${s7(sha)}: pii: docs/notes.md line 2 adds a TOKEN-shaped run`);
   for (const text of [r.stdout, r.stderr, fs.readFileSync(path.join(shipDir(h), `${sha}.log`), 'utf8'), fs.readFileSync(path.join(shipDir(h), `${sha}.json`), 'utf8')]) {
     assert.ok(!text.includes(run), 'the token never leaves the diff');
+  }
+  assert.deepEqual(gateRuns(h), []);
+  assert.equal(originMain(h), h.seed);
+});
+
+test('a token-shaped run in a commit message is refused naming the commit, receipt or no receipt, and never the text', (t) => {
+  const h = makeRepo(t);
+  const run = ['ab12', 'cd34'].join('').repeat(5);
+  const sha = commit(h.repo, `server work ${run}`, { 'server/a.js': 'a v2\n' });
+  const r = ship(h);
+  assert.equal(r.status, 1, said(r));
+  assert.equal(resultOf(h, sha), `refused ${s7(sha)}: pii: the commit message carries a TOKEN-shaped run`);
+  for (const text of [r.stdout, r.stderr, fs.readFileSync(path.join(shipDir(h), `${sha}.log`), 'utf8'), fs.readFileSync(path.join(shipDir(h), `${sha}.json`), 'utf8')]) {
+    assert.ok(!text.includes(run), 'the token never leaves the message');
   }
   assert.deepEqual(gateRuns(h), []);
   assert.equal(originMain(h), h.seed);

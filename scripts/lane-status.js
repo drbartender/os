@@ -291,10 +291,10 @@ function firstLine(err) {
   return text.length > 200 ? `${text.slice(0, 200)}...` : text;
 }
 
-// The flip state and the two markers' lines. The gate and watch lines are
-// refusals whatever the flip state (since the flip an absent marker was
-// lost); on an unreadable flip file the flip line is standing().flip, never a
-// read of flip() alone.
+// The flip state and the two markers' lines. The gate line is a refusal
+// whatever the flip state (since the flip an absent marker was lost); the
+// watch line is a note, since no push refuses on it; on an unreadable flip
+// file the flip line is standing().flip, never a read of flip() alone.
 function markersReport({ cwd = process.cwd() } = {}) {
   const markers = require('./lib/markers');
   const f = markers.flipState({ cwd });
@@ -304,7 +304,7 @@ function markersReport({ cwd = process.cwd() } = {}) {
   else if (f.state === 'present') lines.push(`flip marker: ${short(f.sha)} ${isSet(f.pushed_at) ? markers.clean(f.pushed_at) : 'no date recorded'}`);
   else lines.push(s.flip);
   if (s.gate) lines.push(s.gate);
-  if (s.watch) lines.push(s.watch);
+  if (s.watch) lines.push(s.watch.replace(/^BLOCKED: /, 'note (no push refuses on it): '));
   return lines;
 }
 

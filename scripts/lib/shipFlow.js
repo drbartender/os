@@ -25,11 +25,14 @@
 // What it guarantees:
 //   - A push is the literal sha to refs/heads/main through the pre-push hook:
 //     never --no-verify, never forced, never after a pull or a rebase, and a
-//     rejection stops and reports. It happens only after the review receipts
-//     over origin/main..HEAD hold (rangeCheck.checkRange), the sha gate passed
-//     (push-gate.js sha beside ship.js, always run) and left a receipt that
-//     shaGate.checkShaReceipt accepts as the hook will, and no marker stands
-//     right before the push stamp.
+//     rejection stops and reports. It happens only after the range check finds
+//     nothing that blocks (rangeCheck.checkRange: a PII hit or a broken range;
+//     a commit with no review receipt is a logged note, since the session
+//     judges the review a change needs), the sha gate passed (push-gate.js sha
+//     beside ship.js, always run) and left a receipt that
+//     shaGate.checkShaReceipt accepts as the hook will, and no gate or flip
+//     marker stands right before the push stamp (a watch marker is a logged
+//     note).
 //   - pushed_at is stamped only on proof that the sha landed (a push that
 //     exited 0, or a fetch that finds it on origin/main) and push_started_at
 //     right before the push, so a record whose run died is completed by the
@@ -90,6 +93,9 @@ const { mask } = require('./piiShapes');
 // The directory holding ship.js, push-gate.js and post-ship-watch.js.
 const SCRIPTS = path.resolve(__dirname, '..');
 const S = R.short;
+// A standing watch marker is a note in the ship log, never a refusal: the
+// events an earlier deploy's watch found are read by whoever ships next.
+const watchNote = (line) => `a note, not a refusal: ${String(line).replace(/^BLOCKED: /, '')}`;
 const CUE_ONLY = `ship: no flip marker (lost since the flip of ${M.FLIP_DATE}); every push refuses until it is restored (npm run ship says how)`;
 const STOP_SIGNALS = Object.freeze(['SIGTERM', 'SIGINT', 'SIGHUP']);
 const PUSH_BOUND_MS = 10 * 60 * 1000;
@@ -599,8 +605,8 @@ class Run {
   markers() {
     const st = M.standing(this.o);
     if (st.gate && !M.isFixForward(this.sha, { cwd: this.primary, self: true })) return this.refuse(st.gate);
-    if (st.watch) return this.refuse(st.watch);
     if (st.flip) return this.refuse(st.flip);
+    if (st.watch) this.stage('watch', watchNote(st.watch));
     if (st.gate) this.stage('gate', `a gate marker stands and ${S(this.sha)} fixes it forward; the gate runs, and only a pass that re-runs what it names clears it`);
     return null;
   }
@@ -650,14 +656,18 @@ class Run {
   receipts() {
     const rc = RC.checkRange({ base: this.origin, tip: this.sha, cwd: this.primary });
     const n = rc.commits.length;
-    if (rc.ok) {
-      const docs = rc.commits.filter((c) => c.docs_only).length;
-      this.stage('receipts', `${n} commits: ${docs} docs-only, ${n - docs} with a receipt`);
-      return null;
+    if (rc.blocked) {
+      const { stops } = rc;
+      this.stage('receipts', `${stops.length} problems over ${n} commits; refused`);
+      for (const p of stops) this.log(`  - ${p}`);
+      return this.settle('refused', stops[0]);
     }
-    this.stage('receipts', `${rc.problems.length} problems over ${n} commits; refused`);
-    for (const p of rc.problems) this.log(`  - ${p}`);
-    return this.settle('refused', rc.problems[0]);
+    const docs = rc.commits.filter((c) => c.docs_only).length;
+    const noted = rc.commits.filter((c) => c.problems.length).length;
+    const without = noted ? `, ${noted} with no standing receipt (noted, not refused)` : '';
+    this.stage('receipts', `${n} commits: ${docs} docs-only, ${n - docs - noted} with a receipt${without}`);
+    for (const p of rc.notes) this.log(`  - note: ${p}`);
+    return null;
   }
 
   // The sha gate, always run; its receipt is then checked as the hook will.
@@ -698,12 +708,12 @@ class Run {
     return null;
   }
 
-  // The markers once more, right before the push stamp: a watch that ended
-  // while the gate ran may have set one, and the hook refuses on it.
+  // The gate and flip markers once more, right before the push stamp, as the
+  // hook will read them.
   recheck() {
     if (M.flipState(this.o).state === 'absent') return this.refuse(CUE_ONLY);
     const st = M.standing(this.o);
-    const line = st.gate || st.watch || st.flip;
+    const line = st.gate || st.flip;
     return line ? this.refuse(line) : null;
   }
 

@@ -388,7 +388,7 @@ test('after the flip a board line on a clean main ships through ship.js --foregr
   const receipt = JSON.parse(fs.readFileSync(path.join(h.common, 'drb-gate', `${head}.json`), 'utf8'));
   assert.deepStrictEqual([receipt.nothing_to_run, receipt.gates_needed, receipt.stubbed], [true, [], []]);
   assert.ok(noGateWorktree(h));
-  assert.match(res.stdout + res.stderr, new RegExp(`pre-push: ${s7(head)}: the sha receipt and the review receipts over origin/main are valid`));
+  assert.match(res.stdout + res.stderr, new RegExp(`pre-push: ${s7(head)}: the sha receipt is valid and the range holds no PII hit`));
   await waitFor('the watch stub', () => records(h.rec('watch')).some((r) => r.sha === head));
 });
 
@@ -407,20 +407,20 @@ test('after the flip the only-unpushed-commit guard is retired: another window\'
   await waitFor('the watch stub', () => records(h.rec('watch')).some((r) => r.sha === head));
 });
 
-test('after the flip an unpushed server/ commit with no receipt keeps the board commit local with ship\'s reason, exit 0, the remote unchanged', (t) => {
+test('after the flip an unpushed commit the range check refuses (a token-shaped line) keeps the board commit local with ship\'s reason, exit 0, the remote unchanged', (t) => {
   const h = makeFlipped(t);
-  fs.writeFileSync(path.join(h.work, 'server', 'a.js'), 'a v2\n');
+  fs.writeFileSync(path.join(h.work, 'server', 'a.js'), `a v2 ${['ab12', 'cd34'].join('').repeat(5)}\n`);
   fgit(h.work, 'add', '--', 'server/a.js');
-  fgit(h.work, 'commit', '-q', '-m', 'server work with no review');
+  fgit(h.work, 'commit', '-q', '-m', 'server work with a key in it');
   const server = fgit(h.work, 'rev-parse', 'HEAD');
-  const line = 'Board behind an unreviewed commit (spec, plan)';
+  const line = 'Board behind a refused commit (spec, plan)';
   const res = writeBoard(h, 'In flight', line);
   assert.strictEqual(res.status, 0, said(res));
   const results = shipResults(res.stdout);
   assert.strictEqual(results.length, 1, said(res));
   const [state, text] = results[0];
   assert.strictEqual(state, 'refused');
-  assert.match(text, new RegExp(`^${s7(server)}: no review receipt`));
+  assert.match(text, new RegExp(`^${s7(server)}: pii: server/a.js line 1 adds a TOKEN-shaped run`));
   assert.ok(res.stderr.includes(LOCAL_LINE('In flight', text)), said(res));
   assert.strictEqual(originHead(h), h.seed, 'nothing reached the remote');
   const head = fgit(h.work, 'rev-parse', 'HEAD');

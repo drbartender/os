@@ -41,7 +41,7 @@
 //   no new Sentry events in ten minutes   no marker. Never "clean": a wrong
 //                                         figure throws nothing.
 //   watch failed (<what>)                 an error in this script; marker
-//                                         with count null, so it still blocks.
+//                                         with count null, so it is still seen.
 //
 // The texts carry sha7 and counts only: a full sha masks as a token, a
 // ten-digit id as a phone, and an event title can carry a person's name, so
@@ -504,8 +504,8 @@ async function watch(sha, s, clock, { cwd, home }) {
   });
 }
 
-// An error in the watch itself: it still blocks, through a marker with count
-// null, when the sha resolves.
+// An error in the watch itself: it is still seen, through a marker with
+// count null, when the sha resolves.
 function watchFailed(sha, err, { cwd }) {
   const what = M.clean(err && err.code ? err.code : 'error');
   const notes = [];

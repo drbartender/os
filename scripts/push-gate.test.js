@@ -278,12 +278,12 @@ async function gsHoldLock(t, h) {
 
 // ---- check 6: the flip marker present ----
 
-test('gate-sha check 6: a push to main with a valid sha receipt and review receipts passes with no lock taken', async (t) => {
+test('gate-sha check 6: a push to main with a valid sha receipt and a clean range passes with no lock taken', async (t) => {
   const h = gsReady(t);
   await gsHoldLock(t, h);
   const r = gsVerify(h, gsLine(h.sha, 'refs/heads/main', h.seed));
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, new RegExp(`pre-push: ${h.sha.slice(0, 7)}: the sha receipt and the review receipts over origin/main are valid`));
+  assert.match(r.stdout, new RegExp(`pre-push: ${h.sha.slice(0, 7)}: the sha receipt is valid and the range holds no PII hit`));
 });
 
 test('gate-sha check 6: a real git push runs the hook on the stdin git feeds', (t) => {
@@ -296,7 +296,7 @@ test('gate-sha check 6: a real git push runs the hook on the stdin git feeds', (
   assert.match(refused.stderr, /updates refs\/heads\/elsewhere/);
   const pushed = gs.cp.spawnSync('git', ['push', 'origin', `${h.sha}:main`], { cwd: h.repo, env: GS_ENV, encoding: 'utf8' });
   assert.equal(pushed.status, 0, pushed.stderr);
-  assert.match(pushed.stdout + pushed.stderr, /the sha receipt and the review receipts over origin\/main are valid/);
+  assert.match(pushed.stdout + pushed.stderr, /the sha receipt is valid and the range holds no PII hit/);
   assert.equal(gsGit(h.origin, 'rev-parse', 'refs/heads/main'), h.sha);
 });
 
@@ -311,7 +311,7 @@ test('gate-sha check 6: a receipt written with stubs refuses, unless DRB_GATE_AL
   const allowed = gsVerify(h, gsLine(sha), { DRB_GATE_ALLOW_STUBBED: '1' });
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.match(allowed.stderr, /DRB_GATE_ALLOW_STUBBED=1 is set/);
-  assert.match(allowed.stdout, /are valid \(stubbed: smoke\); nothing runs here/);
+  assert.match(allowed.stdout, /holds no PII hit \(stubbed: smoke\); nothing runs here/);
 });
 
 test('gate-sha check 6: a push to another remote ref refuses, naming it and the escape', (t) => {
@@ -340,12 +340,13 @@ test('gate-sha check 6: a standing gate marker refuses naming it', (t) => {
   assert.match(r.stderr, new RegExp(`BLOCKED: gate marker stands on ${h.sha.slice(0, 7)}`));
 });
 
-test('gate-sha check 6: a standing watch marker refuses with the ack line', (t) => {
+test('gate-sha check 6: a standing watch marker is a note with the ack line, never a refusal', (t) => {
   const h = gsReady(t);
   h.lib('markers.js').setWatch({ sha: h.seed, deploy_at: new Date().toISOString(), count: 3, by_issue: null, cwd: h.repo });
   const r = gsVerify(h, gsLine(h.sha));
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /BLOCKED: watch marker stands on .*npm run ship -- --ack-watch/);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /pre-push: a note, not a refusal: watch marker stands on .*npm run ship -- --ack-watch/);
+  assert.doesNotMatch(r.stderr, /BLOCKED/);
 });
 
 test('gate-sha check 6: a missing sha receipt refuses with run npm run ship', (t) => {
@@ -368,16 +369,27 @@ test('gate-sha check 6: a sha receipt whose base is stale refuses', (t) => {
   assert.match(r.stderr, new RegExp(`gated against origin/main at ${first.slice(0, 7)}; origin/main is now ${h.seed.slice(0, 7)}`));
 });
 
-test('gate-sha check 6: a range commit with no review receipt refuses naming the sha', (t) => {
+test('gate-sha check 6: a range commit with no review receipt passes and is counted as a note', (t) => {
   const h = gsRepo(t);
   gsFlip(h);
-  const reviewed = gsLandLane(h, { 'server/a.js': 'a v2\n' });
+  gsLandLane(h, { 'server/a.js': 'a v2\n' });
   const bare = gsCommit(h.repo, 'unreviewed', { 'server/b.js': 'b v2\n' });
   gsShaReceipt(h, bare);
   const r = gsVerify(h, gsLine(bare));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /holds no PII hit; 1 review-receipt note\(s\), not refused; nothing runs here/);
+});
+
+test('gate-sha check 6: a PII-shaped line in a range commit with no review receipt still refuses, naming the file and never the text', (t) => {
+  const h = gsRepo(t);
+  gsFlip(h);
+  const run = ['ab12', 'cd34'].join('').repeat(5);
+  const bare = gsCommit(h.repo, 'notes', { 'server/b.js': `// the key ${run}\n` });
+  gsShaReceipt(h, bare);
+  const r = gsVerify(h, gsLine(bare));
   assert.equal(r.status, 1);
-  assert.match(r.stderr, new RegExp(`- ${bare.slice(0, 7)}: no review receipt`));
-  assert.doesNotMatch(r.stderr, new RegExp(`- ${reviewed.slice(0, 7)}:`), 'the reviewed commit passes');
+  assert.match(r.stderr, new RegExp(`- ${bare.slice(0, 7)}: pii: server/b.js line 1 adds a TOKEN-shaped run`));
+  assert.ok(!(r.stdout + r.stderr).includes(run), 'the token never leaves the diff');
 });
 
 test('gate-sha check 6: an unreadable flip marker refuses and takes no lock', async (t) => {
@@ -453,11 +465,11 @@ test('legacy-removal: with no flip marker, verify refuses every stdin shape with
 test('legacy-removal: with the flip marker present, the legacy receipt file changes nothing', (t) => {
   const h = gsReady(t);
   const legacy = gs.path.join(h.common, 'drb-push-gate-receipt.json');
-  // None on disk: a push with a sha receipt and review receipts passes, and verify writes none.
+  // None on disk: a push with a sha receipt and a clean range passes, and verify writes none.
   assert.equal(gs.fs.existsSync(legacy), false);
   const ok = gsVerify(h, gsLine(h.sha, 'refs/heads/main', h.seed));
   assert.equal(ok.status, 0, ok.stderr);
-  assert.match(ok.stdout, /the sha receipt and the review receipts over origin\/main are valid/);
+  assert.match(ok.stdout, /the sha receipt is valid and the range holds no PII hit/);
   assert.equal(gs.fs.existsSync(legacy), false, 'verify writes no legacy receipt');
   // One on disk, written for the sha being pushed and covering every gate: a
   // push with no sha receipt still refuses.

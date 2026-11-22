@@ -64,7 +64,7 @@
 //      DRB_SHIP_WATCH_CMD or DRB_SHIP_GIT_CMD set without
 //      DRB_SHIP_ALLOW_STUBS=1; a missing flip marker, lost since the flip,
 //      with CUE_ONLY and the restore recipe, as npm run ship refuses it; the
-//      primary worktree on main), a standing watch marker, and a gate marker
+//      primary worktree on main) and a gate marker
 //      main's head does not fix forward (markers.isFixForward with self, the
 //      squash its child), each with its own line (spec 4.4). checkLane runs
 //      again under the lock this run holds (the foreground's answer is a
@@ -410,7 +410,10 @@ class Ship {
     const rec = SQ.writeSquashReceipt({ cwd, squash: this.squash, check: r, branch, suitesDir: path.join(this.runDir, 'suites-run') });
     this.say('receipt', `squash receipt ${S(rec.key)}, kind ${rec.kind}, its source the lane receipt ${S(r.key)}${rec.superseded ? ' (moved to _superseded under the same key)' : ''}`);
     const rc = RC.checkRange({ base: r.main, tip: this.squash, cwd });
-    this.say('receipt', rc.ok ? 'the push check accepts the squash receipt' : `the push check would refuse it: ${rc.problems.slice(0, 3).join('; ')}`);
+    let pushCheck = 'the push check accepts the squash receipt';
+    if (rc.blocked) pushCheck = `the push check would refuse it: ${rc.stops.slice(0, 3).join('; ')}`;
+    else if (!rc.ok) pushCheck = `the push check notes it, without refusing: ${rc.notes.slice(0, 3).join('; ')}`;
+    this.say('receipt', pushCheck);
     const halted = this.halted('receipt');
     if (halted) return halted;
     return this.shipSquash();

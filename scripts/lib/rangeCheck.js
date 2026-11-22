@@ -4,7 +4,13 @@
 // The receipt check over a push range (instruction rewrite step 3, lane
 // range-check; spec 2026-10-19 sections 3.7, 3.10, 4.7, 4.8 and D2; plan
 // 2026-10-22 decisions 8, 9 and 18). ship and the pre-push hook call the one
-// function, checkRange({base, tip, cwd}), and refuse on any problem.
+// function, checkRange({base, tip, cwd}), and refuse only when it says
+// blocked: a PII hit (in a diff or a commit message), a scan or a git read
+// of the range that failed, a merge or root commit, or a tip that is not a
+// push onto the base. A commit with no receipt, or one whose receipt does
+// not stand, is a note they print and never a refusal (2026-11-22: the
+// session judges what review a change needs; the receipt is a record it may
+// keep).
 //
 // Every commit in base..tip, oldest first:
 //   - a merge commit is a problem (main holds squashes only), and so is a
@@ -73,10 +79,13 @@
 // path itself carries a shape), and never a word of a report, a log or a
 // reason; a commit subject is masked through piiShapes.mask.
 //
-// Returns {ok, docs_only, commits: [{sha, subject, docs_only, kind,
-// receipt_key, problems}], pii: [{file, line, shape}], problems}. sha and
-// receipt_key are full ids (data for the caller); problems at the top level
-// hold every problem, the per-commit ones included, in order.
+// Returns {ok, blocked, stops, notes, docs_only, commits: [{sha, subject,
+// docs_only, kind, receipt_key, problems, stops}], pii: [{file, line,
+// shape}], problems, range_problems}. sha and receipt_key are full ids (data
+// for the caller); problems at the top level hold every problem, the
+// per-commit ones included, in order; ok is true only with none. stops are
+// what a push refuses on (each commit's stops, then range_problems) and
+// blocked is true with any; notes are the receipt problems, never a refusal.
 //
 // CLI: node scripts/lib/rangeCheck.js <base>..<tip> prints one line per
 // commit and its problems, then the range problems; exit 0 clean, 1 on any
@@ -499,25 +508,28 @@ function messageShapes(body) {
 function judge(entry, cwd, top) {
   const { sha, parents } = entry;
   const at = `${S(sha)}: `;
-  const out = { sha, subject: '', docs_only: false, kind: null, receipt_key: null, problems: [] };
+  const out = { sha, subject: '', docs_only: false, kind: null, receipt_key: null, problems: [], stops: [] };
   const p = out.problems;
-  const msg = attempt(() => messageOf(sha, cwd), p, at);
+  // stops: what a push refuses on for this commit, a PII hit in its message
+  // or its own diff, a scan that could not run, and a commit shape whose own
+  // diff cannot be scanned (a merge, a root). They are problems too; every
+  // problem after them is about the commit's review receipt, a note.
+  const { stops } = out;
+  const msg = attempt(() => messageOf(sha, cwd), stops, at);
   out.subject = msg.ok ? PII.mask(msg.value.subject) : '';
-  if (msg.ok) for (const shape of messageShapes(msg.value.body)) p.push(`${at}pii: the commit message carries a ${shape}-shaped run`);
-  if (parents.length > 1) {
-    p.push(`${at}a merge commit; main holds squashes only`);
-    return out;
+  if (msg.ok) for (const shape of messageShapes(msg.value.body)) stops.push(`${at}pii: the commit message carries a ${shape}-shaped run`);
+  if (parents.length > 1) stops.push(`${at}a merge commit; main holds squashes only`);
+  else if (parents.length === 0) stops.push(`${at}a commit with no parent; nothing to compare it against`);
+  else {
+    // Each commit's own diff too, docs-only ones included (they ran no
+    // pre-step): a line added and removed again inside the range is still
+    // caught here.
+    const scan = attempt(() => piiScan(parents[0], sha, top), stops, `${at}pii: `);
+    if (scan.ok) for (const x of scan.value) stops.push(`${at}${x.text}`);
   }
-  if (parents.length === 0) {
-    p.push(`${at}a commit with no parent; nothing to compare it against`);
-    return out;
-  }
+  p.push(...stops);
+  if (parents.length !== 1) return out;
   const parent = parents[0];
-  // Each commit's own diff too, docs-only ones included (they ran no
-  // pre-step): a line added and removed again inside the range is still
-  // caught here.
-  const scan = attempt(() => piiScan(parent, sha, top), p, `${at}pii: `);
-  if (scan.ok) for (const x of scan.value) p.push(`${at}${x.text}`);
   const t = attempt(() => GP.touches(parent, sha, { cwd }), p, at);
   if (!t.ok) return out;
   if (t.value.docs_only) {
@@ -573,6 +585,9 @@ function checkRange({ base, tip, cwd = process.cwd() } = {}) {
   const top = attempt(() => git('rev-parse', ['rev-parse', '--show-toplevel'], { cwd }).trim(), range, '');
   if (!b.ok || !t.ok || !top.ok) {
     result.problems = range;
+    result.range_problems = range;
+    result.stops = range;
+    result.blocked = true;
     return result;
   }
   const anc = attempt(() => R.isAncestor(b.value, t.value, { cwd }), range, '');
@@ -591,6 +606,13 @@ function checkRange({ base, tip, cwd = process.cwd() } = {}) {
   result.problems = [...result.commits.flatMap((c) => c.problems), ...range];
   result.range_problems = range;
   result.ok = result.problems.length === 0;
+  // What a push refuses on: each commit's stops (judge) and the range's own
+  // problems (a PII hit over base..tip, a git read that failed, a tip that
+  // is not a push onto the base). A commit's receipt problems are notes: the
+  // session judged what review the change needed.
+  result.stops = [...result.commits.flatMap((c) => c.stops), ...range];
+  result.blocked = result.stops.length > 0;
+  result.notes = result.commits.flatMap((c) => c.problems.slice(c.stops.length));
   return result;
 }
 

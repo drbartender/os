@@ -242,7 +242,7 @@ test('markersReport with both markers prints both lines, refusals while the flip
   assert.equal(lines.length, 3);
   assert.equal(lines[0], LS_MISSING(r));
   assert.ok(lines[1].startsWith(`BLOCKED: gate marker stands on ${r.sha7} (money smoke failed); a gate that passes`), lines[1]);
-  assert.ok(lines[2].startsWith(`BLOCKED: watch marker stands on ${r.sha7} (3 events since deploy); read them, then npm run ship -- --ack-watch`), lines[2]);
+  assert.ok(lines[2].startsWith(`note (no push refuses on it): watch marker stands on ${r.sha7} (3 events since deploy); read them, then npm run ship -- --ack-watch`), lines[2]);
   assert.ok(lines.every((l) => !l.includes('from the flip on')), 'no before-flip wording: the flip happened');
 });
 

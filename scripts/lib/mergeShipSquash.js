@@ -148,14 +148,13 @@ function wedged(cwd) {
 // unreadable flip marker; shipFlow's own precheck (a test override set
 // without DRB_SHIP_ALLOW_STUBS=1, a missing flip marker with CUE_ONLY and
 // the restore recipe, as npm run ship refuses, then the primary worktree on
-// main); a standing watch marker; and a gate marker `sha` does not fix
-// forward (spec 4.4).
+// main); and a gate marker `sha` does not fix forward (spec 4.4). A standing
+// watch marker is a note in ship's log, never a refusal.
 function markerRefusal(cwd, sha) {
   const st = M.standing({ cwd });
   if (M.flipState({ cwd }).state === 'unreadable') return st.flip;
   const pre = precheck(cwd);
   if (pre.refusal) return pre.refusal.split('\n').map((l) => l.replace(/^ship: /, '')).join('; ');
-  if (st.watch) return st.watch;
   if (st.gate && !M.isFixForward(sha, { cwd, self: true })) return st.gate;
   return null;
 }

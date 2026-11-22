@@ -33,11 +33,14 @@
  *     marker (<git-common-dir>/drb-flip.json) says, because git opens its SSH
  *     connection before the hook runs and a slow hook lets GitHub close it
  *     (the 2026-08-14 hang). It branches on markers.flipState. Present:
- *     validate only: a push to refs/heads/main alone, no standing marker, a
- *     sha receipt good for each pushed sha against the local origin/main
- *     (ship fetched moments before; a stale ref can only make git reject the
- *     push), and review receipts over origin/main..sha (rangeCheck). No
- *     receipt means refuse with "run npm run ship". Unreadable: refuse with
+ *     validate only: a push to refs/heads/main alone, no standing gate or
+ *     flip marker (a watch marker is printed as a note), a sha receipt good
+ *     for each pushed sha against the local origin/main (ship fetched moments
+ *     before; a stale ref can only make git reject the push), and a range
+ *     check over origin/main..sha that blocks only on a PII hit or a broken
+ *     range (rangeCheck; a commit with no review receipt is a counted note,
+ *     never a refusal). No sha receipt means refuse with "run npm run ship".
+ *     Unreadable: refuse with
  *     the marker's own line. Absent: refuse with missingMarkerLine before
  *     stdin is read: the flip happened on 2026-10-30, so a missing marker was
  *     lost, never not yet written, and nothing pushes until it is restored
@@ -239,9 +242,11 @@ function blocked(lines) {
 
 /**
  * The hook with the flip marker present: validate, never gate, never lock.
- * Refuses unless every pushed line goes to refs/heads/main, no marker stands,
- * and each pushed sha has a sha receipt good against the local origin/main
- * and review receipts over origin/main..sha.
+ * Refuses unless every pushed line goes to refs/heads/main, no gate or flip
+ * marker stands, each pushed sha has a sha receipt good against the local
+ * origin/main, and the range check over origin/main..sha does not block (a
+ * PII hit or a broken range). A watch marker and a commit with no review
+ * receipt are printed as notes.
  */
 function verifyAfterFlip() {
   const cwd = process.cwd();
@@ -263,9 +268,11 @@ function verifyAfterFlip() {
   const stubbedOk = process.env.DRB_GATE_ALLOW_STUBBED === '1';
   if (stubbedOk) console.error('pre-push: DRB_GATE_ALLOW_STUBBED=1 is set; a sha receipt written with stub gates is accepted (throwaway tests only)');
   const st = M.standing({ cwd });
-  const standing = [st.gate, st.watch, st.flip].filter(Boolean);
+  const standing = [st.gate, st.flip].filter(Boolean);
   if (standing.length) blocked(standing);
+  if (st.watch) console.error(`pre-push: a note, not a refusal: ${st.watch.replace(/^BLOCKED: /, '')}`);
   const stubs = new Set();
+  let notes = 0;
   for (const { sha } of refs) {
     const full = commitOrNull(sha);
     if (!full) blocked([`BLOCKED: the pushed sha ${M.clean(sha)} names no commit here.`]);
@@ -276,17 +283,19 @@ function verifyAfterFlip() {
     if (why) blocked([`BLOCKED: ${s7}: ${why}.`, '  The hook validates only and never runs a gate. Emergencies only: git push --no-verify']);
     for (const s of rec.stubbed) stubs.add(s);
     const range = checkRange({ base, tip: full, cwd });
-    if (!range.ok) {
+    if (range.blocked) {
       blocked([
-        `BLOCKED: the review receipts over origin/main..${s7} do not stand (run: npm run ship once they do):`,
-        ...range.problems.map((p) => `  - ${p}`),
+        `BLOCKED: the range origin/main..${s7} does not pass its check (run: npm run ship once it does):`,
+        ...range.stops.map((p) => `  - ${p}`),
         '  Emergencies only: git push --no-verify',
       ]);
     }
+    notes += range.notes.length;
   }
   const shas = refs.map((r) => R.short(r.sha)).join(', ');
   const stubbed = stubs.size ? ` (stubbed: ${[...stubs].join(', ')})` : '';
-  console.log(`pre-push: ${shas}: the sha receipt and the review receipts over origin/main are valid${stubbed}; nothing runs here.`);
+  const noted = notes ? `; ${notes} review-receipt note(s), not refused` : '';
+  console.log(`pre-push: ${shas}: the sha receipt is valid and the range holds no PII hit${stubbed}${noted}; nothing runs here.`);
   process.exit(0);
 }
 

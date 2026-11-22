@@ -363,16 +363,11 @@ test('a push rejection stops and reports: the bare remote advanced while the gat
   assert.notEqual(originMain(h), head(h), 'nothing pushed');
 });
 
-test('the marker refusals of spec 4.4, before anything is merged: a standing watch marker, an unreadable gate marker, an unreadable flip marker', (t) => {
+// A standing watch marker is no refusal (a note in ship's log; ship.test.js).
+test('the marker refusals of spec 4.4, before anything is merged: an unreadable gate marker, an unreadable flip marker', (t) => {
   const h = makeOs(t);
   lane(h, 'lane-m', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-m');
-  const M = require(path.join(h.repo, 'scripts', 'lib', 'markers.js'));
-  M.setWatch({ sha: h.seed, deploy_at: new Date().toISOString(), count: 3, by_issue: null, cwd: h.repo });
-  const watch = ship(h, 'lane-m');
-  assert.equal(watch.code, 1);
-  assert.match(watch.stdout, /^refused BLOCKED[^\n]*watch[^\n]*\n$/i);
-  M.clearWatch(h.seed, { note: 'read', cwd: h.repo });
   fs.mkdirSync(path.join(h.common, 'drb-markers'), { recursive: true });
   fs.writeFileSync(path.join(h.common, 'drb-markers', 'gate.json'), 'not json');
   assert.match(ship(h, 'lane-m').stdout, /^refused [^\n]*gate[^\n]*\n$/i);
