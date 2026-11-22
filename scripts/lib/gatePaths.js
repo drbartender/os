@@ -58,6 +58,7 @@ const MONEY_PATHS = Object.freeze([
   'scripts/lib/rangeCheck.js', // the receipt check over the push range, run before every gate
   'scripts/lib/shaGate.js', // the sha gate's machinery: it spawns the smoke with the scrubbed env and reads its summary, so a change there changes whether and how the smoke runs
   'scripts/lib/shaGateWorktree.js', // the gate worktree's removal, the smoke logs kept and the children the gate runs and stops
+  'scripts/lib/smokeReuse.js', // whether the gate may skip the smoke on an earlier pass: a wrong rule there skips the smoke for a money change
   'scripts/lib/markers.js', // the gate marker the sha gate sets and clears, and the flip state the hook branches on
   'scripts/lib/receipt.js', // the common dir, the commit resolve and the atomic writes every gate path reads through
   'scripts/lib/receiptVerdicts.js', // receipt.js loads it at startup (the verdict tables rangeCheck re-reads)

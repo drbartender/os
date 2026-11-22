@@ -475,7 +475,7 @@ test('legacy-removal: run, no word and any other word refuse with the usage, tak
   for (const args of [['run'], [], ['gate']]) {
     const r = gs.cp.spawnSync(process.execPath, [gs.path.join(h.repo, 'scripts', 'push-gate.js'), ...args], { cwd: h.repo, encoding: 'utf8', env: GS_ENV });
     assert.equal(r.status, 1, `args ${JSON.stringify(args)}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
-    assert.match(r.stderr, /usage: node scripts\/push-gate\.js sha <sha> \| receipt <sha> \| verify/);
+    assert.match(r.stderr, /usage: node scripts\/push-gate\.js sha <sha> \[--fresh-smoke\] \| receipt <sha> \| verify/);
     if (args[0] !== 'gate') assert.match(r.stderr, /the run command is gone since 2026-10-30; a push goes through npm run ship, whose gate is push-gate\.js sha/);
     assert.equal(r.stdout, '');
   }

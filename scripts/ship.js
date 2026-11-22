@@ -10,7 +10,7 @@
 // and this file holds the CLI, the lock and the detached start. This header
 // says what they guarantee and never restates the flow.
 //
-//   node scripts/ship.js [--no-push] [--foreground]
+//   node scripts/ship.js [--no-push] [--foreground] [--fresh-smoke]
 //   node scripts/ship.js --ack-watch <sha> --note <text>
 //   node scripts/ship.js --status [<sha>]
 //
@@ -45,6 +45,9 @@
 //   - --foreground exits with the flow's code: 0 for ok, ok-no-push and
 //     pushed-elsewhere, 1 for refused and failed, 2 when a push's outcome is
 //     unknown (the next run completes the record from its evidence).
+//   - --fresh-smoke hands the gate --fresh-smoke, so the money smoke runs
+//     even when an earlier passing smoke covers the tree (smokeReuse.js);
+//     no flag forces a skip.
 //   - --ack-watch clears the watch marker only when it names that sha, the
 //     note recorded in drb-markers/acks.jsonl and, when that sha has a ship
 //     record, as its ack line; it pushes nothing. --status writes nothing.
@@ -60,17 +63,18 @@ const { shipFlow, precheck, standingResult } = require('./lib/shipFlow');
 
 const S = R.short;
 const WAIT_LINE = 'ship: a merge, a check or a ship holds the ship lock; waiting for it';
-const USAGE = 'usage: node scripts/ship.js [--no-push] [--foreground] | --ack-watch <sha> --note <text> | --status [<sha>]\n';
+const USAGE = 'usage: node scripts/ship.js [--no-push] [--foreground] [--fresh-smoke] | --ack-watch <sha> --note <text> | --status [<sha>]\n';
 const isSet = (v) => v !== null && v !== undefined;
 
 // ---- the CLI ---------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const a = { noPush: false, foreground: false, status: false, ref: null, ack: null, note: null };
+  const a = { noPush: false, foreground: false, freshSmoke: false, status: false, ref: null, ack: null, note: null };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
     if (x === '--no-push') a.noPush = true;
     else if (x === '--foreground') a.foreground = true;
+    else if (x === '--fresh-smoke') a.freshSmoke = true;
     else if (x === '--status') {
       a.status = true;
       if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) a.ref = argv[++i];
@@ -83,7 +87,7 @@ function parseArgs(argv) {
   }
   const acking = a.ack !== null || a.note !== null;
   if (acking && (a.ack === null || a.note === null)) return null;
-  if ((a.status || acking) && (a.noPush || a.foreground || (a.status && acking))) return null;
+  if ((a.status || acking) && (a.noPush || a.foreground || a.freshSmoke || (a.status && acking))) return null;
   return a;
 }
 
@@ -166,9 +170,9 @@ async function main(argv) {
     out(pre.refusal);
     return 1;
   }
-  if (!a.foreground) return detach(cwd, pre.head, a.noPush ? ['--no-push'] : [], out);
+  if (!a.foreground) return detach(cwd, pre.head, [...(a.noPush ? ['--no-push'] : []), ...(a.freshSmoke ? ['--fresh-smoke'] : [])], out);
   const held = await FE.underLock({ lockFile: path.join(R.commonDir({ cwd }), 'drb-ship.lock'), guardVar: 'DRB_SHIP_LOCK', waitLine: WAIT_LINE });
-  return shipFlow({ cwd, noPush: a.noPush, log: out, lockFd: held.lockFd }).then((res) => res.code, (err) => {
+  return shipFlow({ cwd, noPush: a.noPush, freshSmoke: a.freshSmoke, log: out, lockFd: held.lockFd }).then((res) => res.code, (err) => {
     out(`ship: the run's ending could not be recorded (${M.clean(err && err.message ? err.message : String(err))}); its outcome is unknown; run npm run ship again`);
     return 2;
   });

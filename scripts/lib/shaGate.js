@@ -6,7 +6,7 @@
 // and the modes, and re-exports classifyRange, checkShaReceipt, gateEnvFile
 // and gateWorktreePath from here. This file requires only gatePaths.js,
 // markers.js, worktreeLinks.js, receipt.js, shaGateWorktree.js (the worktree
-// and child half) and Node's own modules, never
+// and child half), smokeReuse.js and Node's own modules, never
 // push-gate.js or rangeCheck.js, so no require cycle can form through it.
 //
 // What it guarantees:
@@ -87,6 +87,10 @@
 //     signal) <wt>/.gate-smoke is moved to <common dir>/drb-gate/<sha>.smoke/
 //     before the worktree goes, replacing an earlier one whole, so a failed
 //     gate leaves logs a person can read. The PASSED and FAILED lines name it.
+//   - The money smoke is skipped when smokeReuse.reusableSmoke proves an
+//     earlier passing smoke covers the sha's tree (its header holds the rule);
+//     the receipt's smoke_reused names it and money counts as run and passed.
+//     freshSmoke (push-gate.js sha --fresh-smoke) always runs it.
 // The caller holds the push-gate lock; the smoke takes the smoke lock itself,
 // so the order is push-gate, then smoke (decision 10).
 //
@@ -107,6 +111,7 @@ const M = require('./markers');
 const WL = require('./worktreeLinks');
 const R = require('./receipt');
 const W = require('./shaGateWorktree');
+const SR = require('./smokeReuse');
 
 const { git, describe, gateRoots, gateWorktreePath, lstatOrNull, removeWorktree, keepSmoke, sweepGateWorktrees, runChild, stopChild } = W;
 
@@ -555,7 +560,14 @@ async function gateInWorktree(ctx, state) {
     ctx.ran.push('docs');
     log('gate: docs check passed');
   }
-  if (cls.needed.includes('money')) {
+  const reuse = cls.needed.includes('money') ? (ctx.freshSmoke ? { reuse: null, why: null } : SR.reusableSmoke({ sha: full, tree: ctx.receipt.tree, cwd: ctx.cwd, install: cls.install })) : null;
+  if (reuse && reuse.reuse) {
+    ctx.receipt.smoke_reused = reuse.reuse;
+    ctx.passed.push('money');
+    ctx.ran.push('money');
+    log(`gate: ${SR.reuseLine(reuse.reuse)}`);
+  } else if (reuse) {
+    log(reuse.why ? `gate: no earlier smoke covers ${s7} (${reuse.why}); the money smoke runs` : 'gate: --fresh-smoke: the money smoke runs; no earlier smoke is reused');
     const tapDir = path.join(wt, '.gate-smoke');
     log('gate: the money smoke, in the gate worktree under the gate env file (about eight minutes; it waits on the smoke lock)');
     const args = ['--tap-dir', tapDir];
@@ -590,7 +602,7 @@ async function gateInWorktree(ctx, state) {
 // worktree) or the worktree steps. Returns {ok, kind, receipt, receiptPath,
 // marker, reason} and never throws for an ordinary failure; it prints the
 // receipt path as its last stdout line on every run that wrote one.
-async function runShaGate({ sha, cwd = process.cwd(), log = console.log, warn = console.error, overrides, env = process.env } = {}) {
+async function runShaGate({ sha, cwd = process.cwd(), log = console.log, warn = console.error, overrides, env = process.env, freshSmoke = false } = {}) {
   const ov = overrides || overridesFrom(env, warn);
   const startedAt = new Date().toISOString();
   const refuse = (reason) => {
@@ -611,11 +623,11 @@ async function runShaGate({ sha, cwd = process.cwd(), log = console.log, warn = 
   const cls = classifyRange(base, full, { cwd: roots.primary });
   const receipt = {
     version: VERSION, sha: full, tree, base, files: [...cls.touches.files], gates_needed: [...cls.needed], gates_passed: [],
-    nothing_to_run: cls.nothing_to_run, static_checks: null, node_modules: null, env_keys: [], stubbed: [], started_at: startedAt, finished_at: startedAt,
+    nothing_to_run: cls.nothing_to_run, static_checks: null, node_modules: null, env_keys: [], stubbed: [], smoke_reused: null, started_at: startedAt, finished_at: startedAt,
   };
   const needs = [...cls.needed, ...(cls.static ? ['static checks'] : []), ...(cls.install ? ['npm ci'] : [])];
   log(`gate: ${R.short(full)} against origin/main ${R.short(base)}: ${cls.touches.files.length} file(s), needs ${needs.length ? needs.join(' + ') : 'nothing'}`);
-  const ctx = { full, base, cls, needs, ov, env, log, warn, cwd, receipt, passed: [], ran: [], stubbed: [], primary: roots.primary, wt: null, smokeDir: null };
+  const ctx = { full, base, cls, needs, ov, env, log, warn, cwd, receipt, passed: [], ran: [], stubbed: [], primary: roots.primary, wt: null, smokeDir: null, freshSmoke: freshSmoke === true };
   if (cls.nothing_to_run) {
     const res = finish(ctx, 'pass');
     log(res.receiptPath);

@@ -516,3 +516,49 @@ setTimeout(() => process.stdout.write('NOT STOPPED\\n'), 300);`;
     spawnSync('pkill', ['-9', '-f', root]);
   }
 });
+
+// ---- The tree stamp the sha gate's smoke reuse trusts (smokeReuse.js) ----
+
+function throwawayRepo(prefix) {
+  const repo = tmp(prefix);
+  const g = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  g('init', '-q', '-b', 'main');
+  g('config', 'user.email', ['test', 'example.com'].join('@'));
+  g('config', 'user.name', 'Test User');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.env\n');
+  fs.writeFileSync(path.join(repo, 'a.js'), 'a\n');
+  g('add', '.gitignore', 'a.js');
+  g('commit', '-q', '-m', 'seed');
+  return { repo, tree: g('rev-parse', 'HEAD^{tree}').stdout.trim(), g };
+}
+
+test('treeState: the tree of HEAD and clean, bar the tap dir and ignored files; any other change is dirty', () => {
+  const { treeState } = require(SMOKE);
+  const { repo, tree, g } = throwawayRepo('smoke-tree-');
+  const tapDir = path.join(repo, '.gate-smoke');
+  fs.mkdirSync(tapDir);
+  fs.writeFileSync(path.join(tapDir, 'summary.json'), '{}\n');
+  fs.writeFileSync(path.join(repo, '.env'), 'X=1\n');
+  assert.deepStrictEqual(treeState(repo, tapDir), { tree, clean: true });
+  assert.strictEqual(treeState(repo, null).clean, false, 'an untracked tap dir is not clean when it is not the tap dir');
+  fs.writeFileSync(path.join(repo, 'new.js'), 'n\n');
+  assert.deepStrictEqual(treeState(repo, tapDir), { tree, clean: false });
+  fs.rmSync(path.join(repo, 'new.js'));
+  fs.writeFileSync(path.join(repo, 'a.js'), 'a edited\n');
+  assert.strictEqual(treeState(repo, tapDir).clean, false, 'an edited tracked file');
+  g('add', 'a.js');
+  assert.strictEqual(treeState(repo, tapDir).clean, false, 'a staged change');
+  assert.deepStrictEqual(treeState(tmp('smoke-nogit-'), null), { tree: null, clean: false });
+});
+
+test('stampSummary: kind, tree, clean and finished_at; clean only when both ends were clean on one tree', () => {
+  const { stampSummary } = require(SMOKE);
+  const base = { suites: [{ file: 'x', ok: true }], total_pass: 1, total_fail: 0, skipped: false };
+  const t1 = 'a'.repeat(40);
+  const t2 = 'b'.repeat(40);
+  const at = '2026-11-19T00:00:00.000Z';
+  assert.deepStrictEqual(stampSummary(base, { tree: t1, clean: true }, { tree: t1, clean: true }, at), { ...base, kind: 'money-smoke', tree: t1, clean: true, finished_at: at });
+  assert.deepStrictEqual(stampSummary(base, { tree: t1, clean: true }, { tree: t2, clean: true }, at), { ...base, kind: 'money-smoke', tree: null, clean: false, finished_at: at });
+  assert.strictEqual(stampSummary(base, { tree: t1, clean: true }, { tree: t1, clean: false }, at).clean, false);
+  assert.strictEqual(stampSummary(base, { tree: t1, clean: false }, { tree: t1, clean: true }, at).clean, false);
+});

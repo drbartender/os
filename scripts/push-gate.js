@@ -6,7 +6,7 @@
  * worktree and writes its receipt, `receipt <sha>` prints that receipt, and
  * `verify`, the pre-push hook, validates the receipts and never runs a gate.
  *
- *   node scripts/push-gate.js sha <sha>
+ *   node scripts/push-gate.js sha <sha> [--fresh-smoke]
  *   node scripts/push-gate.js receipt <sha>
  *   node scripts/push-gate.js verify      (the hook; reads git's stdin)
  *
@@ -64,7 +64,7 @@ const R = require('./lib/receipt');
 const SG = require('./lib/shaGate');
 const { checkRange } = require('./lib/rangeCheck');
 
-const USAGE = 'usage: node scripts/push-gate.js sha <sha> | receipt <sha> | verify';
+const USAGE = 'usage: node scripts/push-gate.js sha <sha> [--fresh-smoke] | receipt <sha> | verify';
 
 /**
  * The refusal for a missing flip marker, one line: the hook's, and the board
@@ -303,14 +303,19 @@ function verify() {
   return verifyAfterFlip();
 }
 
-/** `sha <sha>`: the gate under the push-gate lock; exit 0 on a pass, 1 otherwise. */
-function shaMode(ref) {
-  if (!ref) {
-    console.error('usage: node scripts/push-gate.js sha <sha>');
+/**
+ * `sha <sha> [--fresh-smoke]`: the gate under the push-gate lock; exit 0 on a
+ * pass, 1 otherwise. --fresh-smoke runs the money smoke even when an earlier
+ * passing smoke covers the tree (smokeReuse.js); nothing forces a skip.
+ */
+function shaMode(ref, rest) {
+  const fresh = rest.length === 1 && rest[0] === '--fresh-smoke';
+  if (!ref || ref.startsWith('--') || (rest.length && !fresh)) {
+    console.error('usage: node scripts/push-gate.js sha <sha> [--fresh-smoke]');
     process.exit(1);
   }
   holdGateLock();
-  SG.runShaGate({ sha: ref, cwd: process.cwd() }).then(
+  SG.runShaGate({ sha: ref, cwd: process.cwd(), freshSmoke: fresh }).then(
     (res) => process.exit(res.ok ? 0 : 1),
     (err) => {
       console.error(`gate: the sha gate stopped on an error: ${M.clean(err && err.message ? err.message : String(err))}`);
@@ -338,7 +343,7 @@ function receiptMode(ref) {
  */
 function main() {
   const mode = process.argv[2];
-  if (mode === 'sha') return shaMode(process.argv[3]);
+  if (mode === 'sha') return shaMode(process.argv[3], process.argv.slice(4));
   if (mode === 'receipt') return receiptMode(process.argv[3]);
   if (mode === 'verify') return verify();
   const gone = mode === undefined || mode === 'run'

@@ -10,7 +10,7 @@
 // CLI, the lock and the detached start; this file requires only scripts/lib
 // modules and never ship.js.
 //
-// shipFlow({cwd, noPush, log, lockFd}) runs the flow from the flip check on
+// shipFlow({cwd, noPush, log, lockFd, freshSmoke}) runs the flow from the flip check on
 // for a caller that holds the ship lock (ship.js under flockExec.underLock,
 // or the switch-over step's merge script under DRB_SHIP_LOCK); it takes no
 // lock itself. lockFd is the descriptor in this process that carries the
@@ -50,7 +50,10 @@
 //     or suite output, which passes through to this process's own stdout and
 //     stderr only. A gate that passed with stubs in place (the sha receipt's
 //     stubbed list, accepted only under DRB_GATE_ALLOW_STUBBED=1) is named in
-//     the gate stage line and in the ok and ok-no-push results.
+//     the gate stage line and in the ok and ok-no-push results. A gate that
+//     reused an earlier passing smoke (the sha receipt's smoke_reused) gets a
+//     second gate line, smokeReuse.reuseLine, and a note in those results;
+//     freshSmoke (ship --fresh-smoke) hands the gate --fresh-smoke.
 //   - A clean revert (rangeCheck.revertProof, the proof the range check
 //     recomputes) gets a revert receipt under its commit key with every field
 //     finalize writes, written_by ship; ship writes no other receipt. Only
@@ -61,7 +64,7 @@
 //     and the clash is named, and so it does when git cannot place it).
 //
 // Test overrides, each named in one stderr line when set: DRB_SHIP_GATE_CMD
-// (run as <cmd> sha <full sha> in place of push-gate.js; it must write the
+// (run as <cmd> sha <full sha> [--fresh-smoke] in place of push-gate.js; it must write the
 // sha receipt), DRB_SHIP_WATCH_CMD (run as <cmd> <full sha> in place of
 // post-ship-watch.js), DRB_SHIP_GIT_CMD (run in place of git for the push
 // and the fetches only, with git's argv) and DRB_SHIP_FETCH_WINDOW_MS (the
@@ -81,6 +84,7 @@ const L = require('./shipLog');
 const GP = require('./gatePaths');
 const SG = require('./shaGate');
 const RC = require('./rangeCheck');
+const SR = require('./smokeReuse');
 const { mask } = require('./piiShapes');
 
 // The directory holding ship.js, push-gate.js and post-ship-watch.js.
@@ -272,8 +276,9 @@ function precheck(cwd) {
 // ---- one run ---------------------------------------------------------------------
 
 class Run {
-  constructor({ cwd, noPush, log, lockFd }) {
-    Object.assign(this, { cwd, noPush: noPush === true, log, primary: null, sha: null, origin: null });
+  constructor({ cwd, noPush, log, lockFd, freshSmoke }) {
+    Object.assign(this, { cwd, noPush: noPush === true, freshSmoke: freshSmoke === true, log, primary: null, sha: null, origin: null });
+    this.smokeNote = '';
     this.lockFd = Number.isInteger(lockFd) && lockFd > 2 ? lockFd : null;
     this.opened = null; // the sha of the record this run opened
     this.completing = null; // the sha of an earlier record being completed
@@ -587,7 +592,7 @@ class Run {
     this.reverts(commits);
     const held = this.receipts() || (await this.gate()) || this.recheck();
     if (held) return held;
-    if (this.noPush) return this.settle('ok-no-push', `dry run of ${s7}, ${commits.length} commits: gated, not pushed and not watched${stubNote(this.gateStubs)}`);
+    if (this.noPush) return this.settle('ok-no-push', `dry run of ${s7}, ${commits.length} commits: gated, not pushed and not watched${stubNote(this.gateStubs)}${this.smokeNote}`);
     return this.push(commits.length);
   }
 
@@ -661,8 +666,9 @@ class Run {
     const s7 = S(sha);
     const cmd = stubValue('DRB_SHIP_GATE_CMD');
     const began = Date.now();
-    this.stage('gate', `${cmd ? 'DRB_SHIP_GATE_CMD' : 'push-gate.js sha'} on ${s7}`);
-    const r = await this.run(cmd || process.execPath, [...(cmd ? [] : [path.join(SCRIPTS, 'push-gate.js')]), 'sha', sha], { env: R.gitEnv(), graceMs: GATE_GRACE_MS, lock: true });
+    const fresh = this.freshSmoke ? ['--fresh-smoke'] : [];
+    this.stage('gate', `${cmd ? 'DRB_SHIP_GATE_CMD' : 'push-gate.js sha'} on ${s7}${this.freshSmoke ? ' --fresh-smoke' : ''}`);
+    const r = await this.run(cmd || process.execPath, [...(cmd ? [] : [path.join(SCRIPTS, 'push-gate.js')]), 'sha', sha, ...fresh], { env: R.gitEnv(), graceMs: GATE_GRACE_MS, lock: true });
     this.checkpoint();
     const rec = SG.readShaReceipt(sha, this.o);
     const field = (result) => ({ receipt: rec ? SG.receiptPath(sha, this.o) : null, result });
@@ -684,6 +690,11 @@ class Run {
     this.gateStubs = gateStubs(rec);
     const stubs = this.gateStubs.length ? `; stubbed: ${this.gateStubs.join(', ')}` : '';
     this.stage('gate', `passed at ${s7} (${needed.length ? needed.join(' + ') : 'nothing to run'})${stubs}`);
+    const reused = rec.smoke_reused;
+    if (reused && typeof reused === 'object' && /^[0-9a-f]{40}$/.test(String(reused.tree)) && M.isZonedTime(reused.finished_at) && typeof reused.reason === 'string') {
+      this.stage('gate', SR.reuseLine(reused));
+      this.smokeNote = `; smoke reused from tree ${S(reused.tree)}`;
+    }
     return null;
   }
 
@@ -753,7 +764,7 @@ class Run {
     } else {
       this.stage('watch', `the watch for ${s7} had already started`);
     }
-    return this.settle('ok', `pushed ${s7}, ${n} commits${stubNote(this.gateStubs)}`);
+    return this.settle('ok', `pushed ${s7}, ${n} commits${stubNote(this.gateStubs)}${this.smokeNote}`);
   }
 
   // Every throw and every stop ends here, reading the record this run opened
@@ -783,8 +794,8 @@ class Run {
 // The flow from the flip check on, for a caller that holds the ship lock.
 // Resolves {state, text, code}; it rejects only when the ending itself could
 // not be recorded.
-async function shipFlow({ cwd = process.cwd(), noPush = false, log = (line) => process.stdout.write(`${line}\n`), lockFd = null } = {}) {
-  const run = new Run({ cwd, noPush, log, lockFd });
+async function shipFlow({ cwd = process.cwd(), noPush = false, log = (line) => process.stdout.write(`${line}\n`), lockFd = null, freshSmoke = false } = {}) {
+  const run = new Run({ cwd, noPush, log, lockFd, freshSmoke });
   run.listen();
   try {
     let res;

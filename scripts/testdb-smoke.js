@@ -56,7 +56,10 @@
  *                     slashes as dashes>.<6 hex of the path's sha1>.log
  *                     (tapSummary.logName), its own output to the sibling
  *                     .out, and <dir>/summary.json {suites, total_pass,
- *                     total_fail, skipped}, each suite entry naming its log
+ *                     total_fail, skipped, kind, tree, clean, finished_at}
+ *                     (the last four from stampSummary: the tree of HEAD
+ *                     and whether it was clean at both ends of the run,
+ *                     which the sha gate's smoke reuse reads), each suite entry naming its log
  *                     and out (skipped: true on the no-key path,
  *                     which is never a pass). The dir is one run's,
  *                     claimed as run-suites claims its --log-dir (a live
@@ -376,6 +379,41 @@ function runSuite(file, dbUrl, tapDir = null, tapResults = [], lockFd = null, { 
   return entry.ok;
 }
 
+// The tree this run tests: the tree of HEAD in `root`, and clean when git
+// status (untracked files included, ignored ones not) names nothing outside
+// the tap dir. Taken before the Neon reset and after the last suite; a run
+// whose two ends were not clean on one tree is stamped clean: false, and the
+// sha gate reuses only a clean one (smokeReuse.js). Git failing reads as
+// tree null, never as clean.
+function treeState(root = REPO_ROOT, tapDir = null) {
+  const g = (args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const t = g(['rev-parse', '--verify', '--quiet', 'HEAD^{tree}']);
+  const tree = t.status === 0 && /^[0-9a-f]{40}$/.test(t.stdout.trim()) ? t.stdout.trim() : null;
+  const top = g(['rev-parse', '--show-toplevel']);
+  const st = g(['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all', '--ignore-submodules=none']);
+  if (tree === null || top.status !== 0 || st.status !== 0) return { tree, clean: false };
+  let inside = null;
+  if (tapDir) {
+    const real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const rel = path.relative(real(top.stdout.trim()), real(tapDir));
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) inside = rel.split(path.sep).join('/');
+  }
+  const left = st.stdout.split('\0').filter(Boolean).map((e) => e.slice(3)).filter((f) => !(inside && (f === inside || f === `${inside}/` || f.startsWith(`${inside}/`))));
+  return { tree, clean: left.length === 0 };
+}
+
+// A summary stamped as this smoke's, for the sha gate's reuse check.
+function stampSummary(summary, before, after, finishedAt = new Date().toISOString()) {
+  const same = Boolean(before && after && before.tree && before.tree === after.tree);
+  return { ...summary, kind: 'money-smoke', tree: same ? before.tree : null, clean: same && before.clean === true && after.clean === true, finished_at: finishedAt };
+}
+
 function writeSummary(tapDir, summary) {
   fs.writeFileSync(path.join(tapDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 }
@@ -419,6 +457,7 @@ async function main({ tapDir }, lock) {
   }
 
   const totalStart = Date.now();
+  const before = treeState(REPO_ROOT, tapDir);
   let dbUrl;
   try {
     stopIfOrphaned(lock, 'the Neon reset');
@@ -451,7 +490,7 @@ async function main({ tapDir }, lock) {
     sweepAfter(lock, file);
     if (!ok) anyFailed = true;
   }
-  if (tapDir) writeSummary(tapDir, smokeSummary(tapResults));
+  if (tapDir) writeSummary(tapDir, stampSummary(smokeSummary(tapResults), before, treeState(REPO_ROOT, tapDir)));
 
   const totalSecs = ((Date.now() - totalStart) / 1000).toFixed(1);
   console.log('');
@@ -580,4 +619,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, smokeLockFile, runSuite, SUITE_TIMEOUT_MS };
+module.exports = { parseArgs, smokeLockFile, runSuite, treeState, stampSummary, SUITE_TIMEOUT_MS };
