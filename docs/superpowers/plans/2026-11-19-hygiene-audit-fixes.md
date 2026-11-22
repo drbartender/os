@@ -2,8 +2,12 @@
 spec: none. The findings come from the read-only hygiene audit of 2026-11-16 (rule drift, dead endpoints, contracts and swallowed errors, env parity), each re-checked in the code; the owner asked on 2026-11-19 for them to be done ("would like to get these things done"). The lane split and every design choice below are Claude's.
 format: lane map without code (spec 2026-10-19 D12)
 revision: >
-  4 (2026-11-22). Every lane of this map has merged and shipped (b75709a) bar payroll-accrual-surface,
-  which waits on the audit-payments lane. Revision 3 (2026-11-22). What merged, what is left and what waits on the owner; see status below. The
+  5 (2026-11-22). payroll-accrual-surface waits on nothing: the audit-payments branch it named is the
+  record of the full payments lane that failed review on 2026-11-13 and never merges (its work was
+  re-planned and shipped as audit-payments-core 563bc811), and of this lane's files it touches only a
+  7-line netting change in balanceScheduler.js that the netting re-plan carries. The lane's scope now
+  names the root (the accrual helper, every caller) and the design. Revision 4 (2026-11-22). Every lane
+  of this map has merged and shipped (b75709a) bar payroll-accrual-surface. Revision 3 (2026-11-22). What merged, what is left and what waits on the owner; see status below. The
   cover-swap-approve branch was scrapped on the owner's yes ("if its superseded then, yes"). Two lanes
   join the map, audit-dead-routes-rest and audit-stale-comments, and the two machinery lanes built from
   this window are recorded (stale-rule-imports, gate-smoke-reuse). Revision 2 (2026-11-19) said, in
@@ -126,10 +130,40 @@ lanes:
     scope: >
       A failed payroll accrual is reported as success: proposals/lifecycle.js (mark completed), the tip
       assign route, balanceScheduler auto-complete. Each failure is recorded where payroll can see it and
-      the period-process check refuses a completed event with no payout lines.
-    status: not built; audit-payouts-followup merged, audit-payments is still an open lane
-    blockedBy: [audit-payments merged, since it rewrites these files]
-    lenses: tier A.
+      the period-process check refuses a completed event with no payout lines. The root is the helper:
+      every caller of accruePayoutsForProposal (fifteen sites) catches a throw into Sentry only, and the
+      pay_period_not_open skip returns to all of them as plain success, so a completed event's wages can
+      go nowhere with nothing on the payroll screen. Design (Claude's): the exported helper records a
+      failure in a new payroll_accrual_failures table, one row per proposal (reason error or
+      period_closed, attempts, first and last failure time, a reason code and never an error message),
+      when the accrual throws, or when it skips on a pay period that is not open for a completed event
+      holding no payout line; it deletes the row when an accrual completes or the proposal is no longer
+      completed. Nothing is written on proposals. The mark-completed and tip assign routes carry the
+      outcome in their response (payroll_accrual) and the admin screens show a warning toast instead of
+      a plain success. The payroll page lists the recorded failures, with a Retry on an error row and a
+      manual-fix note on a period_closed row. Processing an open period refuses while a completed event
+      dated in it, with an approved roster and no legacy CC participant, holds no payout line or carries
+      a recorded failure; a reopened period is not gated, since accrual refuses it and the gate could
+      never clear.
+    status: not built
+    blockedBy: []
+    footprint:
+      - server/utils/payrollAccrual.js (the wrapper; or a sibling payrollAccrualFailures.js)
+      - server/db/schema.sql
+      - server/routes/proposals/lifecycle.js
+      - server/routes/admin/payrollTips.js
+      - server/utils/balanceScheduler.js
+      - server/routes/admin/payroll.js (the process gate, the list and the retry routes)
+      - client/src/pages/admin/ProposalDetail.js
+      - client/src/pages/admin/payroll/UnassignedTipsPanel.js
+      - client/src/pages/admin/payroll/ (a failures panel beside the unassigned tips)
+    lenses: money, concurrency, lifecycle, seams, client, verify; Gemini on the masked diff.
+    acceptance: >
+      Tests that fail on main: an accrual that throws leaves a failure row and a later good accrual
+      removes it; a completed event whose period is not open and that holds no line leaves a
+      period_closed row, and one that already holds lines leaves none; mark-completed and tip assign
+      answer with the failure in the response; Process on an open period 409s on a completed, staffed
+      event with no lines and on a recorded failure, and passes once a retry writes the lines.
   - id: audit-dead-routes-rest
     status: merged with audit-stale-comments as audit-cleanup 2fefe67c, shipped
     scope: >
