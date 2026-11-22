@@ -12,6 +12,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { listAccrualProblems } = require('../../utils/payrollAccrualFailures');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
 const Sentry = require('@sentry/node');
@@ -394,6 +395,19 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
     const unattributed = await listUnattributedDuties(pool, id);
     if (unattributed.length > 0) {
       throw new ConflictError('unattributed duties block processing; resolve them first');
+    }
+  }
+
+  // Accrual gate (hygiene plan 2026-11-19, payroll-accrual-surface): processing
+  // freezes the period, and accrual never writes a frozen one, so a completed
+  // event dated in it with an approved worker who has no wage line, or a
+  // recorded accrual failure, would lose those wages for good. Only an open period: a reopened one already refuses
+  // every accrual, so its gate could never clear. Plain message; the payroll page
+  // lists the events from GET /payroll/accrual-problems.
+  if (periodRes.rows[0].status === 'open') {
+    const problems = await listAccrualProblems(pool, { periodId: id });
+    if (problems.length > 0) {
+      throw new ConflictError('events payroll did not take block processing; fix them on the Pay run tab first');
     }
   }
 

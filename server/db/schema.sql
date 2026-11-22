@@ -5398,6 +5398,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_duty_lines_bounty
 CREATE UNIQUE INDEX IF NOT EXISTS idx_duty_lines_contest
   ON payout_duty_lines(contest_quarter, contractor_id)
   WHERE kind = 'review_contest';
+
+-- A payroll accrual that failed, one row per proposal (hygiene plan 2026-11-19,
+-- payroll-accrual-surface). reason 'error': the accrual threw. 'period_closed':
+-- a completed, staffed event's pay period was not open and the event holds no
+-- payout line, so its wages went nowhere (accrual never writes a frozen period).
+-- Written and deleted only by server/utils/payrollAccrualFailures.js, which runs
+-- after every accruePayoutsForProposal: a completed accrual, or any skip that
+-- leaves nothing to write, deletes the row. A reason code only, never an error
+-- message (the details are in Sentry). The payroll page lists the undismissed
+-- rows and Process refuses an open period while one is dated in it.
+-- unpaid_request_ids: the shift_requests of the workers with no wage line, on a
+-- 'period_closed' row. dismissed_at / dismissed_by: an admin settled the row by
+-- hand; a 'period_closed' row stays dismissed while every unpaid worker is one
+-- it was dismissed with, and an 'error' row reopens on the next throw.
+CREATE TABLE IF NOT EXISTS payroll_accrual_failures (
+  proposal_id INTEGER PRIMARY KEY REFERENCES proposals(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL CHECK (reason IN ('error', 'period_closed')),
+  attempts INTEGER NOT NULL DEFAULT 1,
+  first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  unpaid_request_ids INTEGER[],
+  dismissed_at TIMESTAMPTZ,
+  dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+-- A dev database that built the table before these columns.
+ALTER TABLE payroll_accrual_failures ADD COLUMN IF NOT EXISTS unpaid_request_ids INTEGER[];
+ALTER TABLE payroll_accrual_failures ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ;
+ALTER TABLE payroll_accrual_failures ADD COLUMN IF NOT EXISTS dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_duty_lines_payout ON payout_duty_lines(payout_id);
 -- Reconcile's hot lookup is by shift (runs on every accrual).
 CREATE INDEX IF NOT EXISTS idx_duty_lines_shift ON payout_duty_lines(shift_id);

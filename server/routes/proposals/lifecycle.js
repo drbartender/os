@@ -10,6 +10,7 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { accrualFailureReason } = require('../../utils/payrollAccrualFailures');
 const { SWEEP_EXEMPT_ACTION } = require('../../utils/staleProposalSweep');
 
 const router = express.Router();
@@ -278,6 +279,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       }
     }
   }
+  let payrollAccrual;
   if (status === 'completed') {
     try {
       const { scheduleReviewRequest, scheduleRetentionNudge } = require('../../utils/marketingHandlers');
@@ -289,10 +291,15 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       }
       console.error('Completion enroll failed (non-blocking):', completeErr);
     }
+    // The response says how payroll took the completion ('ok', 'error' or
+    // 'period_closed'), read from the failure record the accrual just wrote, so
+    // the admin sees what the payroll page will list instead of a plain success.
     try {
       await accruePayoutsForProposal(Number(req.params.id));
+      payrollAccrual = (await accrualFailureReason(Number(req.params.id))) || 'ok';
     } catch (err) {
       Sentry.captureException(err, { tags: { route: 'proposal_status', step: 'payout_accrual' } });
+      payrollAccrual = 'error';
     }
     try {
       const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
@@ -302,7 +309,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     }
   }
 
-  res.json(result.rows[0]);
+  res.json(payrollAccrual ? { ...result.rows[0], payroll_accrual: payrollAccrual } : result.rows[0]);
 }));
 
 module.exports = router;

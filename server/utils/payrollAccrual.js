@@ -19,6 +19,7 @@ const {
 } = require('./dutyLines');
 const { isBartender } = require('./staffingRoles');
 const { readSnapshot } = require('./pricingSnapshot');
+const { noteAccrualOutcome } = require('./payrollAccrualFailures');
 
 // Invoice labels whose dollars are part of the contract total_price. Canonical
 // definition lives in ./proposalMoneyShared (shared with refundHelpers.js
@@ -133,8 +134,27 @@ async function ensurePayPeriod(client, eventDate) {
 /**
  * Compute and upsert payout_events (and their parent payouts) for every
  * contractor who worked the given proposal's event. Safe to call repeatedly.
+ *
+ * Every caller swallows a throw into Sentry and reads a pay_period_not_open skip
+ * as success, so the outcome is recorded where payroll sees it: the exported
+ * name runs the body below, then noteAccrualOutcome (payrollAccrualFailures.js)
+ * records a throw or a completed event whose wages went nowhere, and deletes the
+ * record once an accrual completes. The result and the throw reach the caller
+ * unchanged.
  */
 async function accruePayoutsForProposal(proposalId) {
+  let result;
+  try {
+    result = await accrueImpl(proposalId);
+  } catch (err) {
+    await noteAccrualOutcome(proposalId, { thrown: true });
+    throw err;
+  }
+  await noteAccrualOutcome(proposalId, { result });
+  return result;
+}
+
+async function accrueProposalPayouts(proposalId) {
   const propRes = await pool.query(
     `SELECT id, event_date, status, event_duration_hours, total_price, amount_paid, pricing_snapshot
        FROM proposals WHERE id = $1`,
@@ -794,4 +814,9 @@ async function maybeReaccrueForDuty(proposalId) {
   return accruePayoutsForProposal(proposalId);
 }
 
-module.exports = { accruePayoutsForProposal, ensurePayPeriod, maybeReaccrueForDuty };
+// Test seam: a suite swaps the accrual body to drive a throw through the record
+// and the routes that call the exported name. Never set outside a test.
+let accrueImpl = accrueProposalPayouts;
+function __setAccrueImplForTest(fn) { accrueImpl = fn || accrueProposalPayouts; }
+
+module.exports = { accruePayoutsForProposal, ensurePayPeriod, maybeReaccrueForDuty, __setAccrueImplForTest };

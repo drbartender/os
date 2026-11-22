@@ -52,7 +52,12 @@ export default function UnassignedTipsPanel({ onCount, hideWhenEmpty = false }) 
     setBusy(b => ({ ...b, [tipId]: true }));
     try {
       const { data } = await api.patch(`/admin/payroll/tips/${tipId}/assign`, { shift_id: shiftId });
-      if (data.frozen_period) {
+      if (data.payroll_accrual === 'error' || data.payroll_accrual === 'period_closed') {
+        // The tip is placed either way; payroll did not take it (payroll-accrual-surface).
+        toast.error(data.frozen_period
+          ? 'Tip assigned, but rolling it forward failed. The details are in Sentry.'
+          : 'Tip assigned, but payroll did not take it. The event is listed on the Pay run tab.');
+      } else if (data.frozen_period) {
         // ToastContext only exposes success/error, so use error for the frozen-period
         // case. The roll-forward (Task 17) handles the data; this toast just tells
         // the admin the assignment landed against a frozen period.

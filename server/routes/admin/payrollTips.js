@@ -16,6 +16,7 @@ const { AppError, NotFoundError, ValidationError, ConflictError } = require('../
 const { findOpenPeriodForDate } = require('../../utils/payrollProcessing');
 const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { accrualFailureReason } = require('../../utils/payrollAccrualFailures');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
 const { clawbackTip } = require('../../utils/payrollClawback');
 const { captureTipFeesForProposal } = require('../../utils/payrollTips');
@@ -252,6 +253,7 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
 
   // On the open path the standard accrual refreshes the tip pool. On the
   // frozen path roll forward so the tip lands on a bartender payout next period.
+  let payrollAccrual = 'ok';
   try {
     if (frozen) {
       const rolled = await rollForwardLateTip(tipId);
@@ -290,15 +292,25 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
       // on the line the accrual pays the gross into, never in a later week
       // (verify pass of the payouts lane, M2).
       if (priorRefunded > 0) await bookRefundClaw(eventDate ? { periodYmd: ymd(eventDate) } : undefined);
-      if (proposalId) await accruePayoutsForProposal(proposalId);
+      if (proposalId) {
+        await accruePayoutsForProposal(proposalId);
+        payrollAccrual = (await accrualFailureReason(proposalId)) || 'ok';
+      }
     }
   } catch (err) {
     Sentry.captureException(err, {
       tags: { route: 'tip_assign', step: frozen ? 'roll_forward' : 'reaccrue' },
     });
+    payrollAccrual = 'error';
   }
 
-  res.json({ tip: updated.rows[0], frozen_period: frozen, refund_clawed_cents: refundClawedCents });
+  // payroll_accrual says whether payroll took the placement ('ok', 'error' or
+  // 'period_closed'); the placement itself has committed either way, so the
+  // admin screen warns instead of reporting a plain success.
+  res.json({
+    tip: updated.rows[0], frozen_period: frozen, refund_clawed_cents: refundClawedCents,
+    payroll_accrual: payrollAccrual,
+  });
 }));
 
 async function loadDeferredTips() {

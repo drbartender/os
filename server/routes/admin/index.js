@@ -15,6 +15,7 @@ router.use('/', require('./search'));
 router.use('/', require('./payroll'));
 router.use('/', require('./payrollTips'));
 router.use('/', require('./payrollDuty'));
+router.use('/', require('./payrollAccrualProblems'));
 router.use('/', require('./payrollTax'));
 // Contest mounts BEFORE the review log so the literal /staff-reviews/leaderboard
 // can never be shadowed by a future /staff-reviews/:id in the sibling.

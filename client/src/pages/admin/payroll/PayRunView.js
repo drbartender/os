@@ -23,7 +23,7 @@ const CHIP_KIND = { open: 'info', processing: 'warn', reopened: 'violet' };
 // The pay-run queue: every non-paid period, newest payday first. Each card
 // lazy-loads its payouts on expansion and hosts the line editor + pay panel
 // per payout.
-export default function PayRunView({ periodParam, openPeriod = null, pendingReviews = 0, onChanged }) {
+export default function PayRunView({ periodParam, openPeriod = null, pendingReviews = 0, onChanged, reloadKey = 0, onAccrualBlocked }) {
   const toast = useToast();
   const [periods, setPeriods] = useState(null); // all periods (rollups) | null while loading
   const [error, setError] = useState(false);
@@ -54,6 +54,9 @@ export default function PayRunView({ periodParam, openPeriod = null, pendingRevi
     } : p)) : prev));
   }, []);
   useEffect(() => { load(); }, [load]);
+  // The accrual problems panel bumps reloadKey after a retry or dismiss: the
+  // queue rollups move, and each PeriodCard drops its cached detail on it.
+  useEffect(() => { if (reloadKey) load(); }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Anything that moves the queue also moves the hub's subtitle (status word,
   // accrued count) and its tab chrome, so tell the layout to refetch too.
@@ -173,13 +176,15 @@ export default function PayRunView({ periodParam, openPeriod = null, pendingRevi
           onToggle={() => toggle(p.id)}
           onQueueChanged={handleQueueChanged}
           onOwedDelta={patchPeriodOwed}
+          reloadKey={reloadKey}
+          onAccrualBlocked={onAccrualBlocked}
         />
       ))}
     </>
   );
 }
 
-function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta }) {
+function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta, reloadKey = 0, onAccrualBlocked }) {
   const toast = useToast();
   const [detail, setDetail] = useState(null); // { period, payouts } | null
   const [detailLoading, setDetailLoading] = useState(false);
@@ -218,6 +223,19 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
     setDetail(null);
     setDetailError(false);
   }, [period.status]);
+
+  // A retry on the accrual problems panel may have written lines into this
+  // period without moving its status: drop the cached detail the same way.
+  // Only an open period: accrual writes no other, and a processing card holds
+  // a pay in progress (PayPanel's locked amount and typed reference).
+  const prevReloadRef = useRef(reloadKey);
+  useEffect(() => {
+    if (prevReloadRef.current === reloadKey) return;
+    prevReloadRef.current = reloadKey;
+    if (period.status !== 'open') return;
+    setDetail(null);
+    setDetailError(false);
+  }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runProcess = async ({ skipDutyCheck = false } = {}) => {
     setBusy(true);
@@ -272,6 +290,8 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
     } catch (err) {
       toast.error(err.message);
       if (err.status === 409) onQueueChanged(); // raced: re-render the true state
+      // The accrual gate: show the events it names on the panel above.
+      if (err.status === 409 && String(err.message || '').includes('payroll did not take') && onAccrualBlocked) onAccrualBlocked();
     } finally {
       setBusy(false);
     }

@@ -277,7 +277,9 @@ async function processEventCompletions() {
           Sentry.captureException(marketingErr, { tags: { scheduler: 'auto-complete', proposalId: proposal.id, issue: 'marketing-enroll' } });
         }
         // Accrue payroll for the completed event. Best-effort and isolated: a
-        // failure here must not abort the completion batch.
+        // failure here must not abort the completion batch. The accrual records
+        // its own failure for the payroll page (payrollAccrualFailures.js), and
+        // Process refuses the event's period until a retry writes its lines.
         try {
           await accruePayoutsForProposal(proposal.id);
         } catch (err) {

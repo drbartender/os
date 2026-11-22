@@ -37,6 +37,7 @@ const { AppError } = require('../../utils/errors');
 // 2026-11-05 when the assign guards took that file past the 1000-line ratchet).
 const payrollTipsRouter = require('./payrollTips');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
+const { __setAccrueImplForTest } = require('../../utils/payrollAccrual');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payroll.tipAssign.test.js refuses to run against production');
@@ -62,6 +63,8 @@ let rollLines;       // payout_events upserts the roll-forward wrote (params)
 let clawLines;       // payout_events upserts the clawback wrote (params)
 let markerWrites;    // the clawback's final cumulative-marker writes (params)
 let log;             // the order of the statements that matter, by name
+let failureReason;   // what payroll_accrual_failures holds for the proposal (null = no row)
+let rollThrows;      // whether the roll-forward's tip read throws
 const TODAY_PERIOD = 55;
 
 function answer(text, params = []) {
@@ -115,6 +118,7 @@ function answer(text, params = []) {
   }
   // payrollLateTip.rollForwardLateTip, on its own client.
   if (sql.startsWith('SELECT id, shift_id, amount_cents, fee_cents, rolled_forward_at')) {
+    if (rollThrows) throw new Error('simulated roll-forward failure');
     log.push('rollforward:read');
     return {
       rows: [{
@@ -171,6 +175,10 @@ function answer(text, params = []) {
     markerWrites.push(params);
     tipRow = { ...tipRow, refunded_amount_cents: Number(params[0]), deferred_at: null, defer_kind: null };
     return { rows: [], rowCount: 1 };
+  }
+  // The accrual failure record the route reads back after the accrual.
+  if (sql.startsWith('SELECT reason FROM payroll_accrual_failures')) {
+    return failureReason ? { rows: [{ reason: failureReason }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   // The accrual's proposal read (skipped as missing) and anything else.
   return { rows: [], rowCount: 0 };
@@ -239,6 +247,9 @@ beforeEach(() => {
   periodInserts = [];
   rollLines = [];
   log = [];
+  failureReason = null;
+  rollThrows = false;
+  __setAccrueImplForTest(null);
   tipRow = {
     id: TIP_ID, shift_id: null, rolled_forward_at: null, refunded_amount_cents: 0,
     amount_cents: 6000, target_user_id: BARTENDER_ID,
@@ -381,4 +392,37 @@ test('on the frozen path the clawback deferral is re-armed after the roll-forwar
   const again = await rollForwardLateTip(TIP_ID);
   assert.equal(again, null, 'rolled_forward_at refuses a second roll-forward');
   assert.equal(rollLines.length, before, 'nothing written');
+});
+
+// Payroll accrual surface (hygiene plan 2026-11-19): the placement commits
+// either way, but the response says whether payroll took it, so the admin
+// screen warns instead of reporting a plain success.
+test('an open-path placement whose accrual completes answers payroll_accrual ok', async () => {
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.payroll_accrual, 'ok');
+});
+
+test('an open-path placement whose accrual throws is still placed and answers payroll_accrual error', async () => {
+  __setAccrueImplForTest(() => Promise.reject(new Error('simulated accrual failure')));
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.tip.shift_id, SHIFT_ID, 'the placement stands');
+  assert.equal(r.body.payroll_accrual, 'error');
+});
+
+test('an open-path placement answers what the failure record says after the accrual', async () => {
+  failureReason = 'period_closed';
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.payroll_accrual, 'period_closed');
+});
+
+test('a frozen-path placement whose roll-forward throws answers payroll_accrual error', async () => {
+  periodStatus = 'paid';
+  rollThrows = true;
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.frozen_period, true);
+  assert.equal(r.body.payroll_accrual, 'error');
 });

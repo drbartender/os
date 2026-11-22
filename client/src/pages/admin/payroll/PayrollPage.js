@@ -7,6 +7,7 @@ import useUrlListState from '../../../hooks/useUrlListState';
 import Toolbar from '../../../components/adminos/Toolbar';
 import StatusChip from '../../../components/adminos/StatusChip';
 import PayRunView from './PayRunView';
+import AccrualProblemsPanel from './AccrualProblemsPanel';
 import HistoryView from './HistoryView';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
 import DeferredTipsPanel from './DeferredTipsPanel';
@@ -35,6 +36,8 @@ export default function PayrollPage() {
   // The hub shares its summary through Outlet context; a bare render outside
   // the hub (a test) has none, so tolerate null.
   const { summary, refresh } = useOutletContext() || {};
+  const [payRunKey, setPayRunKey] = React.useState(0);
+  const [panelKey, setPanelKey] = React.useState(0);
 
   return (
     <>
@@ -47,12 +50,23 @@ export default function PayrollPage() {
         setTab={(t) => setListState({ tab: t, period: '' })}
       />
 
+      {/* A retry that writes lines reloads the pay run (its queue and every
+          cached period detail), so Process never freezes lines nobody saw; a
+          Process refused for an event payroll did not take reloads the panel. */}
+      {tab === 'payrun' && (
+        <AccrualProblemsPanel
+          reloadKey={panelKey}
+          onChanged={() => { setPayRunKey((k) => k + 1); if (refresh) refresh(); }}
+        />
+      )}
       {tab === 'payrun' && (
         <PayRunView
           periodParam={listState.period}
           openPeriod={summary?.open_period || null}
           pendingReviews={summary?.pending_reviews ?? 0}
           onChanged={refresh}
+          reloadKey={payRunKey}
+          onAccrualBlocked={() => setPanelKey((k) => k + 1)}
         />
       )}
       {tab === 'history' && <HistoryView periodParam={listState.period} />}
