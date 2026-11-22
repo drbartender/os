@@ -56,6 +56,10 @@ const UNPAID_FROM_SQL = (p) => `
           AND pe.held_state IS DISTINCT FROM 'held'
           AND NOT (pe.contracted_hours = 0 AND pe.hours = 0 AND pe.rate_cents = 0))`;
 const UNPAID_WORKER_SQL = (p) => `EXISTS (SELECT 1 ${UNPAID_FROM_SQL(p)})`;
+// Built once, so a query interpolates only module constants (the
+// parameterized-sql static check reads a call inside a query as input).
+const UNPAID_FROM_BY_PARAM = UNPAID_FROM_SQL('$1');
+const UNPAID_WORKER_BY_ROW = UNPAID_WORKER_SQL('p.id');
 
 // The ON CONFLICT test for keeping a dismissal: a repeated 'period_closed'
 // whose unpaid workers are all ones the admin dismissed.
@@ -89,7 +93,7 @@ async function clearAccrualFailure(proposalId) {
 // The unpaid workers' shift_request ids, sorted; empty when everyone is paid.
 async function unpaidRequestIds(proposalId) {
   const { rows } = await pool.query(
-    `SELECT COALESCE(array_agg(sr.id ORDER BY sr.id), '{}'::int[]) AS ids ${UNPAID_FROM_SQL('$1')}`,
+    `SELECT COALESCE(array_agg(sr.id ORDER BY sr.id), '{}'::int[]) AS ids ${UNPAID_FROM_BY_PARAM}`,
     [proposalId]
   );
   return rows[0].ids.map(Number);
@@ -159,7 +163,7 @@ async function listAccrualProblems(db = pool, { periodId = null } = {}) {
                             JOIN users u ON u.id = sr.user_id
                            WHERE s.proposal_id = p.id AND sr.status = 'approved'
                              AND u.cc_id LIKE 'legacy_cc:%')
-          AND ${UNPAID_WORKER_SQL('p.id')}
+          AND ${UNPAID_WORKER_BY_ROW}
           AND NOT EXISTS (SELECT 1 FROM flagged fl WHERE fl.proposal_id = p.id)
      )
      SELECT x.proposal_id, x.reason, x.attempts, x.last_failed_at,
