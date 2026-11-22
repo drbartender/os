@@ -2,23 +2,23 @@
 spec: none. The findings come from the read-only hygiene audit of 2026-11-16 (rule drift, dead endpoints, contracts and swallowed errors, env parity), each re-checked in the code; the owner asked on 2026-11-19 for them to be done ("would like to get these things done"). The lane split and every design choice below are Claude's.
 format: lane map without code (spec 2026-10-19 D12)
 revision: >
-  3 (2026-11-22). What merged, what is left and what waits on the owner; see status below. The
+  4 (2026-11-22). Every lane of this map has merged and shipped (b75709a) bar payroll-accrual-surface,
+  which waits on the audit-payments lane. Revision 3 (2026-11-22). What merged, what is left and what waits on the owner; see status below. The
   cover-swap-approve branch was scrapped on the owner's yes ("if its superseded then, yes"). Two lanes
   join the map, audit-dead-routes-rest and audit-stale-comments, and the two machinery lanes built from
   this window are recorded (stale-rule-imports, gate-smoke-reuse). Revision 2 (2026-11-19) said, in
   short, that the cover-swap-approve lane is superseded because its review found the root in the
   assign upsert, which the cover-claim-cascade lane now owns.
 status: >
-  Merged to main, not pushed (2026-11-22): stale-rule-imports 2a725572, audit-small-fixes c6ac13fe,
-  audit-env-guards 11b90ca8, audit-dead-routes 8df7ea03, the rule-file wording 07e496d0, two test
-  fixture fixes 567dbe9a and 77ce0d10. Not built, cover-claim-cascade, payroll-accrual-surface,
-  audit-dead-routes-rest, audit-stale-comments. Built and unreviewed, gate-smoke-reuse.
-beforeShip: >
-  audit-env-guards makes the server exit at boot on Render when NODE_ENV is not exactly production.
-  The owner confirms that value in Render before the ship that carries 11b90ca8; Claude cannot read
-  Render. The six boot secrets (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, RESEND_WEBHOOK_SECRET,
-  THUMBTACK_WEBHOOK_SECRET, CAL_WEBHOOK_SECRET, ENCRYPTION_KEY) only log and report to Sentry when
-  missing, so they are worth the same look and do not block. UNSUBSCRIBE_SECRET is optional.
+  Shipped in b75709a (2026-11-22): stale-rule-imports 2a725572, audit-small-fixes c6ac13fe,
+  audit-env-guards 11b90ca8, audit-dead-routes 8df7ea03, cover-claim-cascade dc2230a3,
+  audit-dead-routes-rest and audit-stale-comments together as audit-cleanup 2fefe67c, gate-smoke-reuse
+  5553cf27, the rule-file wording 07e496d0, two test fixture fixes 567dbe9a and 77ce0d10. Not built,
+  payroll-accrual-surface.
+afterShip: >
+  The server booted on b75709a in Render, so the boot guard of audit-env-guards passed there
+  (NODE_ENV is production and the required variables are set). The six boot secrets only log and
+  report to Sentry when missing; nothing reported one in the post-ship watch.
 dropped: the client deposit literal (already fixed on the open audit-payments lane, commit 489cc1ea); the review skill's two-way proportion text (machinery change, left for its own decision).
 lanes:
   - id: audit-small-fixes
@@ -117,8 +117,8 @@ lanes:
       routes do. The claim email (server/routes/staffShiftActions.js) links to the event page, as the
       claim's push already does, and says to approve the claim there.
     status: >
-      not built. Unblocked, audit-payouts-followup merged as a70f3f18. Until it lands, a cover claim is
-      approved from the legacy staffing dashboard's Shifts tab, the one path that runs the cascade.
+      merged dc2230a3, shipped. The assign route runs the cascade on a pending cover claim; auto-assign
+      skips a live claim only (a finished claim row is seatable again, found in its review).
     blockedBy: []
     lenses: tier A.
     acceptance: a test approves a cover claim through the assign route and through auto-assign and finds the original denied and dropped, one payout line after accrual, and the original's reminder rows suppressed; each fails on main.
@@ -131,7 +131,7 @@ lanes:
     blockedBy: [audit-payments merged, since it rewrites these files]
     lenses: tier A.
   - id: audit-dead-routes-rest
-    status: not built
+    status: merged with audit-stale-comments as audit-cleanup 2fefe67c, shipped
     scope: >
       The removals audit-dead-routes held back, each with no caller found. The admin users list GET
       (server/routes/admin/users.js ~line 32), the recent invoices GET (server/routes/invoices.js ~line
@@ -142,7 +142,9 @@ lanes:
     lenses: whatever the review skill computes.
     acceptance: grep finds no caller for any removed path before removal; the reached suites pass.
   - id: audit-stale-comments
-    status: not built
+    status: >
+      merged as audit-cleanup 2fefe67c, shipped. The two rule-file wordings went to main in the
+      revision 4 commit.
     scope: >
       Comments the merged lanes left naming things that moved. No behavior changes, so the review is
       the comment-only proof. server/routes/staffPortal/accountReads.js ~137 and accountReads.test.js
@@ -169,8 +171,10 @@ lanes:
       landing restaled every open review, which is what made parallel windows re-run reviews in a loop.
   - id: gate-smoke-reuse
     status: >
-      built in its worktree at 953783bb, never reviewed, not merged. Tier A. Open question for its
-      review, whether a smoke run in a review's environment may stand in for the gate's scrubbed one.
+      merged 5553cf27, shipped. Its review found that a range changing the installed packages could
+      reuse a smoke run on the old packages; reuse is now refused on such a range. The review's
+      environment standing in for the gate's scrubbed one was judged no gap, since the scrubbed env
+      exists to keep live keys out of the gate.
     scope: >
       Machinery. The ship gate skips the money smoke only when a passing stamped smoke under 24 hours
       old covers the tree being shipped; --fresh-smoke forces a run.
@@ -181,9 +185,9 @@ status, the size-ratchet wording, the eventTypes path in the project rules) are 
 
 Left over from this work and not in a lane (2026-11-22):
 
-- Two more machinery causes of slow reviews, both Claude defaults: finalize marks every earlier lens
-  report stale after any rebase or fix that touches a lane file, and the tier script puts a change of
-  comments or test text on a sensitive path at tier A.
+- The two machinery causes of slow reviews noted here (finalize restaling earlier reports, the tier
+  script forcing tier A) stopped binding on 2026-11-22, when review became Claude's judgment and the
+  receipt tools optional (b75709a).
 - Branches stale-rule-imports and audit-env-guards are still present. Each equals its squash, but main
   has moved on their files since, so the merged-lane check does not pass and the delete waits for a yes.
 - The name scrub (43f36431, 91a35022, 28fbad84) covered the names known from the repo. A complete sweep
