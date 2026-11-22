@@ -1,0 +1,15 @@
+{
+  "name": "gv-agent",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Box-only Playwright agent: posts the proposal text into a Thumbtack customer's thread through Google Voice web, leased from the os API. NOT deployed to Render.",
+  "scripts": {
+    "start": "node src/index.js",
+    "dry-run": "node src/index.js --dry-run",
+    "test": "node --test src/*.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "playwright": "^1.61.0"
+  }
+}

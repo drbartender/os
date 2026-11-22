@@ -1075,6 +1075,7 @@ tests omitted
 │           ├── w9Pdf.js      # The W-9 for onboarding: the empty form, its field checks, and the signed PDF built from it.
 │           └── webauthnClient.js # Passkey client (@simplewebauthn/browser wrap: registerPasskey, unlockWithPasskey, isPasskeySupported)
 ├── docs/
+├── gv-agent/
 ├── scripts/
 │   ├── backfill-duty-lines.js # backfill-duty-lines.js - one-time ship backfill (spec 2026-08-06 §10.1).
 │   ├── backfill-positions-needed.js # One-time backfill: re-derive shifts.positions_needed for upcoming events from the full paid roster (bartenders + banquet servers + barbacks), per-role shrink-capped so an approved-active assignment is NEVER dropped.

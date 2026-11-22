@@ -1,0 +1,27 @@
+[Unit]
+Description=Google Voice proposal-post sender (Playwright, box-only)
+After=network-online.target
+Wants=network-online.target
+# Cap restart rate so a crash loop can't hammer Google (these belong in [Unit]).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# The thumbtack-agent display trap: a GNOME/RDP desktop login imports its
+# session env into the systemd user manager, and Chrome then attaches to the
+# idle Wayland compositor instead of xvfb-run's virtual display and hangs at
+# launch. Scrub the session vars AND pin ozone to X11 so Chrome always targets
+# the Xvfb display.
+UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY XDG_SESSION_TYPE
+Environment=OZONE_PLATFORM=x11
+# node lives under nvm; xvfb-run gives the headful Chrome a virtual display on
+# the headless box.
+WorkingDirectory=/home/drbartender/projects/os/gv-agent
+EnvironmentFile=/home/drbartender/projects/os/gv-agent/.env
+ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.22.3/bin/node src/index.js
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
