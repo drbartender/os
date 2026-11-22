@@ -65,6 +65,16 @@ const BADGE_MAX_AGE_MS = 120000;
 // that proposal's send types written within this many minutes of it, before
 // or after (a send can write its activity row AFTER the dispatch).
 const PROPOSAL_ABSORB_MINUTES = 5;
+// Plan 2026-10-17 Task 12: a GV post's Thumbtack echo or 888 fallback joins
+// the proposal send whose activity row is within this many minutes of the
+// post's created_at, whatever PROPOSAL_ABSORB_MINUTES says.
+const GV_POST_ABSORB_MINUTES = 2;
+// A GV post's echo comes back within minutes of the post: the box leases a
+// queued post within 5 minutes (the stale window), works it inside its
+// 3-minute lease, and the echo follows the click by seconds. A Business
+// message carrying the same words later than this is a hand paste, a reply of
+// its own, never a second delivery of the send.
+const GV_ECHO_MAX_MINUTES = 15;
 // Spec 5.4: the Thumbtack auto first reply is the Business message within this
 // many minutes of thumbtack_leads.first_reply_sent_at.
 const AUTO_FIRST_REPLY_MINUTES = 2;
@@ -232,7 +242,7 @@ function gmailThreadUrl(threadId) {
 module.exports = {
   INBOX_HISTORY_START, CLAIM_HOURS, HOT_HOURS, HANDLED_DAYS, THREAD_DAYS, QUIET_HOURS,
   TT_MISSED_MINUTES, CALL_MIN_SECONDS, UNDO_SECONDS, CACHE_MS, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS,
-  PROPOSAL_ABSORB_MINUTES, AUTO_FIRST_REPLY_MINUTES, GROUP_SEND_COLLAPSE_SECONDS,
+  PROPOSAL_ABSORB_MINUTES, GV_POST_ABSORB_MINUTES, GV_ECHO_MAX_MINUTES, AUTO_FIRST_REPLY_MINUTES, GROUP_SEND_COLLAPSE_SECONDS,
   UNAMBIGUOUS_STOP_WORDS, UNAMBIGUOUS_START_WORDS, OPT_WORDS,
   RELAY_NOTICE_WORDS, TT_MISSED_TEXT, THUMBTACK_PROXY_ROLLOUT, thumbtackInboxUrl,
   CALL_ANSWERED_BY_USER, SEND_LABELS, FIRST_TEXT_PREFIX, TEXT_BODY_MAX,

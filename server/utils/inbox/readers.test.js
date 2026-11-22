@@ -89,8 +89,9 @@ async function clean() {
   await pool.query('DELETE FROM gmail_messages WHERE gmail_id LIKE $1', [`${GM}-%`]);
   await pool.query('DELETE FROM zola_leads WHERE couple_label LIKE $1', [`${GM} %`]);
   await pool.query('DELETE FROM consults WHERE client_id = ANY($1::int[])', [clients]); // cascades the attempt
-  await pool.query('DELETE FROM thumbtack_messages WHERE negotiation_id = $1', [`${TAG}-neg`]);
-  await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = $1', [`${TAG}-neg`]); // cascades the lead call
+  await pool.query('DELETE FROM gv_posts WHERE negotiation_id LIKE $1', [`${TAG}-gv%`]);
+  await pool.query('DELETE FROM thumbtack_messages WHERE negotiation_id = $1 OR negotiation_id LIKE $2', [`${TAG}-neg`, `${TAG}-gv%`]);
+  await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = $1 OR negotiation_id LIKE $2', [`${TAG}-neg`, `${TAG}-gv%`]); // cascades the lead call
   await pool.query('DELETE FROM email_webhook_events WHERE resend_id = $1', [`re_${TAG}`]);
   await pool.query('DELETE FROM sms_status_orphans WHERE twilio_sid LIKE $1', [`${SID}%`]);
   await pool.query('DELETE FROM proposals WHERE client_id = ANY($1::int[])', [clients]); // cascades the ledger and activity
@@ -1528,3 +1529,157 @@ test('run tasks, the rule: open words in flight or stopped; failed words; a proo
   assert.deepEqual(out(row(93011, { run_id: null, current_run_id: null, draft_id: null, dead_start: true })),
     [['menu_failed', `Menu couldn't be generated: ${AUTO_START_SENTENCES.notStarted}`]]);
 });
+
+// The GV post (plan 2026-10-17 Task 12): the echo and fallback laterals. Each
+// test seeds its own proposal, posts and rows on negotiations under
+// `${TAG}-gv`, with times from this clock, and deletes them before it ends.
+const GV_BODY = 'Your proposal is ready:  https://drbartender.com/proposal/00000000-0000-4000-8000-0000000000aa';
+const GV_MS = 60 * 1000;
+const gvBase = () => Date.now() - 6 * 3600 * 1000;
+const gvAt = (base, minutes) => new Date(base + minutes * GV_MS);
+
+async function gvFixture(fn) {
+  const made = { proposals: [], messages: [], negs: [] };
+  // thumbtack_messages.negotiation_id references a lead (the dev database's FK).
+  const lead = async (neg) => {
+    if (made.negs.includes(neg)) return;
+    await pool.query(
+      "INSERT INTO thumbtack_leads (negotiation_id, client_id, customer_name, status, raw_payload) VALUES ($1, $2, 'Pat Example', 'new', '{}'::jsonb)",
+      [neg, ids.ttClient]
+    );
+    made.negs.push(neg);
+  };
+  const proposal = async () => {
+    const r = await pool.query("INSERT INTO proposals (client_id, status, event_date) VALUES ($1, 'sent', CURRENT_DATE + 30) RETURNING id", [ids.ttClient]);
+    made.proposals.push(r.rows[0].id);
+    return r.rows[0].id;
+  };
+  const post = async (proposalId, { neg = `${TAG}-gv`, body = GV_BODY, status = 'sent', at, fallback = null, fallbackAt = null }) => {
+    const leasedAt = ['stale', 'cancelled'].includes(status) ? null : at;
+    const r = await pool.query(
+      `INSERT INTO gv_posts (proposal_id, client_id, negotiation_id, body, send_path, status, fallback_status, fallback_at, leased_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'auto', $5, $6, $7, $8, $9, $9) RETURNING id`,
+      [proposalId, ids.ttClient, neg, body, status, fallback, fallbackAt, leasedAt, at]
+    );
+    return r.rows[0].id;
+  };
+  const tt = async (key, { neg = `${TAG}-gv`, from = 'Business', text = GV_BODY, at }) => {
+    const messageId = `${TAG}-gv-${key}`;
+    await lead(neg);
+    await pool.query(
+      "INSERT INTO thumbtack_messages (message_id, negotiation_id, from_type, sender_name, text, sent_at, raw_payload) VALUES ($1, $2, $3, 'Pat E.', $4, $5, '{}'::jsonb)",
+      [messageId, neg, from, text, at]
+    );
+    made.messages.push(messageId);
+    return messageId;
+  };
+  const ml = async (proposalId, { channel = 'sms', type = 'initial_proposal', at }) => (await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, subject, status, created_at)
+     VALUES ($1, $2, $3, $4, $5, 'Your proposal is ready', 'sent', $6) RETURNING id`,
+    [proposalId, ids.ttClient, channel, type, P.proxy, at]
+  )).rows[0].id;
+  const ttHeaders = async () => {
+    const index = await loadPeopleIndex(pool);
+    const { rows } = await pool.query(TT_HEADERS_SQL, [INBOX_HISTORY_START]);
+    const mine = rows.filter((r) => made.messages.includes(r.message_id));
+    return { rows: new Map(mine.map((r) => [r.message_id, r])), events: new Map(mine.map((r) => [r.message_id, mapThumbtackHeader(r, index)])), count: mine.length };
+  };
+  const mlHeaders = async () => {
+    const { rows } = await pool.query(ML_HEADERS_SQL, [INBOX_HISTORY_START]);
+    const mine = rows.filter((r) => made.proposals.includes(r.proposal_id));
+    return { rows: new Map(mine.map((r) => [r.id, r])), events: new Map(mine.map((r) => [r.id, mapMessageLogHeader(r)])), count: mine.length };
+  };
+  try {
+    await fn({ proposal, post, tt, ml, ttHeaders, mlHeaders });
+  } finally {
+    await pool.query('DELETE FROM thumbtack_messages WHERE message_id = ANY($1::text[])', [made.messages]);
+    await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = ANY($1::text[])', [made.negs]);
+    await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [made.proposals]); // cascades the posts and the ledger
+  }
+}
+
+test('TT headers carry gv_post_proposal_id for a matching Business row', () => gvFixture(async (f) => {
+  const base = gvBase();
+  const pid = await f.proposal();
+  await f.post(pid, { at: gvAt(base, 0) });
+  const echo = await f.tt('echo', { text: `  ${GV_BODY.replace(/ {2}/, '\n')} `, at: gvAt(base, 1) });
+  const customer = await f.tt('customer', { from: 'Customer', at: gvAt(base, 2) });
+  const other = await f.tt('other', { text: 'Thanks, talk soon', at: gvAt(base, 3) });
+  const before = await f.tt('before', { at: gvAt(base, -1) });
+  const elsewhere = await f.tt('elsewhere', { neg: `${TAG}-gv2`, at: gvAt(base, 1) });
+  const h = await f.ttHeaders();
+  assert.equal(h.count, 5, 'one header row per message');
+  assert.equal(h.rows.get(echo).gv_post_proposal_id, pid);
+  assert.deepEqual(h.events.get(echo).meta.gvPost, { proposalId: pid, postCreatedAt: gvAt(base, 0) });
+  for (const id of [customer, other, before, elsewhere]) {
+    assert.equal(h.rows.get(id).gv_post_proposal_id, null, id);
+    assert.equal(h.events.get(id).meta.gvPost, null, id);
+  }
+}));
+
+test('with two same-body posts on one proposal the echo takes the newest post made before it', () => gvFixture(async (f) => {
+  const base = gvBase();
+  const pid = await f.proposal();
+  await f.post(pid, { at: gvAt(base, 0) });
+  await f.post(pid, { at: gvAt(base, 30), status: 'clicked_unverified' });
+  const first = await f.tt('first', { at: gvAt(base, 1) });
+  const second = await f.tt('second', { at: gvAt(base, 31) });
+  const h = await f.ttHeaders();
+  assert.equal(h.count, 2, 'LIMIT 1: never a duplicate header row');
+  assert.deepEqual(h.events.get(first).meta.gvPost.postCreatedAt, gvAt(base, 0));
+  assert.deepEqual(h.events.get(second).meta.gvPost.postCreatedAt, gvAt(base, 30));
+}));
+
+test('a skipped or stale post never claims an echo', () => gvFixture(async (f) => {
+  const base = gvBase();
+  const pid = await f.proposal();
+  await f.post(pid, { at: gvAt(base, 0), status: 'unknown' });
+  await f.post(pid, { at: gvAt(base, 20), status: 'skipped_already_posted' });
+  await f.post(pid, { at: gvAt(base, 30), status: 'stale', fallback: 'sent', fallbackAt: gvAt(base, 35) });
+  await f.post(pid, { at: gvAt(base, 40), status: 'failed_preclick' });
+  await f.post(pid, { at: gvAt(base, 50), status: 'cancelled' });
+  const late = await f.tt('late', { at: gvAt(base, 55) });
+  const lone = await f.tt('lone', { neg: `${TAG}-gv3`, at: gvAt(base, 55) });
+  // Never a queued or leased fixture: a dev server's sweep or lease would act on it.
+  await f.post(pid, { neg: `${TAG}-gv3`, at: gvAt(base, 50), status: 'stale', fallback: 'failed', fallbackAt: gvAt(base, 51) });
+  await f.post(pid, { neg: `${TAG}-gv3`, at: gvAt(base, 51), status: 'skipped_already_posted' });
+  const h = await f.ttHeaders();
+  assert.deepEqual(h.events.get(late).meta.gvPost, { proposalId: pid, postCreatedAt: gvAt(base, 0) }, 'the newest post the box worked');
+  assert.equal(h.events.get(lone).meta.gvPost, null);
+}));
+
+test('ML headers carry gv_fallback_proposal_id within 2 minutes of fallback_at and not otherwise', () => gvFixture(async (f) => {
+  const base = gvBase();
+  const pid = await f.proposal();
+  await f.post(pid, { at: gvAt(base, 0), status: 'stale', fallback: 'sent', fallbackAt: gvAt(base, 5) });
+  const inside = await f.ml(pid, { at: gvAt(base, 6) });
+  const resendType = await f.ml(pid, { type: 'proposal_sent_sms', at: gvAt(base, 7) });
+  const late = await f.ml(pid, { at: gvAt(base, 7.1) });
+  const early = await f.ml(pid, { at: gvAt(base, 4.9) });
+  const email = await f.ml(pid, { channel: 'email', type: 'proposal_sent', at: gvAt(base, 5.5) });
+  const invoice = await f.ml(pid, { type: 'invoice_sent', at: gvAt(base, 5.5) });
+  const failedPid = await f.proposal();
+  await f.post(failedPid, { at: gvAt(base, 0), status: 'stale', fallback: 'failed', fallbackAt: gvAt(base, 5) });
+  const unfinished = await f.ml(failedPid, { at: gvAt(base, 5.5) });
+  const h = await f.mlHeaders();
+  assert.equal(h.count, 7, 'one header row per ledger row');
+  assert.equal(h.rows.get(inside).gv_fallback_proposal_id, pid);
+  assert.deepEqual(h.events.get(inside).meta.gvFallback, { proposalId: pid, postCreatedAt: gvAt(base, 0) });
+  assert.equal(h.rows.get(resendType).gv_fallback_proposal_id, pid, 'the compose fallback writes proposal_sent_sms');
+  for (const id of [late, early, email, invoice, unfinished]) {
+    assert.equal(h.rows.get(id).gv_fallback_proposal_id, null, String(id));
+    assert.equal(h.events.get(id).meta.gvFallback, null, String(id));
+  }
+}));
+
+test('a direct 888 proposal text with no fallback claim is not a fallback', () => gvFixture(async (f) => {
+  const base = gvBase();
+  const pid = await f.proposal();
+  await f.post(pid, { at: gvAt(base, 0), status: 'sent' });
+  const direct = await f.ml(pid, { at: gvAt(base, 0.5) });
+  const other = await f.proposal();
+  await f.post(other, { at: gvAt(base, 0), status: 'stale', fallback: 'sent', fallbackAt: gvAt(base, 0.2) });
+  const h = await f.mlHeaders();
+  assert.equal(h.rows.get(direct).gv_fallback_proposal_id, null, 'another proposal\'s claim at the same moment is not this one\'s');
+  assert.equal(h.events.get(direct).meta.gvFallback, null);
+}));

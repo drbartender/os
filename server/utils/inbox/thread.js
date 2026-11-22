@@ -92,7 +92,10 @@ function eventRow(e, h) {
   const authorName = id ? h.who(id) : (e.author === 'auto' ? 'Auto' : null);
   if (e.kind === 'proposal_sent') {
     const delivered = (e.meta.deliveries || []).some((d) => !d.failed);
-    const text = id && id === h.viewerId ? 'You sent the proposal' : `Proposal sent${id ? ` by ${h.name(id)}` : ''}`;
+    // A GV post's echo (plan 2026-10-17 Task 12) is a thumbtack delivery.
+    const posted = (e.meta.deliveries || []).some((d) => !d.failed && d.channel === 'thumbtack') ? ' (also posted to Thumbtack)' : '';
+    const sent = id && id === h.viewerId ? 'You sent the proposal' : `Proposal sent${id ? ` by ${h.name(id)}` : ''}`;
+    const text = `${sent}${posted}`;
     return { ...row, channel: null, author_name: authorName, text, failed: !delivered, failure_reason: delivered ? null : 'No email or text went out' };
   }
   if (e.kind === 'call') {

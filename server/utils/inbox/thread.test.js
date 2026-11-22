@@ -249,3 +249,20 @@ test('a conversation an event or the AI closed keeps its "Was closed" line besid
   assert.deepEqual(threadOf({ key: 'c-637', events: [old, recentTask], reads: oldRead }).map((r) => r.text),
     ['An old question', 'Was closed: AI says just a thank-you', 'Asked for menu changes']);
 });
+
+test('a send with a thumbtack delivery reads also posted to Thumbtack', () => {
+  // A text-only send whose only delivery is the GV echo (plan 2026-10-17 Task 12).
+  const at = ago(3 * HOUR);
+  const pal = k.palSend('c-640', at, { actor: DALLAS, proposalId: 640 });
+  const echo = k.ttOut('c-640', plus(at, 2 * MIN), 'Your proposal is ready', { negotiationId: 'neg-640' });
+  echo.meta.gvPost = { proposalId: 640, postCreatedAt: new Date(plus(at, 10 * 1000)) };
+  const pal2 = k.palSend('c-640', plus(at, HOUR), { actor: ZUL, proposalId: 641 });
+  const email = k.mlSend('c-640', plus(at, HOUR + MIN), { messageType: 'proposal_sent', proposalId: 641, sentBy: ZUL });
+  const echo2 = k.ttOut('c-640', plus(at, HOUR + 2 * MIN), 'Your proposal is ready', { negotiationId: 'neg-640' });
+  echo2.meta.gvPost = { proposalId: 641, postCreatedAt: new Date(plus(at, HOUR + 10 * 1000)) };
+  const rows = threadOf({ key: 'c-640', events: [pal, echo, pal2, email, echo2] });
+  assert.deepEqual(rows.map((r) => [r.text, r.failed, r.failure_reason]), [
+    ['You sent the proposal (also posted to Thumbtack)', false, null],
+    ['Proposal sent by Zul (also posted to Thumbtack)', false, null],
+  ]);
+});

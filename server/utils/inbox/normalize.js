@@ -14,13 +14,17 @@
 //   4. a proposal send absorbs its message_log deliveries within 5 minutes,
 //      either side; a lone proposal-send ledger row with no activity row (the
 //      send_now create path) stays as a send of its own;
-//   5. absorbed and twinned ledger rows disappear: the sms: and pal: refs win;
-//   6. a Thumbtack relay notice with no Customer message within 15 minutes
+//   5. a GV post's Thumbtack echo or 888 fallback (plan 2026-10-17 Task 12)
+//      joins its proposal's send when the send is within 2 minutes of the
+//      post, else it stands as today;
+//   6. absorbed and twinned ledger rows disappear: the sms: and pal: refs win;
+//   7. a Thumbtack relay notice with no Customer message within 15 minutes
 //      becomes a "never received" item, and a matched one is dropped; an
 //      unmatched one that quotes their words (Task 18 F1) is their Thumbtack
 //      message instead, which the AI may read;
-//   7. the Thumbtack auto first reply is marked (within 2 minutes);
-//   8. an ambiguous opt word that also opted the person out gets an "Opted out
+//   8. the Thumbtack auto first reply is marked (within 2 minutes), never on a
+//      GV echo;
+//   9. an ambiguous opt word that also opted the person out gets an "Opted out
 //      of texts" companion line.
 // Output events carry meta.normalized; already-normalized input passes straight
 // through, so the rules may call this on either. The pass-through is all or
@@ -31,7 +35,8 @@
 const { PROPOSAL_SEND_MESSAGE_TYPES } = require('../answeringMessageTypes');
 const {
   INBOX_HISTORY_START, PROPOSAL_ABSORB_MINUTES, TT_MISSED_MINUTES, AUTO_FIRST_REPLY_MINUTES,
-  GROUP_SEND_COLLAPSE_SECONDS, TT_MISSED_TEXT, FAILED_TWIN_SECONDS,
+  GROUP_SEND_COLLAPSE_SECONDS, TT_MISSED_TEXT, FAILED_TWIN_SECONDS, GV_POST_ABSORB_MINUTES,
+  GV_ECHO_MAX_MINUTES,
 } = require('./constants');
 
 const MIN = 60 * 1000;
@@ -148,6 +153,59 @@ function absorbProposalDeliveries(events, twins) {
   return absorbed;
 }
 
+// The GV post (plan 2026-10-17 Task 12). An echo (meta.gvPost, the Business
+// Thumbtack row holding a worked post's exact body) or an 888 fallback
+// (meta.gvFallback) is absorbed into its proposal's send when that send's
+// record is within GV_POST_ABSORB_MINUTES of the post's created_at, whatever
+// the 5-minute window says: lifecycle and proposal_send write the activity row
+// seconds before the post, the legacy /resend just after. The nearest send
+// wins, then the lowest activity id. A ref the proposal absorb already took is
+// skipped, so nothing is delivered twice. An absorbed fallback takes its SMS
+// twin's failure and takes the twin with it. Otherwise the event stands: an
+// echo is a counted Thumbtack reply and a fallback a counted ledger row.
+// Returns the Set of refs to drop.
+function absorbGvPosts(events, twins, absorbed) {
+  const sendsByProposal = new Map();
+  for (const p of events) {
+    if (p.meta.source !== 'pal') continue;
+    for (const id of new Set(p.meta.proposalIds)) {
+      const list = sendsByProposal.get(id) || [];
+      list.push(p);
+      sendsByProposal.set(id, list);
+    }
+  }
+  const taken = new Set();
+  for (const e of events) {
+    const post = e.meta.gvPost || e.meta.gvFallback;
+    if (!post || absorbed.has(e.ref)) continue;
+    const postMs = new Date(post.postCreatedAt).getTime();
+    if (!Number.isFinite(postMs)) continue;
+    // A real echo comes back within minutes of its post; the same words later
+    // are a hand paste, a reply of its own.
+    if (e.meta.gvPost && t(e) - postMs > GV_ECHO_MAX_MINUTES * MIN) continue;
+    let best = null;
+    for (const p of sendsByProposal.get(post.proposalId) || []) {
+      const d = Math.abs(t(p) - postMs);
+      if (d > GV_POST_ABSORB_MINUTES * MIN) continue;
+      if (!best || d < best.d || (d === best.d && Number(p.meta.id) < Number(best.p.meta.id))) best = { p, d };
+    }
+    if (!best) continue;
+    taken.add(e.ref);
+    if (e.meta.gvPost) {
+      best.p.meta.deliveries.push({ ref: e.ref, channel: 'thumbtack', failed: false });
+      continue;
+    }
+    const twin = twins.get(e.ref);
+    if (twin) taken.add(twin.ref);
+    best.p.meta.deliveries.push({
+      ref: twin ? twin.ref : e.ref,
+      channel: e.channel,
+      failed: Boolean(twin ? twin.meta.failed : e.meta.failed),
+    });
+  }
+  return taken;
+}
+
 function resolveRelayNotices(events) {
   const customerTimes = new Map();
   for (const e of events) {
@@ -182,7 +240,8 @@ function resolveRelayNotices(events) {
 function markAutoFirstReplies(events) {
   const byNegotiation = new Map();
   for (const e of events) {
-    if (e.meta.source === 'tt' && e.direction === 'out' && e.meta.firstReplySentAt) {
+    // A GV echo is the proposal going out, never a holding reply.
+    if (e.meta.source === 'tt' && e.direction === 'out' && e.meta.firstReplySentAt && !e.meta.gvPost) {
       const list = byNegotiation.get(e.meta.negotiationId) || [];
       list.push(e);
       byNegotiation.set(e.meta.negotiationId, list);
@@ -225,7 +284,8 @@ function normalizeEvents(raw, { floor = INBOX_HISTORY_START } = {}) {
   events = collapseGroupSends(events);
   const twins = linkLedgerTwins(events);
   const absorbed = absorbProposalDeliveries(events, twins);
-  events = events.filter((e) => !absorbed.has(e.ref) && !twins.has(e.ref));
+  const gvTaken = absorbGvPosts(events, twins, absorbed);
+  events = events.filter((e) => !absorbed.has(e.ref) && !twins.has(e.ref) && !gvTaken.has(e.ref));
   events = resolveRelayNotices(events);
   markAutoFirstReplies(events);
   events = addOptOutCompanions(events);
