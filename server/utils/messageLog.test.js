@@ -105,21 +105,21 @@ test('logClientMessage never throws on a bad entry', async () => {
   await assert.doesNotReject(() => logClientMessage({ channel: 'email', recipient: null, status: 'sent' }));
 });
 
-test('unknown recipient WITH proposalId still logs, client_id NULL (Brandon 7/16 fix)', async () => {
+test('unknown recipient WITH proposalId still logs, client_id NULL (7/16 sent-but-unlogged fix)', async () => {
   // The stale-address case: recipient matches no client row, but the caller
   // knows the proposal. The ledger row must exist so the send is never
   // invisible again; client_id stays NULL.
   await logClientMessage(buildEmailLogEntry({
     to: 'stale-relay@privaterelay.example', subject: 'list ready',
     meta: { proposalId, messageType: 'shopping_list_ready' },
-    result: { id: 're_brandon_fix' },
+    result: { id: 're_unlogged_fix' },
   }));
   const rows = await getMessageLogForProposal(proposalId);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].recipient, 'stale-relay@privaterelay.example');
   const raw = await pool.query('SELECT client_id, provider_id FROM message_log WHERE proposal_id = $1', [proposalId]);
   assert.equal(raw.rows[0].client_id, null);
-  assert.equal(raw.rows[0].provider_id, 're_brandon_fix');
+  assert.equal(raw.rows[0].provider_id, 're_unlogged_fix');
 });
 
 test('sent_by and body_edited persist through entry and meta paths', async () => {

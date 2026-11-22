@@ -7,7 +7,7 @@ const { findOrCreateClient, findOrCreateClientDetailed } = require('./clientDedu
 // Each test runs inside its own BEGIN/ROLLBACK, so nothing it inserts is
 // committed to the shared dev DB — no cleanup needed beyond the rollback.
 
-test('phone-only row then the ADMIN proposal-create (default stampEmail) resolves to ONE client (the Jim case)', async () => {
+test('phone-only row then the ADMIN proposal-create (default stampEmail) resolves to ONE client (the phone-only-duplicate case)', async () => {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');

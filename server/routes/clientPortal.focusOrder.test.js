@@ -10,8 +10,8 @@ const { AppError } = require('../utils/errors');
 const clientPortalRouter = require('./clientPortal');
 
 // Fix #9 (P1.2): the portal focus picker must prefer a BOOKED proposal over a
-// newer draft that shares the same event date/time. Regression source: Allyson
-// Gietl's portal focused a `viewed` draft instead of her booked event because
+// newer draft that shares the same event date/time. Regression source: a
+// client's portal focused a `viewed` draft instead of her booked event because
 // the ORDER BY was `created_at DESC` with no status precedence.
 
 let server, baseUrl;

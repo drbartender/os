@@ -7,7 +7,7 @@
 // recipient/warning/parts/side-effect contract, not ledger rows.
 //
 // The load-bearing case per action: the recipient must be the LIVE client
-// record, never a stale drink_plans snapshot (the Brandon Martin failure). Each
+// record, never a stale drink_plans snapshot (the stale stored address failure). Each
 // plan is seeded with a snapshot email that DIFFERS from the client row so the
 // live-wins assertion is real.
 require('dotenv').config();
@@ -60,7 +60,7 @@ before(async () => {
   );
   proposalId = p.rows[0].id;
 
-  // Plan carries a STALE snapshot email (Brandon shape) + consult selections and
+  // Plan carries a STALE snapshot email (stale-recipient shape) + consult selections and
   // a NULL consult_filled_at so the flip idempotency test starts clean.
   const dp = await pool.query(
     `INSERT INTO drink_plans

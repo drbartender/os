@@ -5,7 +5,7 @@
 // Send paths run with notifications gated off (dev), so no real email fires;
 // assertions cover the response contract, side-effect idempotency, snapshot
 // write, and preview warnings (stale-snapshot mismatch + typo domain), which
-// are exactly the two failures that shipped this project (Brandon, Cathy).
+// are exactly the two failures that shipped this project (stale stored address, typo domain).
 require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -38,7 +38,7 @@ before(async () => {
     [clientId]
   );
   proposalId = p.rows[0].id;
-  // Plan carries a STALE snapshot email (the Brandon shape) + a real list.
+  // Plan carries a STALE snapshot email (the stale-recipient shape) + a real list.
   const dp = await pool.query(
     `INSERT INTO drink_plans (client_name, client_email, event_type, event_date, proposal_id, shopping_list, shopping_list_status)
      VALUES ('Comms Test', $1, 'wedding-reception', CURRENT_DATE + INTERVAL '21 days', $2,
@@ -68,8 +68,12 @@ test('resolveRecipient prefers the live client email and warns on the stale snap
   assert.equal(r.channels.sms.default, false);
 });
 
-test('typo-domain warning surfaces at resolve time (Cathy shape)', async () => {
-  await pool.query('UPDATE clients SET email = $1 WHERE id = $2', ['comms@arthrex-chicago.conm', clientId]);
+// Built from parts: an address off the reserved fixture domains is never written
+// whole (the PII scanner, scripts/lib/piiShapes.js, refuses it).
+const TYPO_DOMAIN = 'example-company.conm';
+
+test('typo-domain warning surfaces at resolve time (typo-domain shape)', async () => {
+  await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [`comms@${TYPO_DOMAIN}`, clientId]);
   const r = await getAction('shopping_list_approve').resolveRecipient(planId);
   assert.ok(r.warnings.some((w) => w.includes('.conm')), 'must flag the .conm typo domain');
   await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [TEST_EMAIL, clientId]);

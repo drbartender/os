@@ -28,7 +28,7 @@ test('validateManifest rejects the money and shape traps', () => {
   assert.throws(() => validateManifest({ events: [okEvent({ balance_due_date: '' })] }), /balance_due_date/);
 });
 
-test('validateManifest allows zero external_paid (Jayme) and paid-in-full (Amy)', () => {
+test('validateManifest allows zero external_paid and paid-in-full', () => {
   assert.equal(validateManifest({ events: [okEvent({ external_paid: 0 })] }).length, 1);
   assert.equal(validateManifest({ events: [okEvent({ external_paid: 450 })] }).length, 1);
 });

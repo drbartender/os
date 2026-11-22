@@ -25,7 +25,7 @@ beforeAll(() => { Element.prototype.scrollIntoView = jest.fn(); });
 // a 409 TOTAL_CHANGED reached a real client as "it keeps going back to Link".
 const props = {
   mode: 'signAndPay',
-  sigName: 'Mike Boswell',
+  sigName: 'Casey Fixture',
   setSigName: () => {},
   sigData: 'data:image/png;base64,AAA',
   setSigData: () => {},

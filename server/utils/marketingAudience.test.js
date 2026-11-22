@@ -50,7 +50,7 @@ const CASES = [
   ['null address', { email: null }, 'no_address'],
   ['blank address', { email: '   ' }, 'no_address'],
   ['bad status', { email_status: 'bad' }, 'bounced'],
-  ['placeholder address', { email: 'x@arthrex-chicago.invalid' }, 'no_address'],
+  ['placeholder address', { email: 'x@example-company.invalid' }, 'no_address'],
   ['placeholder with trailing space', { email: 'x@y.invalid ' }, 'no_address'],
   ['lead-side unsubscribe', { lead_unsubscribed: true }, 'unsubscribed'],
 ];

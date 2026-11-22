@@ -473,7 +473,7 @@ test('opt-in > a number under an active STOP is not opted in, and leaves no SMS-
 test('opt-in > a PHONE-ONLY client row keeps its NULL email (no portal takeover)', async () => {
   // The hole this locks shut: clientDedup's phone branch matches a row whose
   // email IS NULL on normalized phone + exact name, and BACKFILLS the submitted
-  // email onto that existing row (the wizard's "Jim fix"). It returns
+  // email onto that existing row (the wizard's "phone-only-duplicate fix"). It returns
   // created=false, so recordSmsConsent refuses — but a rollback gated on
   // `created` would let the email write COMMIT. Since the client portal mails its
   // login code to clients.email, that hands the submitter this client's portal.

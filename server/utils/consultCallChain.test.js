@@ -1090,7 +1090,7 @@ test('onLegTerminal: ring 3 hands off to Zul exactly once, and a duplicate callb
 
 test('onLegTerminal: ring 3 with VA_CELL unset lands missed and texts Dallas exactly once', async () => {
   const { consultId, attemptId } = await makeChainRow('fire-missed', {
-    attemptStatus: 'calling_admin', adminRing: 3, nextRingOffsetSec: null, name: 'Tyler Anderson',
+    attemptStatus: 'calling_admin', adminRing: 3, nextRingOffsetSec: null, name: 'Morgan Testwell',
   });
   await withEnv({ VA_CELL: null }, async () => {
     await chain.onLegTerminal({ attemptId, leg: 'admin', ring: 3, callStatus: 'no-answer' });
@@ -1105,7 +1105,7 @@ test('onLegTerminal: ring 3 with VA_CELL unset lands missed and texts Dallas exa
   assert.equal(texts[0].to, TEXT_DEST);
   assert.equal(
     texts[0].body,
-    `Missed consult call with Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
+    `Missed consult call with Morgan Testwell at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
   );
   assert.ok(!texts[0].body.includes('—'), 'no em dashes in texted copy');
   assert.equal(texts[0].meta.skipLog, true, 'an internal ops alert never files into the client ledger');
@@ -1352,13 +1352,13 @@ test('onLegTerminal: a connected row is untouched by any callback', async () => 
 
 test('sendMissedText: the client-no-answer wording is its own sentence', async () => {
   const { consultId, attemptId } = await makeChainRow('fire-noanswer-text', {
-    attemptStatus: 'connected', nextRingOffsetSec: null, name: 'Tyler Anderson',
+    attemptStatus: 'connected', nextRingOffsetSec: null, name: 'Morgan Testwell',
   });
   assert.equal(await chain.sendMissedText({ attemptId, kind: 'client_no_answer' }), 'sent');
   assert.equal(texts.length, 1);
   assert.equal(
     texts[0].body,
-    `Consult client did not answer: Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
+    `Consult client did not answer: Morgan Testwell at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
   );
   assert.equal(texts[0].to, TEXT_DEST);
 });

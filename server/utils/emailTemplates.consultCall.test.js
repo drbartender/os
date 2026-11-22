@@ -17,7 +17,7 @@ const { consultCallAdmin } = require('./emailTemplates');
 const SLOT = new Date('2026-10-10T15:00:00.000Z');
 
 const BASE = {
-  bookerName: 'Tyler Anderson',
+  bookerName: 'Morgan Testwell',
   scheduledAt: SLOT,
   phoneDisplay: '256-555-0186',
   adminUrl: 'https://admin.example.test/clients/7',
@@ -43,10 +43,10 @@ const REASONS = [
 for (const reason of REASONS) {
   test(`reason "${reason}" lands in subject, html, and text`, () => {
     const tpl = consultCallAdmin({ ...BASE, reason });
-    assert.equal(tpl.subject, `Consult call ${reason}: Tyler Anderson`);
+    assert.equal(tpl.subject, `Consult call ${reason}: Morgan Testwell`);
     assert.ok(tpl.html.includes(reason), `html mentions the reason: ${reason}`);
     assert.ok(tpl.text.includes(reason), tpl.text);
-    assert.ok(tpl.text.includes('Tyler Anderson'), tpl.text);
+    assert.ok(tpl.text.includes('Morgan Testwell'), tpl.text);
   });
 }
 
@@ -189,7 +189,7 @@ test('an absent booker name falls back to "Cal.com booker"', () => {
 
 test('an absent reason falls back to "call failed"', () => {
   const tpl = consultCallAdmin({ ...BASE });
-  assert.equal(tpl.subject, 'Consult call call failed: Tyler Anderson');
+  assert.equal(tpl.subject, 'Consult call call failed: Morgan Testwell');
   assert.ok(tpl.html.includes('call failed'), tpl.html);
 });
 
@@ -209,10 +209,10 @@ test('an attacker-typed phone string is escaped in the html body', () => {
 test('the plain-text part is not HTML-escaped', () => {
   // text/plain is delivered as-is by Resend and never re-rendered as HTML, so
   // escaping it would show a literal "&amp;" to the reader.
-  const tpl = consultCallAdmin({ ...BASE, reason: 'call failed', bookerName: 'Tyler & Sons' });
-  assert.ok(tpl.text.includes('Tyler & Sons'), tpl.text);
+  const tpl = consultCallAdmin({ ...BASE, reason: 'call failed', bookerName: 'Morgan & Sons' });
+  assert.ok(tpl.text.includes('Morgan & Sons'), tpl.text);
   assert.ok(!tpl.text.includes('&amp;'), tpl.text);
-  assert.ok(tpl.html.includes('Tyler &amp; Sons'), tpl.html);
+  assert.ok(tpl.html.includes('Morgan &amp; Sons'), tpl.html);
 });
 
 test('every render returns the three-part template shape', () => {

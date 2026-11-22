@@ -25,7 +25,7 @@ const shiftRow = (over = {}) => ({
 
 describe('isCancelledEvent', () => {
   test('cancelled shift on an archived proposal (the P6 cancel / archive reap shape)', () => {
-    // prod shift 349 — Jayme Corcoran, cancelled + archived
+    // prod shift 349, cancelled + archived
     expect(isCancelledEvent(shiftRow({ status: 'cancelled', proposal_status: 'archived' }))).toBe(true);
   });
 

@@ -1,8 +1,8 @@
 import { PAID_STATES, isPaidState, paidState, readRedirect } from './paidState';
 
-// The exact row Mike Boswell's browser received at 17:04:11 on 2026-08-28:
+// The exact row the proposal 774 client's browser received at 17:04:11 on 2026-08-28:
 // the webhook had not committed, so the row still said unpaid and pre-tip.
-const mikePreCommit = { status: 'accepted', amount_paid: '0', total_price: '350.00' };
+const preCommitRow = { status: 'accepted', amount_paid: '0', total_price: '350.00' };
 
 test('PAID_STATES matches the set balanceAmount already used (inPaidState), completed included', () => {
   expect(PAID_STATES).toEqual(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
@@ -12,7 +12,7 @@ test('PAID_STATES matches the set balanceAmount already used (inPaidState), comp
 });
 
 test('the pre-commit row is NOT paid, whatever the URL says', () => {
-  expect(paidState(mikePreCommit)).toEqual({ kind: 'none', amountPaid: 0, total: 350, remaining: 350, completed: false });
+  expect(paidState(preCommitRow)).toEqual({ kind: 'none', amountPaid: 0, total: 350, remaining: 350, completed: false });
 });
 
 test('balance_paid is full regardless of the arithmetic', () => {

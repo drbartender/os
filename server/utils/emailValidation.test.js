@@ -5,10 +5,16 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { checkEmailDomain } = require('./emailValidation');
 
-test('flags a TLD one edit from .com (Cathy incident: .conm)', () => {
-  const r = checkEmailDomain('cmurphy@arthrex-chicago.conm');
+// An address on a provider's or a company's domain is built from parts, never
+// written whole: the heuristic has to be tested against domains off the
+// reserved fixture list, and the PII scanner (scripts/lib/piiShapes.js)
+// rightly refuses a literal address there.
+const at = (domain) => `someone@${domain}`;
+
+test('flags a TLD one edit from .com (typo-domain incident: .conm)', () => {
+  const r = checkEmailDomain(at('example-company.conm'));
   assert.strictEqual(r.suspicious, true);
-  assert.strictEqual(r.suggestion, 'arthrex-chicago.com');
+  assert.strictEqual(r.suggestion, 'example-company.com');
   assert.strictEqual(r.reason, "'.conm' looks like a typo of '.com'");
 });
 
@@ -22,7 +28,7 @@ test('flags every listed one-edit TLD typo of .com', () => {
 });
 
 test('flags provider confusable hmail.com (the burned-client case) as gmail.com', () => {
-  const r = checkEmailDomain('joannak1120@hmail.com');
+  const r = checkEmailDomain(at('hmail.com'));
   assert.strictEqual(r.suspicious, true);
   assert.strictEqual(r.suggestion, 'gmail.com');
   assert.strictEqual(r.reason, "'hmail.com' looks like a typo of 'gmail.com'");
@@ -47,13 +53,13 @@ test('flags outlok.com as outlook.com', () => {
 });
 
 test('clean: exact provider gmail.com', () => {
-  assert.deepStrictEqual(checkEmailDomain('martinjuly18@gmail.com'), {
+  assert.deepStrictEqual(checkEmailDomain(at('gmail.com')), {
     suspicious: false, reason: null, suggestion: null,
   });
 });
 
 test('clean: rocketmail.com is a legit provider-adjacent domain, never flag', () => {
-  assert.deepStrictEqual(checkEmailDomain('juliafrye@rocketmail.com'), {
+  assert.deepStrictEqual(checkEmailDomain(at('rocketmail.com')), {
     suspicious: false, reason: null, suggestion: null,
   });
 });
@@ -113,28 +119,28 @@ test('malformed input is not suspicious: domain with no dot', () => {
 });
 
 test('case-insensitive: uppercase GMAIL.COM is clean', () => {
-  assert.deepStrictEqual(checkEmailDomain('martinjuly18@GMAIL.COM'), {
+  assert.deepStrictEqual(checkEmailDomain(at('GMAIL.COM')), {
     suspicious: false, reason: null, suggestion: null,
   });
 });
 
 test('case-insensitive: uppercase HMAIL.COM is suspicious and suggests lowercase gmail.com', () => {
-  const r = checkEmailDomain('joannak1120@HMAIL.COM');
+  const r = checkEmailDomain(at('HMAIL.COM'));
   assert.strictEqual(r.suspicious, true);
   assert.strictEqual(r.suggestion, 'gmail.com');
   assert.strictEqual(r.reason, "'hmail.com' looks like a typo of 'gmail.com'");
 });
 
 test('leading/trailing whitespace is trimmed before evaluation', () => {
-  const r = checkEmailDomain('  cmurphy@arthrex-chicago.conm  ');
+  const r = checkEmailDomain(`  ${at('example-company.conm')}  `);
   assert.strictEqual(r.suspicious, true);
-  assert.strictEqual(r.suggestion, 'arthrex-chicago.com');
+  assert.strictEqual(r.suggestion, 'example-company.com');
 });
 
 test('no em dashes appear in any reason string', () => {
   const reasons = [
-    checkEmailDomain('cmurphy@arthrex-chicago.conm').reason,
-    checkEmailDomain('joannak1120@hmail.com').reason,
+    checkEmailDomain(at('example-company.conm')).reason,
+    checkEmailDomain(at('hmail.com')).reason,
   ];
   for (const reason of reasons) {
     assert.ok(reason && !reason.includes('—'), `reason must not contain an em dash: ${reason}`);

@@ -131,7 +131,7 @@ test('formatUsPhoneForText returns anything else exactly as given', () => {
 // ─── buildConsultBriefing ────────────────────────────────────────
 
 const FULL = {
-  bookerName: 'Tyler Anderson',
+  bookerName: 'Morgan Testwell',
   scheduledAt: SLOT_10AM,
   eventDate: new Date(2026, 9, 10),
   guestCount: 120,
@@ -143,32 +143,32 @@ const DETAILS = 'Event Saturday October 10th, 120 guests, proposal 718.';
 test('ring 1 speaks the spec briefing with no prefix', () => {
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 1 }),
-    `Potion planning call with Tyler Anderson, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
+    `Potion planning call with Morgan Testwell, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
   );
 });
 
 test('ring 2 and ring 3 carry the retry prefixes', () => {
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 2 }),
-    `Second try. Potion planning call with Tyler Anderson, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
+    `Second try. Potion planning call with Morgan Testwell, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
   );
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 3 }),
-    `Last try. Potion planning call with Tyler Anderson, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
+    `Last try. Potion planning call with Morgan Testwell, booked for 10 AM. ${DETAILS} Press 1 to call them now. Press 9 to hear this again.`
   );
 });
 
 test('the Zul briefing after Dallas was rung says he missed it', () => {
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 3, forVa: true, adminWasRung: true }),
-    `Dallas missed his potion planning call with Tyler Anderson, booked for 10 AM. ${DETAILS} Press 1 to call them for him. Press 9 to hear this again.`
+    `Dallas missed his potion planning call with Morgan Testwell, booked for 10 AM. ${DETAILS} Press 1 to call them for him. Press 9 to hear this again.`
   );
 });
 
 test('the Zul briefing when Dallas was never rung says the call is for him', () => {
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 0, forVa: true, adminWasRung: false }),
-    `Potion planning call with Tyler Anderson, booked for 10 AM, for Dallas. ${DETAILS} Press 1 to call them for him. Press 9 to hear this again.`
+    `Potion planning call with Morgan Testwell, booked for 10 AM, for Dallas. ${DETAILS} Press 1 to call them for him. Press 9 to hear this again.`
   );
 });
 
@@ -179,19 +179,19 @@ test('the retry prefix never leaks into a Zul briefing', () => {
 });
 
 test('absent details leave no double space, no stray comma, and no "unknown"', () => {
-  const bare = buildConsultBriefing({ bookerName: 'Tyler Anderson', scheduledAt: SLOT_10AM, ring: 1 });
+  const bare = buildConsultBriefing({ bookerName: 'Morgan Testwell', scheduledAt: SLOT_10AM, ring: 1 });
   assert.equal(
     bare,
-    'Potion planning call with Tyler Anderson, booked for 10 AM. Press 1 to call them now. Press 9 to hear this again.'
+    'Potion planning call with Morgan Testwell, booked for 10 AM. Press 1 to call them now. Press 9 to hear this again.'
   );
   assert.ok(!/ {2}/.test(bare), 'no double space');
   assert.ok(!/unknown/i.test(bare), 'never speaks "unknown"');
   assert.ok(!/, \./.test(bare), 'no stray comma');
 
-  const vaBare = buildConsultBriefing({ bookerName: 'Tyler Anderson', scheduledAt: SLOT_10AM, forVa: true, adminWasRung: true });
+  const vaBare = buildConsultBriefing({ bookerName: 'Morgan Testwell', scheduledAt: SLOT_10AM, forVa: true, adminWasRung: true });
   assert.equal(
     vaBare,
-    'Dallas missed his potion planning call with Tyler Anderson, booked for 10 AM. Press 1 to call them for him. Press 9 to hear this again.'
+    'Dallas missed his potion planning call with Morgan Testwell, booked for 10 AM. Press 1 to call them for him. Press 9 to hear this again.'
   );
   assert.ok(!/ {2}/.test(vaBare), 'no double space');
 });
@@ -199,11 +199,11 @@ test('absent details leave no double space, no stray comma, and no "unknown"', (
 test('a partially known consult speaks only the details it has', () => {
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 1, eventDate: null, proposalId: null }),
-    'Potion planning call with Tyler Anderson, booked for 10 AM. 120 guests. Press 1 to call them now. Press 9 to hear this again.'
+    'Potion planning call with Morgan Testwell, booked for 10 AM. 120 guests. Press 1 to call them now. Press 9 to hear this again.'
   );
   assert.equal(
     buildConsultBriefing({ ...FULL, ring: 1, guestCount: null }),
-    'Potion planning call with Tyler Anderson, booked for 10 AM. Event Saturday October 10th, proposal 718. Press 1 to call them now. Press 9 to hear this again.'
+    'Potion planning call with Morgan Testwell, booked for 10 AM. Event Saturday October 10th, proposal 718. Press 1 to call them now. Press 9 to hear this again.'
   );
 });
 
@@ -227,7 +227,7 @@ test('an unparseable event date is skipped, never spoken as null', () => {
   assert.ok(!out.includes('null'), out);
   assert.equal(
     out,
-    'Potion planning call with Tyler Anderson, booked for 10 AM. 120 guests, proposal 718. Press 1 to call them now. Press 9 to hear this again.'
+    'Potion planning call with Morgan Testwell, booked for 10 AM. 120 guests, proposal 718. Press 1 to call them now. Press 9 to hear this again.'
   );
 });
 
@@ -249,12 +249,12 @@ test('a missing or blank name falls back to "the client"', () => {
 });
 
 test('surrounding whitespace is trimmed off the name', () => {
-  const out = buildConsultBriefing({ ...FULL, ring: 1, bookerName: '  Tyler Anderson  ' });
-  assert.ok(out.startsWith('Potion planning call with Tyler Anderson, booked for'), out);
+  const out = buildConsultBriefing({ ...FULL, ring: 1, bookerName: '  Morgan Testwell  ' });
+  assert.ok(out.startsWith('Potion planning call with Morgan Testwell, booked for'), out);
 });
 
 test('the builder does not escape: escaping is the TwiML layer\'s job', () => {
-  const out = buildConsultBriefing({ ...FULL, ring: 1, bookerName: 'Tyler & Sons' });
-  assert.ok(out.includes('Tyler & Sons'), out);
+  const out = buildConsultBriefing({ ...FULL, ring: 1, bookerName: 'Morgan & Sons' });
+  assert.ok(out.includes('Morgan & Sons'), out);
   assert.ok(!out.includes('&amp;'), out);
 });

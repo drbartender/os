@@ -72,7 +72,7 @@ test.after(async () => {
 
 // ── OVER-BILLED: the four live shapes from the 2026-07-28 incident ──────────
 
-test('alerts when a bespoke invoice exceeds what is owed (Brandon shape)', async () => {
+test('alerts when a bespoke invoice exceeds what is owed (over-billed invoice shape)', async () => {
   const f = await fixture({
     total: 420, paid: 350,
     invoices: [
@@ -88,7 +88,7 @@ test('alerts when a bespoke invoice exceeds what is owed (Brandon shape)', async
   assert.equal(rows[0].details.excess_cents, 8000, 'billed 15000 against 7000 owed');
 });
 
-test('alerts when an invoice is open against a fully paid proposal (Cathy shape)', async () => {
+test('alerts when an invoice is open against a fully paid proposal (paid-proposal open-invoice shape)', async () => {
   const f = await fixture({
     total: 1192.5, paid: 1192.5,
     invoices: [{ label: 'Additional Services', due: 18500 }],
@@ -101,7 +101,7 @@ test('alerts when an invoice is open against a fully paid proposal (Cathy shape)
   assert.equal(rows[0].details.owed_cents, 0);
 });
 
-test('alerts when a Balance ignores a payment with no locked invoice (David shape)', async () => {
+test('alerts when a Balance ignores a payment with no locked invoice (paid-deposit-without-invoice shape)', async () => {
   const f = await fixture({ total: 1100, paid: 100, invoices: [{ label: 'Balance', due: 110000 }] });
   await monitorMissingBalanceInvoices();
   const rows = await alertsFor(f.proposalId);
@@ -159,7 +159,7 @@ test('quiet when an open Balance exactly carries the balance', async () => {
   assert.deepEqual(await alertsFor(f.proposalId), []);
 });
 
-test('quiet when a bespoke-label invoice exactly carries the balance (Iga shape)', async () => {
+test('quiet when a bespoke-label invoice exactly carries the balance (gratuity-balance shape)', async () => {
   const f = await fixture({ total: 600, paid: 500, invoices: [{ label: 'Gratuity Balance', due: 10000 }] });
   await monitorMissingBalanceInvoices();
   assert.deepEqual(await alertsFor(f.proposalId), []);
@@ -254,7 +254,7 @@ test('candidates always equals alerted plus throttled', async () => {
   assert.ok(r.candidates >= 1);
 });
 
-test('quiet on an overpaid proposal with no open invoices (Emiline shape)', async () => {
+test('quiet on an overpaid proposal with no open invoices (overpaid-proposal shape)', async () => {
   // owed is negative here. Without the PAYABLE_SUM > 0 guard, `0 > -6000` made
   // this report as over-billed forever, breaking the zero-alerts deploy gate.
   const f = await fixture({
