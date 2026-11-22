@@ -1,14 +1,20 @@
 /**
  * Cover-approval cascade (spec §6.5 step 2).
  *
- * Called from PUT /api/shifts/requests/:requestId (when the approved request
- * has `replaced_by_request_id` set — admin approving a teammate's claim via
- * the staffing dashboard). The one-click email route (adminCoverSwaps.js) was
- * removed on 2026-11-19.
+ * Called from every path that approves a teammate's cover claim (a pending
+ * shift_request whose `replaced_by_request_id` points at an approved original
+ * with `cover_requested_at` set): PUT /api/shifts/requests/:requestId (the
+ * staffing dashboard) and POST /api/shifts/:id/assign (the event page's shift
+ * drawer and the phone sheet), which finds the claim with findPendingCoverClaim.
+ * Auto-assign never seats a cover claim (autoAssign.js). Before 2026-11-22 the
+ * assign path approved a claim through its plain upsert, so the covered staffer
+ * stayed approved and payroll paid both.
  *
  * It runs the same 4-step cascade inside a transaction:
  *   1. Mark the original request `status='denied'`, `dropped_at=NOW()`,
- *      `drop_reason='covered_by_request:<newId>'`, `cover_requested_at=NULL`.
+ *      `drop_reason='covered_by_request:<newId>'`, `cover_requested_at=NULL`,
+ *      and suppress the covered staffer's pending shift messages (the day-
+ *      before reminder, the thank-you), as the drop routes do.
  *   2. Suppress remaining `cover_broadcast` scheduled_messages for the shift
  *      (other teammates can no longer claim — the slot is filled).
  *   3. Schedule shift-day messages for the NEW staffer
@@ -119,6 +125,18 @@ async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
     [`covered_by_request:${newRequestId}`, originalRequestId]
   );
 
+  // 1a. The covered staffer is off the shift: their pending reminder and
+  // thank-you rows would otherwise text them about a shift they no longer work.
+  await dbClient.query(
+    `UPDATE scheduled_messages
+        SET status = 'suppressed'
+      WHERE entity_type = 'shift'
+        AND entity_id = $1
+        AND recipient_id = $2
+        AND status = 'pending'`,
+    [shiftId, original.user_id]
+  );
+
   // 1b. Out-of-Area lock follows the SHIFT, not the person. The original is
   // dropped as of the UPDATE above, so release their hold (holder-scoped: a
   // lock belonging to a third staffer on this shift is untouched) and let the
@@ -225,4 +243,28 @@ async function approveAndCascade(pool, originalRequestId, newRequestId) {
   }
 }
 
-module.exports = { applyCoverCascade, approveAndCascade };
+/**
+ * The pending cover claim a staffer holds on a shift, if any: their pending
+ * request whose `replaced_by_request_id` points at an original that is still
+ * approved, undropped and asking for cover. Returns
+ * { claimRequestId, originalRequestId } or null. Used by the assign route so
+ * an admin seating the claimer runs the cascade instead of a plain approval.
+ *
+ * @param {{query: Function}} exec pool or client
+ */
+async function findPendingCoverClaim(exec, shiftId, userId) {
+  const { rows } = await exec.query(
+    `SELECT c.id AS claim_request_id, o.id AS original_request_id
+       FROM shift_requests c
+       JOIN shift_requests o ON o.id = c.replaced_by_request_id
+      WHERE c.shift_id = $1 AND c.user_id = $2 AND c.status = 'pending'
+        AND o.shift_id = c.shift_id AND o.status = 'approved'
+        AND o.dropped_at IS NULL AND o.cover_requested_at IS NOT NULL
+      LIMIT 1`,
+    [shiftId, userId]
+  );
+  if (!rows[0]) return null;
+  return { claimRequestId: rows[0].claim_request_id, originalRequestId: rows[0].original_request_id };
+}
+
+module.exports = { applyCoverCascade, approveAndCascade, findPendingCoverClaim };

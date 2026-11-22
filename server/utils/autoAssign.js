@@ -171,6 +171,15 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     FROM shift_requests sr
     JOIN contractor_profiles cp ON cp.user_id = sr.user_id
     WHERE sr.shift_id = $1 AND sr.status = 'pending'
+      -- A live cover claim (its original still approved, undropped and asking
+      -- for cover) is a swap an admin approves, since it denies the original;
+      -- auto-assign approving one left the covered staffer approved too, and
+      -- payroll paid both. replaced_by_request_id is never cleared, so a row
+      -- whose claim is over is an ordinary request again.
+      AND NOT EXISTS (
+        SELECT 1 FROM shift_requests o
+         WHERE o.id = sr.replaced_by_request_id AND o.status = 'approved'
+           AND o.dropped_at IS NULL AND o.cover_requested_at IS NOT NULL)
   `, [shiftId]);
   const pendingResult = {
     rows: pendingRaw.rows.filter((r) => {
@@ -342,7 +351,12 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   if (selected.length) {
     const claimResult = await pool.query(
       `UPDATE shift_requests SET status = 'approved', position = 'Bartender', beo_acknowledged_at = NULL
-        WHERE id = ANY($1) AND status = 'pending' RETURNING id`,
+        WHERE id = ANY($1) AND status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM shift_requests o
+             WHERE o.id = shift_requests.replaced_by_request_id AND o.status = 'approved'
+               AND o.dropped_at IS NULL AND o.cover_requested_at IS NOT NULL)
+        RETURNING id`,
       [selected.map(c => c.request_id)]
     );
     claimedIds = new Set(claimResult.rows.map(r => r.id));

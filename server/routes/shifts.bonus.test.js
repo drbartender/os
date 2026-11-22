@@ -440,6 +440,50 @@ test('cover swap via the staffing dashboard moves the lock from the covered staf
   assert.equal(Number(row.out_of_area_bonus_cents), 2000, 'amount untouched by the swap');
 });
 
+test('cover claim approved from the event page (POST /assign) runs the cover cascade, not a plain approval', async () => {
+  // Before 2026-11-22 the assign upsert approved the claimer and left the
+  // covered staffer approved and undropped, so payroll paid both.
+  const { shiftId, aReq, bReq } = await seedCoverSwap();
+  // The seed's approval may already have scheduled the covered staffer's
+  // reminder; make sure one is pending either way.
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('shift', $1, 'shift_reminder', 'staff', $2, 'sms', NOW() + INTERVAL '30 days', 'pending')
+     ON CONFLICT DO NOTHING`,
+    [shiftId, aId]
+  );
+
+  const r = await req('POST', `/api/shifts/${shiftId}/assign`, {
+    token: adminToken, body: { user_id: bId, position: 'Bartender' },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+
+  const { rows } = await pool.query(
+    'SELECT id, status, dropped_at, drop_reason, cover_requested_at FROM shift_requests WHERE id = ANY($1::int[])',
+    [[aReq, bReq]]
+  );
+  const a = rows.find((x) => x.id === aReq);
+  const b = rows.find((x) => x.id === bReq);
+  assert.equal(a.status, 'denied', 'the covered staffer is off the shift');
+  assert.ok(a.dropped_at, 'and dropped, so payroll accrues no line for them');
+  assert.equal(a.drop_reason, `covered_by_request:${bReq}`);
+  assert.equal(a.cover_requested_at, null);
+  assert.equal(b.status, 'approved', 'the claimer is on the shift');
+
+  const approved = await pool.query(
+    "SELECT COUNT(*)::int AS c FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL",
+    [shiftId]
+  );
+  assert.equal(approved.rows[0].c, 1, 'one approved staffer, not two');
+  assert.equal((await shiftRow(shiftId)).out_of_area_locked_user_id, bId, 'the bonus moved to the claimer');
+
+  const msg = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND recipient_id = $2 AND message_type = 'shift_reminder'",
+    [shiftId, aId]
+  );
+  assert.ok(msg.rows.length > 0 && msg.rows.every((m) => m.status === 'suppressed'), "the covered staffer's reminder is suppressed");
+});
+
 test('DELETE /shifts/requests/:id (the ShiftDrawer Remove button) releases the lock', async () => {
   const shiftId = await mkFutureShift({ bonusCents: 2000 });
   const aReq = await mkPending(shiftId, aId, ['Bartender']);

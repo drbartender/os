@@ -23,9 +23,7 @@
  */
 
 const express = require('express');
-const crypto = require('node:crypto');
 const Sentry = require('@sentry/node');
-const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { auth, requireOnboarded } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -513,13 +511,10 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
 //
 // A qualified teammate (different position-eligible staffer) claims an open
 // cover request. Creates a pending shift_request row tied to the original via
-// `replaced_by_request_id`, signs a 7-day swap-token JWT, and emails admins
-// an approve-link. Admin then either approves via the email link (POST to
-// /api/admin/cover-swaps/:swapToken — wires through the shared cascade) or
-// via the normal staffing dashboard (PUT /api/shifts/requests/:requestId,
-// where the same cascade fires inside the approval branch).
-
-const SWAP_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+// `replaced_by_request_id` and emails admins a link to the event page. An
+// admin approves the claim there (POST /api/shifts/:id/assign) or on the
+// staffing dashboard (PUT /api/shifts/requests/:requestId); both run the shared
+// cover cascade (coverApprovalCascade.js).
 
 router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(async (req, res) => {
   const shiftId = parseInt(req.params.shiftId, 10);
@@ -633,18 +628,6 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
     }
     const newRequestId = upsertRows[0].id;
 
-    // 4. Sign the swap-token JWT. jti adds a uniqueness anchor so a leaked
-    // token can be invalidated server-side later (out-of-scope for v1).
-    const swapToken = jwt.sign(
-      {
-        original_request_id: orig.original_request_id,
-        new_request_id: newRequestId,
-        jti: crypto.randomUUID(),
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: SWAP_TOKEN_TTL_SECONDS }
-    );
-
     await dbClient.query('COMMIT');
 
     swapResult = {
@@ -652,7 +635,6 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
       original_user_id: orig.original_user_id,
       new_request_id: newRequestId,
       shift_id: shiftId,
-      swap_token: swapToken,
       shift_context: {
         event_type_label: getEventTypeLabel({
           event_type: orig.shift_event_type,
@@ -672,10 +654,14 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
     dbClient.release();
   }
 
-  // Post-commit: email management with one-click approve link. Failure is
+  // Post-commit: email management with a link to the event page. Failure is
   // logged but NOT rolled back — the admin can still approve via the normal
   // staffing dashboard.
-  const approveUrl = `${ADMIN_URL}/admin/shifts/cover-swaps/${swapResult.swap_token}`;
+  // The event page approves the claim (its shift drawer runs the cover
+  // cascade), the same place the claim's push links to.
+  const approveUrl = swapResult.shift_context.proposal_id
+    ? `${ADMIN_URL}/events/${swapResult.shift_context.proposal_id}`
+    : `${ADMIN_URL}/staffing`;
   const sc = swapResult.shift_context;
   const subject = `Cover swap proposal: ${sc.event_type_label} on ${sc.event_date_long}`;
   const text = [
@@ -686,8 +672,7 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
     `Time: ${sc.start_time || 'TBD'}`,
     `Position: ${sc.position}`,
     ``,
-    `One-click approve: ${approveUrl}`,
-    `(Link expires in 7 days.)`,
+    `Approve the claim on the event page: ${approveUrl}`,
   ].join('\n');
   const html = `<p>A teammate claimed an open cover request. Approve the swap to confirm them on the shift.</p>
     <p><strong>Event:</strong> ${sc.event_type_label}${sc.client_name ? ' for ' + sc.client_name : ''}<br>
@@ -695,9 +680,8 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
     <strong>Time:</strong> ${sc.start_time || 'TBD'}<br>
     <strong>Position:</strong> ${sc.position}</p>
     <p style="text-align:center;margin:2rem 0;">
-      <a href="${approveUrl}" style="display:inline-block;padding:14px 32px;background:#3b2314;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Approve swap</a>
-    </p>
-    <p style="font-size:13px;color:#6b4226;">Link expires in 7 days.</p>`;
+      <a href="${approveUrl}" style="display:inline-block;padding:14px 32px;background:#3b2314;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Open the event to approve</a>
+    </p>`;
 
   try {
     // notifyAdminCategory fans across all admins subscribed to urgent_staffing;
@@ -726,7 +710,6 @@ router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(asy
     shift_id: swapResult.shift_id,
     new_request_id: swapResult.new_request_id,
     original_request_id: swapResult.original_request_id,
-    // We DON'T return swap_token to the staffer — it's an admin secret.
   });
 }));
 

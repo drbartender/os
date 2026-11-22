@@ -23,7 +23,7 @@ const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
-const { approveAndCascade } = require('../utils/coverApprovalCascade');
+const { approveAndCascade, findPendingCoverClaim } = require('../utils/coverApprovalCascade');
 const { parsePositionsNeeded } = require('../utils/positionsNeeded');
 const { canonicalizeRole } = require('../utils/staffingRoles');
 const { computeRemaining, classifyRequest } = require('../utils/staffingClassification');
@@ -267,6 +267,16 @@ async function assignShiftHandler(req, res) {
     [user_id]
   );
   if (!eligible.rows[0]) throw new NotFoundError('User not eligible for assignment.');
+
+  // A pending cover claim (the assignee claimed a teammate's cover request)
+  // runs the cover cascade first: it denies and drops the original, suppresses
+  // their reminders and moves the out-of-area lock. A plain upsert alone left
+  // the original approved, so payroll paid both staffers. The upsert below then
+  // sets the role the admin picked on the already-approved claim row.
+  const coverClaim = await findPendingCoverClaim(pool, req.params.id, user_id);
+  if (coverClaim) {
+    await approveAndCascade(pool, coverClaim.originalRequestId, coverClaim.claimRequestId);
+  }
 
   // Insert or update the shift request as approved.
   // BEO: clear any stale ack unconditionally — admin re-approving means a
