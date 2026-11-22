@@ -54,7 +54,8 @@ function renderEnvRefusal(env) {
 
 /** The names in REQUIRED_PROD_ENV that are unset or empty. The caller gates on production and exits. */
 function missingRequiredEnv(env) {
-  return REQUIRED_PROD_ENV.filter((name) => !env[name]);
+  // A value of only spaces is as missing as no value (same read as the secrets).
+  return REQUIRED_PROD_ENV.filter((name) => !String(env[name] || '').trim());
 }
 
 /** The names in BOOT_SECRETS that are unset or blank, in production only. */

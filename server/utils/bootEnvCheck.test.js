@@ -94,5 +94,7 @@ test('missingRequiredEnv names every unset or empty required production variable
   env.TWILIO_AUTH_TOKEN = '';
   delete env.R2_BUCKET_NAME;
   assert.deepEqual(missingRequiredEnv(env), ['TWILIO_AUTH_TOKEN', 'R2_BUCKET_NAME']);
+  env.DATABASE_URL = '   ';
+  assert.deepEqual(missingRequiredEnv(env), ['DATABASE_URL', 'TWILIO_AUTH_TOKEN', 'R2_BUCKET_NAME'], 'a value of only spaces is missing');
   assert.deepEqual(missingRequiredEnv({}), REQUIRED_PROD_ENV);
 });
