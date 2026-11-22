@@ -1,10 +1,28 @@
 ---
 spec: none. The findings come from the read-only hygiene audit of 2026-11-16 (rule drift, dead endpoints, contracts and swallowed errors, env parity), each re-checked in the code; the owner asked on 2026-11-19 for them to be done ("would like to get these things done"). The lane split and every design choice below are Claude's.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 2 (2026-11-19): the cover-swap-approve lane is superseded. Its review found that the one-click page reached /api/admin/cover-swaps, which skips the staffing permission and the claimer's confirmation, and that the approve paths most admins use (the event page, the phone sheet, auto-assign) approve a cover claim through the assign upsert without the cover cascade, so the covered staffer stays approved and payroll pays both. The email link fix moves into the new cover-claim-cascade lane, which fixes that root; the unused cover-swaps router moves into audit-dead-routes. The cover-swap-approve branch stays unmerged until its scrap is approved.
+revision: >
+  3 (2026-11-22). What merged, what is left and what waits on the owner; see status below. The
+  cover-swap-approve branch was scrapped on the owner's yes ("if its superseded then, yes"). Two lanes
+  join the map, audit-dead-routes-rest and audit-stale-comments, and the two machinery lanes built from
+  this window are recorded (stale-rule-imports, gate-smoke-reuse). Revision 2 (2026-11-19) said, in
+  short, that the cover-swap-approve lane is superseded because its review found the root in the
+  assign upsert, which the cover-claim-cascade lane now owns.
+status: >
+  Merged to main, not pushed (2026-11-22): stale-rule-imports 2a725572, audit-small-fixes c6ac13fe,
+  audit-env-guards 11b90ca8, audit-dead-routes 8df7ea03, the rule-file wording 07e496d0, two test
+  fixture fixes 567dbe9a and 77ce0d10. Not built, cover-claim-cascade, payroll-accrual-surface,
+  audit-dead-routes-rest, audit-stale-comments. Built and unreviewed, gate-smoke-reuse.
+beforeShip: >
+  audit-env-guards makes the server exit at boot on Render when NODE_ENV is not exactly production.
+  The owner confirms that value in Render before the ship that carries 11b90ca8; Claude cannot read
+  Render. The six boot secrets (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, RESEND_WEBHOOK_SECRET,
+  THUMBTACK_WEBHOOK_SECRET, CAL_WEBHOOK_SECRET, ENCRYPTION_KEY) only log and report to Sentry when
+  missing, so they are worth the same look and do not block. UNSUBSCRIBE_SECRET is optional.
 dropped: the client deposit literal (already fixed on the open audit-payments lane, commit 489cc1ea); the review skill's two-way proportion text (machinery change, left for its own decision).
 lanes:
   - id: audit-small-fixes
+    status: merged c6ac13fe
     scope: >
       Client calls made through the api instance still read err.response.data, which client/src/utils/api.js
       stopped providing (it rejects with { message, code, fieldErrors, status }). In CancelEventDialog.js the
@@ -29,6 +47,7 @@ lanes:
     laws: the refund decline reason may surface on this admin money route (the error-response invariant's one exception); no server route changes.
     acceptance: a test or a hand check shows the mismatch message and a server refund error reaching the toast; grep finds no err.response read in a file that imports the api instance; the marketing coverage test fails on main for the two types and passes on the lane.
   - id: audit-env-guards
+    status: merged 11b90ca8; see beforeShip
     scope: >
       Most security gates open on any NODE_ENV other than exactly production, and nothing checks it at boot.
       The server refuses to start when it runs on Render (RENDER or RENDER_EXTERNAL_URL set) with NODE_ENV not
@@ -53,7 +72,8 @@ lanes:
     lenses: tier A floor (auth and webhook paths); verify.
     laws: the boot refusal ships only after the owner confirms NODE_ENV=production in Render, since a wrong value there would turn this into an outage; no secret gains a fallback.
     acceptance: a test boots the guard with RENDER set and NODE_ENV unset and sees it refuse; a reset URL in a production-env test never contains localhost; an unsubscribe token signed with JWT_SECRET still verifies when UNSUBSCRIBE_SECRET is set.
-  - id: cover-swap-approve  (superseded by cover-claim-cascade, revision 2)
+  - id: cover-swap-approve
+    status: superseded by cover-claim-cascade (revision 2); the branch is scrapped
     scope: >
       The cover-swap email links to ADMIN_URL/admin/shifts/cover-swaps/<token>; client/vercel.json strips
       /admin and the admin app has no such route, so the link lands on the home page. The server routes exist
@@ -69,6 +89,10 @@ lanes:
     lenses: whatever the review skill computes (client, access-egress expected).
     acceptance: the page renders a swap from a minted token on the dev server and the approve button calls the POST; an expired or bad token shows a clear message.
   - id: audit-dead-routes
+    status: >
+      merged 8df7ea03. It also removed the unused cover-swaps router. Held back and moved to
+      audit-dead-routes-rest, six removals a review could not clear in the pass. Kept on purpose,
+      the marketing contact email-status PUT and cancel-or-unassign.
     scope: >
       Routes with no caller anywhere: the managers router (its PUT changes a user's email without
       verification), the seven routes marked deprecated that still send client email or SMS, the
@@ -92,7 +116,10 @@ lanes:
       the covered staffer's pending shift_reminder and staff_thank_you rows, as the drop and emergency-drop
       routes do. The claim email (server/routes/staffShiftActions.js) links to the event page, as the
       claim's push already does, and says to approve the claim there.
-    blockedBy: [audit-payouts-followup merged, since it rewrites shifts.approval.js and coverApprovalCascade.js]
+    status: >
+      not built. Unblocked, audit-payouts-followup merged as a70f3f18. Until it lands, a cover claim is
+      approved from the legacy staffing dashboard's Shifts tab, the one path that runs the cascade.
+    blockedBy: []
     lenses: tier A.
     acceptance: a test approves a cover claim through the assign route and through auto-assign and finds the original denied and dropped, one payout line after accrual, and the original's reminder rows suppressed; each fails on main.
   - id: payroll-accrual-surface
@@ -100,9 +127,68 @@ lanes:
       A failed payroll accrual is reported as success: proposals/lifecycle.js (mark completed), the tip
       assign route, balanceScheduler auto-complete. Each failure is recorded where payroll can see it and
       the period-process check refuses a completed event with no payout lines.
-    blockedBy: [audit-payouts-followup and audit-payments merged, since both rewrite these files]
+    status: not built; audit-payouts-followup merged, audit-payments is still an open lane
+    blockedBy: [audit-payments merged, since it rewrites these files]
     lenses: tier A.
+  - id: audit-dead-routes-rest
+    status: not built
+    scope: >
+      The removals audit-dead-routes held back, each with no caller found. The admin users list GET
+      (server/routes/admin/users.js ~line 32), the recent invoices GET (server/routes/invoices.js ~line
+      256), the payroll healthcheck (server/routes/admin/payroll.js ~line 22), resolveCocktailIds in
+      server/utils/shoppingListGen.js, and send-reminder and create-shift in
+      server/routes/proposals/actions.js.
+    blockedBy: []
+    lenses: whatever the review skill computes.
+    acceptance: grep finds no caller for any removed path before removal; the reached suites pass.
+  - id: audit-stale-comments
+    status: not built
+    scope: >
+      Comments the merged lanes left naming things that moved. No behavior changes, so the review is
+      the comment-only proof. server/routes/staffPortal/accountReads.js ~137 and accountReads.test.js
+      ~310 (the feed URL comes from API_URL in urls.js); the header of scripts/lib/mergeCheck.js ~101
+      (the hook and package.json arms of the stale rule); the header of server/utils/bootEnvCheck.js
+      (its first line and the "never fatal" sentence, since the required-env list now lives there and
+      is fatal); server/utils/inbox/constants.js ~66 (names the removed resend route);
+      server/routes/admin/users.js ~171 (names the removed admin/managers.js);
+      server/routes/shifts.bonus.test.js ~413; the tonightNull comment (~161) in
+      server/routes/shifts.visibility.endInstant.test.js, whose ended fixture can also fail on a
+      daylight-saving night; the leadSources comments that omit server/routes/proposals/public.js ~32.
+      Two rule files ride along and make the lane tier hinge (seams and access-egress read them),
+      .claude/agents/outcomes-providers.md ~49 (the required-env list is in
+      server/utils/bootEnvCheck.js, not server/index.js) and .claude/skills/review/SKILL.md ~140 (the
+      hook and package.json arms of the stale rule, as docs/dev.md now lists them).
+    blockedBy: []
+    lenses: seams and access-egress for the two rule files; the comment-only proof covers the rest.
+    acceptance: comment-only-proof passes on the source files; the two rule files match the code.
+  - id: stale-rule-imports
+    status: merged 2a725572
+    scope: >
+      Machinery. A sensitive path landing on main restales a lane's review only when it is related to
+      the lane (scripts/lib/staleRelated.js); lane:status uses the same rule. Before it, any sensitive
+      landing restaled every open review, which is what made parallel windows re-run reviews in a loop.
+  - id: gate-smoke-reuse
+    status: >
+      built in its worktree at 953783bb, never reviewed, not merged. Tier A. Open question for its
+      review, whether a smoke run in a review's environment may stand in for the gate's scrubbed one.
+    scope: >
+      Machinery. The ship gate skips the money smoke only when a passing stamped smoke under 24 hours
+      old covers the tree being shipped; --fresh-smoke forces a run.
 ---
 
 The rule-drift items (the money lens's dead trigger names, stale review-skill and dev-doc text, the codex
 status, the size-ratchet wording, the eventTypes path in the project rules) are a docs quick fix on main.
+
+Left over from this work and not in a lane (2026-11-22):
+
+- Two more machinery causes of slow reviews, both Claude defaults: finalize marks every earlier lens
+  report stale after any rebase or fix that touches a lane file, and the tier script puts a change of
+  comments or test text on a sensitive path at tier A.
+- Branches stale-rule-imports and audit-env-guards are still present. Each equals its squash, but main
+  has moved on their files since, so the merged-lane check does not pass and the delete waits for a yes.
+- The name scrub (43f36431, 91a35022, 28fbad84) covered the names known from the repo. A complete sweep
+  needs the production client list, which Claude cannot read. 44 tracked docs still hold UUID-shaped
+  strings that may be proposal link tokens.
+- For the owner's list, found while reviewing and not fixed: the email Conversations unread badge never
+  clears; server/utils/ccWrapUpEmailTemplate.js ~16 builds a link from PUBLIC_SITE_URL with no fallback;
+  missingRequiredEnv does not trim a whitespace-only value.
