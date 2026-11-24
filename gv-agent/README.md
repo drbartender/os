@@ -97,7 +97,7 @@ on every capture). The agent writes each of these files mode 600, and it refuses
 start (exit 1, with a log line naming the fix) while the profile dir carries any group
 or other permission bit.
 
-The whole profile is a credential for Dallas's personal Google account (Playwright
+The whole profile is a credential for the owner's personal Google account (Playwright
 stores the cookies under a fixed key, not the keyring). It stays mode 700, it stays OUT
 of restic (`~/.config/restic/excludes.txt`; a restore costs one re-login), and it is
 never copied anywhere.
@@ -188,7 +188,7 @@ env -u WAYLAND_DISPLAY -u DISPLAY -u XAUTHORITY -u GNOME_SETUP_DISPLAY -u XDG_SE
    notices name is printed, never the ids (none is fine for a thread we started).
 
 The two values come in by env and are never printed. Claude Code's auto-mode check
-refuses a real send from a Claude session, so any live send test is Dallas's to run.
+refuses a real send from a Claude session, so any live send test is the owner's to run.
 
 ## systemd
 

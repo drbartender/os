@@ -19,7 +19,13 @@ const SEL = {
   recipientInput: 'input[placeholder="Type a name or phone number"]',
   sendToCandidates: 'gv-contact-list div',
   removeChip: 'button[aria-label^="Remove"]',
-  messageBox: 'textarea[placeholder="Type a message"]',
+  // The message box, by its aria-label only: Google drops the placeholder
+  // attribute while the box holds text (seen 2026-11-24), so a placeholder
+  // match would lose the box right after the fill and leave the body in the
+  // composer. The label was "Type a message" on 2026-10-17 and is "Text
+  // message" now. A label this does not know fails at the wait, before
+  // anything is typed, so the post falls back.
+  messageBox: 'textarea[aria-label="Text message"], textarea[aria-label="Type a message"]',
   sendButton: 'button[aria-label="Send message"]',
   // Read-only (the trap above).
   callPanelInputs: '[role=region][aria-label="Call panel"] input, input[aria-label="Enter a name or number"], input[placeholder="Enter a name or number"]',
@@ -255,14 +261,21 @@ async function composeTo(page, phone) {
 // Fill the body in one go (never key by key: Enter sends in GV) and read back
 // everything fillCheck judges. Returns { ok: true } or { ok: false, reason }.
 async function fillAndCheck(page, body) {
-  const box = page.locator(SEL.messageBox).first();
-  const ready = await box.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+  // Exactly one rendered message box, or nothing is typed: a thread opened
+  // before the compose may leave its own composer in the page.
+  const shown = page.locator(SEL.messageBox).filter({ visible: true });
+  const ready = await shown.first().waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
     .then(() => true).catch(() => false);
   if (!ready) return { ok: false, reason: 'ui_error_before_send' };
+  if ((await shown.count()) !== 1) return { ok: false, reason: 'ui_error_before_send' };
+  const box = shown.first();
   await humanPause();
   await box.fill(body);
   await sleep(FILL_SETTLE_MS);
   const value = await box.inputValue();
+  // Still exactly one after the fill: a box that appeared since the count
+  // above would make the read and the Send button ambiguous.
+  if ((await shown.count()) !== 1) return { ok: false, reason: 'ui_error_before_send' };
   const callPanelValues = await page.locator(SEL.callPanelInputs).evaluateAll((els) => els.map((e) => e.value || ''));
   const frames = await readFrames(page);
   const send = page.locator(SEL.sendButton).filter({ visible: true });
@@ -279,9 +292,14 @@ async function clickSend(page) {
 // compares tokenCount with the same read taken right before the click.
 async function readVerify(page, token) {
   const messages = await readTokenMessages(page, token);
+  // The one rendered message box's value; none or several reads as null
+  // (unreadable), which can only lose a 'sent', never make one.
   const boxValue = await page.evaluate((sel) => {
-    const ta = document.querySelector(sel);
-    return ta ? ta.value : null;
+    const shown = [...document.querySelectorAll(sel)].filter((ta) => {
+      const r = ta.getBoundingClientRect();
+      return r.width > 4 && r.height > 4;
+    });
+    return shown.length === 1 ? shown[0].value : null;
   }, SEL.messageBox);
   return { tokenCount: messages.length, boxEmpty: boxValue === null ? null : boxValue === '' };
 }
@@ -289,7 +307,7 @@ async function readVerify(page, token) {
 // Empty the message box after a check that did not lead to a click, so no
 // filled draft is left behind. Returns what is left in it (null: no box).
 async function clearComposer(page) {
-  const box = page.locator(SEL.messageBox).first();
+  const box = page.locator(SEL.messageBox).filter({ visible: true }).first();
   if (!(await box.isVisible().catch(() => false))) return null;
   await box.fill('');
   return box.inputValue();

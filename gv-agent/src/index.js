@@ -144,7 +144,11 @@ async function dryCompose(page) {
     if (!checked.ok) await captureDiag(page, 'dry-run', 'fill');
   } finally {
     const left = await flow.clearComposer(page).catch(() => null);
-    log(`[dry-run] compose: ${left === '' ? 'message box cleared' : 'message box NOT cleared; empty it by hand'}`);
+    // null: no message box was found, or clearing it threw.
+    const cleared = left === '' ? 'message box cleared'
+      : left === null ? 'the message box could not be found or cleared; look at the compose view by hand'
+        : 'message box NOT cleared; empty it by hand';
+    log(`[dry-run] compose: ${cleared}`);
   }
   if (!checked.ok) {
     log(`[dry-run] compose: the fill check failed (${checked.reason})`);
