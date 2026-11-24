@@ -168,7 +168,7 @@ One daily cleanup job, behind its own `RUN_*` flag like the other schedulers, de
 
 ### 7.5 Address check
 
-In production the MCP endpoint and the token endpoint refuse callers outside Anthropic's published range. The range is an environment variable with the published value as its default, so a change on Anthropic's side is a config edit. This is a second layer only: every Claude user's traffic comes from the same range. The lane confirms on Render that `req.ip` is the real caller under `trust proxy` 1 before the check is trusted; a wrong reading would refuse every call. The authorize endpoint and the consent page are reached by the owner's own browser and are not range-checked.
+In production the MCP endpoint and the token endpoint refuse callers outside Anthropic's published range. The range is an environment variable with the published value as its default, so a change on Anthropic's side is a config edit. This is a second layer only: every Claude user's traffic comes from the same range. Measured on Render at switch-on (2026-11-24), `req.ip` under `trust proxy` 1 is the Cloudflare edge in front of Render, not the caller, so the check reads `CF-Connecting-IP`, which the edge sets to the real caller and refuses from a caller, and refuses in production when that header is missing; the call log and the connector's address limiters use the same address, an IPv6 caller counted by its /64 (merged in `merge(lane connector-caller-address)`). The authorize endpoint and the consent page are reached by the owner's own browser and are not range-checked.
 
 ### 7.6 Guards against planted commands
 
