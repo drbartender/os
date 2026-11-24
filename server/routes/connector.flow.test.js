@@ -356,6 +356,22 @@ test('outside the range in production, /mcp and the token route refuse and log w
       assert.match(row.caller_address, /127\.0\.0\.1$/);
     }
     assert.deepEqual(rows.rows.map((r) => r.method), [null, 'oauth/token']);
+    // As prod delivers Claude: req.ip is the Cloudflare edge (here 127.0.0.1)
+    // and the caller is in CF-Connecting-IP, which the check reads and the log records.
+    const viaEdge = await call('POST', '/mcp', {
+      headers: { ...MCP_HEADERS, Authorization: `Bearer ${access}`, 'CF-Connecting-IP': '160.79.104.20' }, body: LIST_TOOLS,
+    });
+    assert.equal(viaEdge.status, 200, 'a caller inside the range behind the edge is served');
+    let served;
+    for (let i = 0; i < 50; i++) {
+      served = await pool.query(
+        "SELECT caller_address FROM connector_calls WHERE id > $1 AND method = 'tools/list' AND outcome = 'ok' ORDER BY id DESC LIMIT 1",
+        [firstRefusalId]
+      );
+      if (served.rows.length) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(served.rows[0].caller_address, '160.79.104.20', 'the log records the caller, not the edge');
     // The owner's off switch: an explicitly empty range lets the same call through.
     process.env.CLAUDE_CONNECTOR_ALLOWED_CIDRS = '';
     const open = await call('POST', '/mcp', { headers: { ...MCP_HEADERS, Authorization: `Bearer ${access}` }, body: LIST_TOOLS });
@@ -473,11 +489,19 @@ test('a batch body gets 400 before the SDK, and a JSON-RPC error is logged as an
   assert.equal(unknown.status, 200, 'the SDK answers a JSON-RPC error at HTTP 200');
   assert.ok(unknown.body.error, 'with an error body');
   // The row is written after the response is sent, so wait for it briefly.
+  // Claude's client probes server/discover before it initializes; the SDK
+  // answers method-not-found and no row is written for it. The tools/list
+  // after it marks when every row of this test is in.
+  const discover = await call('POST', '/mcp', { headers, body: { jsonrpc: '2.0', id: 8, method: 'server/discover', params: {} } });
+  assert.ok(discover.body.error, 'still answered, as method-not-found');
+  await call('POST', '/mcp', { headers, body: { ...LIST_TOOLS, id: 9 } });
   let rows;
   for (let i = 0; i < 50; i++) {
     rows = await pool.query('SELECT method, outcome FROM connector_calls WHERE grant_id = $1 ORDER BY id', [grantId]);
-    if (rows.rows.length >= 2) break;
+    if (rows.rows.length >= 3) break;
     await new Promise((r) => setTimeout(r, 20));
   }
-  assert.deepEqual(rows.rows, [{ method: 'batch', outcome: 'error' }, { method: 'no/such-method', outcome: 'error' }]);
+  assert.deepEqual(rows.rows, [
+    { method: 'batch', outcome: 'error' }, { method: 'no/such-method', outcome: 'error' }, { method: 'tools/list', outcome: 'ok' },
+  ], 'no row for the server/discover probe');
 });

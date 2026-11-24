@@ -3,6 +3,7 @@
 // Claude connector limiters, etc.)
 
 const rateLimit = require('express-rate-limit');
+const { callerBucket } = require('../utils/connector/addressCheck');
 
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -360,10 +361,15 @@ const menuProofAnswerLimiter = rateLimit({
 // suites' many calls from one address do not trip them; their own suite flips
 // the variable to prove each one.
 const skipInTest = () => process.env.NODE_ENV === 'test';
+// Keyed by the connector's caller address (CF-Connecting-IP from the edge,
+// server/utils/connector/addressCheck.js), not req.ip, which in production is
+// the Cloudflare edge and would pool every caller on one edge into one bucket;
+// an IPv6 caller is counted by its /64 (addressBucket).
+const connectorAddressKey = (req) => callerBucket(req);
 const connectorGrantLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
-  keyGenerator: (req) => (req.connector && req.connector.grantId ? `connector-grant-${req.connector.grantId}` : req.ip),
+  keyGenerator: (req) => (req.connector && req.connector.grantId ? `connector-grant-${req.connector.grantId}` : connectorAddressKey(req)),
   message: { error: 'Too many requests. Please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -380,6 +386,7 @@ const connectorGrantLimiter = rateLimit({
 // its own refresh (tools lane, 2026-11-19).
 const connectorAddressCeilingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
+  keyGenerator: connectorAddressKey,
   max: 300,
   skipSuccessfulRequests: true,
   message: { error: 'Too many requests. Please try again later.' },
@@ -389,6 +396,7 @@ const connectorAddressCeilingLimiter = rateLimit({
 });
 const connectorMcpAddressLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
+  keyGenerator: connectorAddressKey,
   max: 60,
   message: { error: 'Too many requests. Please try again later.' },
   standardHeaders: true,
@@ -397,6 +405,7 @@ const connectorMcpAddressLimiter = rateLimit({
 });
 const connectorAuthorizeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
+  keyGenerator: connectorAddressKey,
   max: 30,
   message: { error: 'Too many sign-in attempts. Please try again later.' },
   standardHeaders: true,
@@ -405,6 +414,7 @@ const connectorAuthorizeLimiter = rateLimit({
 });
 const connectorTokenLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
+  keyGenerator: connectorAddressKey,
   max: 60,
   message: { error: 'Too many token requests. Please try again later.' },
   standardHeaders: true,

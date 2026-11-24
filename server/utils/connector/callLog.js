@@ -7,7 +7,7 @@
 // No search text and no results are ever stored: the tool name, the record ids
 // asked for, the client a detail tool read (the bulk-read tripwire counts
 // different clients per grant per rolling hour on it), the result count, the
-// duration, the outcome and the caller's address as req.ip reads it.
+// duration, the outcome and the caller's address as callerAddress (addressCheck.js) reads it.
 //
 // Writing a row never fails the call it records: a failed insert goes to
 // Sentry (the outcome and the error descriptor only) and the call goes on.
@@ -21,6 +21,7 @@
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
+const { addressBucket } = require('./addressCheck');
 
 const OUTCOMES = Object.freeze([
   'ok', 'not_found', 'error', 'withheld', 'refused_token', 'refused_address', 'refused_tripwire',
@@ -81,7 +82,9 @@ async function recordCall(row, db = pool) {
 }
 
 // Refusals are logged at most once per address, outcome and route per window, so a
-// flood from one address leaves a few rows, never one per request. In memory
+// flood from one address leaves a few rows, never one per request. An IPv6
+// address counts as its /64 (addressCheck.addressBucket), so a host rotating
+// through its /64 is one address here too. In memory
 // per process (the bound is per instance), pruned as it grows.
 const REFUSAL_WINDOW_MS = 10 * 60 * 1000;
 const REFUSAL_KEYS_MAX = 5000;
@@ -105,7 +108,7 @@ function __resetRefusalWindow() { lastRefusal.clear(); }
  * null when dropped or the insert failed.
  */
 async function recordRefusal({ callerAddress, method = null, outcome }, { now = Date.now() } = {}) {
-  if (!refusalDue(`${outcome}|${method}|${callerAddress}`, now)) return null;
+  if (!refusalDue(`${outcome}|${method}|${addressBucket(callerAddress)}`, now)) return null;
   return recordCall({ callerAddress, method, outcome });
 }
 

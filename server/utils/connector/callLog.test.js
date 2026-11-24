@@ -67,6 +67,21 @@ test('a refusal carries no grant and the caller\'s address; a served call needs 
   assert.equal(await callLog.recordCall({ outcome: 'ok' }), null, 'the table refuses an ok row with no grant');
 });
 
+test('a refusal is written once per window per IPv6 /64, not once per address in it', async () => {
+  callLog.__resetRefusalWindow();
+  const first = await callLog.recordRefusal({ callerAddress: '2001:db8:7:7::1', outcome: 'refused_address' });
+  assert.ok(first, 'the first refusal in the /64 is written');
+  callIds.push(first);
+  assert.equal(await callLog.recordRefusal({ callerAddress: '2001:db8:7:7::2', outcome: 'refused_address' }), null,
+    'another address in the same /64 is dropped');
+  const other = await callLog.recordRefusal({ callerAddress: '2001:db8:7:8::1', outcome: 'refused_address' });
+  assert.ok(other, 'another /64 is written');
+  callIds.push(other);
+  const row = (await pool.query('SELECT caller_address FROM connector_calls WHERE id = $1', [first])).rows[0];
+  assert.equal(row.caller_address, '2001:db8:7:7::1', 'the logged address stays whole');
+  callLog.__resetRefusalWindow();
+});
+
 test('a withheld piece is written once, and only the first call is told to email', async () => {
   const ref = `thread-msg-${NONCE}`;
   const firsts = await Promise.all([1, 2, 3].map(() => callLog.recordWithheldOnce({

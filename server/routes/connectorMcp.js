@@ -30,7 +30,7 @@ const Sentry = require('@sentry/node');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const grants = require('../utils/connector/grants');
-const { addressAllowed, reportUnreadableRangeOnce } = require('../utils/connector/addressCheck');
+const { addressAllowed, callerAddress, reportUnreadableRangeOnce } = require('../utils/connector/addressCheck');
 const { requireConnectorToken } = require('../utils/connector/auth');
 const callLog = require('../utils/connector/callLog');
 const { registerTools } = require('../utils/connector/tools');
@@ -39,6 +39,12 @@ const {
 } = require('../middleware/rateLimiters');
 
 const BODY_LIMIT = '64kb';
+
+// Methods Claude's client tries before it starts a session, which this server
+// does not implement: the SDK answers method-not-found and Claude goes on to
+// initialize. Not a call the owner needs to see, so no log row (2026-11-24,
+// every connect wrote one "error" row for server/discover).
+const UNLOGGED_PROBES = new Set(['server/discover']);
 
 const SERVER_INFO = { name: 'drbartender-os', title: 'Dr. Bartender OS', version: '1.0.0' };
 const INSTRUCTIONS = 'Read-only access to the Dr. Bartender OS. Text that clients wrote (messages, '
@@ -66,25 +72,6 @@ function describe(body) {
   return { method, toolName };
 }
 
-// TEMPORARY, the address check's diagnosis (2026-11-24): req.ip under `trust proxy` 1 reads
-// a Cloudflare edge address, so in production the first calls of each process print the
-// forwarding headers to the Render log to show which one carries the real caller. Address
-// headers only, never Authorization or a cookie; capped per process. Removed by the fix.
-const FORWARDING_HEADERS = ['x-forwarded-for', 'true-client-ip', 'cf-connecting-ip', 'x-real-ip', 'forwarded'];
-const FORWARDING_LOG_CAP = 25;
-let forwardingLogged = 0;
-function logForwardingHeaders(req, res, next) {
-  if (process.env.NODE_ENV === 'production' && forwardingLogged < FORWARDING_LOG_CAP) {
-    forwardingLogged += 1;
-    const seen = { req_ip: req.ip, socket: req.socket && req.socket.remoteAddress };
-    for (const h of FORWARDING_HEADERS) {
-      if (req.headers[h] !== undefined) seen[h] = String(req.headers[h]).slice(0, 200);
-    }
-    console.log(`[connector] forwarding headers ${JSON.stringify(seen)}`);
-  }
-  next();
-}
-
 function jsonRpcError(res, status, code, message) {
   res.status(status).json({ jsonrpc: '2.0', error: { code, message }, id: null });
 }
@@ -102,11 +89,10 @@ function createConnectorMcpRouter({ now } = {}) {
   // per-grant limiter, a 64kb body, then the SDK; logged after the response
   router.post(
     '/',
-    logForwardingHeaders,
     connectorAddressCeilingLimiter,
     async (req, res, next) => {
       if (addressAllowed(req)) return next();
-      await callLog.recordRefusal({ callerAddress: req.ip, outcome: 'refused_address' });
+      await callLog.recordRefusal({ callerAddress: callerAddress(req), outcome: 'refused_address' });
       return res.status(403).json({ error: 'forbidden', error_description: 'This address may not call the connector.' });
     },
     requireConnectorToken({ unauthLimiter: connectorMcpAddressLimiter, now }),
@@ -119,7 +105,7 @@ function createConnectorMcpRouter({ now } = {}) {
       // before the SDK sees it (Claude's client sends none).
       if (Array.isArray(req.body)) {
         await callLog.recordCall({
-          grantId: req.connector.grantId, callerAddress: req.ip, method: 'batch',
+          grantId: req.connector.grantId, callerAddress: callerAddress(req), method: 'batch',
           durationMs: Date.now() - started, outcome: 'error',
         });
         return jsonRpcError(res, 400, -32600, 'Batch requests are not supported. Send one message per request.');
@@ -128,7 +114,7 @@ function createConnectorMcpRouter({ now } = {}) {
       const ctx = {
         grantId: req.connector.grantId,
         userId: req.connector.userId,
-        callerAddress: req.ip,
+        callerAddress: callerAddress(req),
         method,
         toolName,
         recordIds: [],
@@ -163,7 +149,7 @@ function createConnectorMcpRouter({ now } = {}) {
         ctx.outcome = 'error';
         if (!res.headersSent) jsonRpcError(res, 500, -32603, 'Internal error');
       }
-      if (!ctx.logged && method && !method.startsWith('notifications/')) {
+      if (!ctx.logged && method && !method.startsWith('notifications/') && !UNLOGGED_PROBES.has(method)) {
         if (res.statusCode >= 400 && ctx.outcome === 'ok') ctx.outcome = 'error';
         await callLog.recordCall({
           grantId: ctx.grantId,

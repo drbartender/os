@@ -32,7 +32,7 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const grants = require('../utils/connector/grants');
 const tokens = require('../utils/connector/tokens');
-const { addressAllowed } = require('../utils/connector/addressCheck');
+const { addressAllowed, callerAddress } = require('../utils/connector/addressCheck');
 const callLog = require('../utils/connector/callLog');
 const {
   connectorAddressCeilingLimiter, connectorAuthorizeLimiter, connectorTokenLimiter,
@@ -136,7 +136,7 @@ function createConnectorOauthRouter({ now } = {}) {
         codeChallenge: challenge,
         state: state || null,
         resource,
-        callerAddress: req.ip,
+        callerAddress: callerAddress(req),
         userAgent: req.get('user-agent'),
       }, clock());
       return res.set('Cache-Control', 'no-store').redirect(302, grants.consentUrl(id));
@@ -152,7 +152,7 @@ function createConnectorOauthRouter({ now } = {}) {
     connectorAddressCeilingLimiter,
     async (req, res, next) => {
       if (addressAllowed(req)) return next();
-      await callLog.recordRefusal({ callerAddress: req.ip, method: 'oauth/token', outcome: 'refused_address' });
+      await callLog.recordRefusal({ callerAddress: callerAddress(req), method: 'oauth/token', outcome: 'refused_address' });
       return res.status(403).json({ error: 'access_denied', error_description: 'This address may not call the token endpoint.' });
     },
     connectorTokenLimiter,

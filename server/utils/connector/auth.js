@@ -18,6 +18,7 @@ const { pool } = require('../../db');
 const grants = require('./grants');
 const tokens = require('./tokens');
 const callLog = require('./callLog');
+const { callerAddress } = require('./addressCheck');
 
 const STATE_REASON = {
   revoked: 'grant_revoked',
@@ -113,7 +114,7 @@ function requireConnectorToken({ unauthLimiter, now } = {}) {
     // writes nothing. Under it, the refusal is logged (once per address per
     // window, callLog.recordRefusal) and answered 401.
     const refuse = async () => {
-      await callLog.recordRefusal({ callerAddress: req.ip, outcome: 'refused_token' });
+      await callLog.recordRefusal({ callerAddress: callerAddress(req), outcome: 'refused_token' });
       sendUnauthorized(res, Boolean(raw));
     };
     if (unauthLimiter) return unauthLimiter(req, res, () => { refuse().catch(next); });

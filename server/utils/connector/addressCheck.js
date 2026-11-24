@@ -12,10 +12,15 @@
 // refused (plan, owner steps). Enforced only when NODE_ENV is production, so a
 // dev server and the test gate never need the range.
 //
-// The address is req.ip as Express reads it under `trust proxy` 1
-// (server/index.js), the same value the call log records, which is what the
-// owner checks after switching the connector on. A malformed range fails
-// CLOSED: every caller is refused until the variable is fixed.
+// The address is callerAddress(req), the same value the call log and the
+// connector's address limiters use, which is what the owner checks after
+// switching the connector on. Every production request reaches the OS through
+// Render's Cloudflare edge, which sets CF-Connecting-IP to the real caller and
+// refuses a request that brings its own; req.ip under `trust proxy` 1
+// (server/index.js) is that edge, not the caller (measured on prod 2026-11-24:
+// X-Forwarded-For reads "<anything sent>, <caller>, <edge>"). In production the
+// check refuses a call with no readable CF-Connecting-IP. A malformed range
+// fails CLOSED: every caller is refused until the variable is fixed.
 
 const net = require('node:net');
 const Sentry = require('@sentry/node');
@@ -69,11 +74,57 @@ function isAllowedAddress(ip, raw = configuredRanges()) {
   return false;
 }
 
+// The caller's address from the Cloudflare edge's CF-Connecting-IP, or null
+// when the header is absent or not an IP address.
+function edgeCallerAddress(req) {
+  const raw = req && req.headers ? req.headers['cf-connecting-ip'] : undefined;
+  if (typeof raw !== 'string') return null;
+  const addr = normalize(raw);
+  return net.isIP(addr) ? addr : null;
+}
+
+// The address the connector records and limits by: the edge's caller address,
+// else req.ip (a dev server or a test, where no edge sits in front).
+function callerAddress(req) {
+  return edgeCallerAddress(req) || (req && req.ip) || null;
+}
+
+// The bucket an address is counted in by the connector's limiters and the
+// refusal log's once-per-window rule: an IPv4 address as itself, an IPv6
+// address by its /64, since one IPv6 host can send from any address in its
+// /64 and would otherwise get a fresh bucket per request. The logged address
+// stays whole; only the counting is grouped.
+function addressBucket(addr) {
+  if (typeof addr !== 'string') return addr;
+  const plain = normalize(addr.split('%')[0]);
+  if (net.isIP(plain) !== 6) return addr;
+  let a = plain.toLowerCase();
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(a);
+  if (dotted) {
+    const [b0, b1, b2, b3] = dotted.slice(2).map(Number);
+    a = `${dotted[1]}${((b0 << 8) | b1).toString(16)}:${((b2 << 8) | b3).toString(16)}`;
+  }
+  const halves = a.split('::');
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  const fill = halves.length > 1 ? Array(8 - head.length - tail.length).fill('0') : [];
+  const groups = [...head, ...fill, ...tail];
+  return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
+}
+
+// The limiter key for a request: its caller address's bucket.
+function callerBucket(req) {
+  return addressBucket(callerAddress(req));
+}
+
 // Whether this request may proceed: true outside production or with the check
-// switched off, else whether req.ip is inside the range.
+// switched off, else whether the edge's caller address is inside the range. No
+// readable CF-Connecting-IP in production means the request did not come
+// through the edge as measured, so it is refused (fail closed).
 function addressAllowed(req) {
   if (!addressCheckEnforced()) return true;
-  return isAllowedAddress(req.ip);
+  const addr = edgeCallerAddress(req);
+  return addr !== null && isAllowedAddress(addr);
 }
 
 // The check's state for the settings block: 'unreadable' when the range does
@@ -111,4 +162,7 @@ module.exports = {
   addressCheckEnforced,
   isAllowedAddress,
   addressAllowed,
+  callerAddress,
+  addressBucket,
+  callerBucket,
 };

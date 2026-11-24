@@ -177,8 +177,28 @@ for (const [route, max, envelope, passStatus] of [
       const over = await hit(route);
       assert.equal(over.status, 429, `request ${max + 1} trips it`);
       assert.deepEqual(JSON.parse(over.body), envelope);
+      // In production every caller arrives from a Cloudflare edge address, so
+      // the bucket is the edge's CF-Connecting-IP caller, not req.ip: another
+      // caller through the same edge (here the same 127.0.0.1) has its own.
+      assert.equal((await hit(route, { 'cf-connecting-ip': '160.79.104.30' })).status, passStatus,
+        'a different caller behind the same edge address is not limited by this one');
       process.env.NODE_ENV = 'test';
       assert.equal((await hit(route)).status, passStatus, 'NODE_ENV=test skips it at request time');
     });
   });
 }
+
+// One IPv6 host can send from any address in its /64; the connector's address
+// limiters count the /64, so rotating within it does not reset the bucket.
+test('connector address limiters count an IPv6 caller by its /64', async () => {
+  await withLimitersLive(async () => {
+    for (let i = 0; i < 60; i++) {
+      const r = await hit('/connector-mcp', { 'cf-connecting-ip': `2001:db8:1:2::${(i + 1).toString(16)}` });
+      assert.equal(r.status, 200, `address ${i + 1} of 60 in one /64 should pass, got ${r.status}`);
+    }
+    assert.equal((await hit('/connector-mcp', { 'cf-connecting-ip': '2001:db8:1:2:ffff::1' })).status, 429,
+      'a new address in the same /64 is the same bucket');
+    assert.equal((await hit('/connector-mcp', { 'cf-connecting-ip': '2001:db8:1:3::1' })).status, 200,
+      'the next /64 has its own');
+  });
+});
