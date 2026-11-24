@@ -66,6 +66,25 @@ function describe(body) {
   return { method, toolName };
 }
 
+// TEMPORARY, the address check's diagnosis (2026-11-24): req.ip under `trust proxy` 1 reads
+// a Cloudflare edge address, so in production the first calls of each process print the
+// forwarding headers to the Render log to show which one carries the real caller. Address
+// headers only, never Authorization or a cookie; capped per process. Removed by the fix.
+const FORWARDING_HEADERS = ['x-forwarded-for', 'true-client-ip', 'cf-connecting-ip', 'x-real-ip', 'forwarded'];
+const FORWARDING_LOG_CAP = 25;
+let forwardingLogged = 0;
+function logForwardingHeaders(req, res, next) {
+  if (process.env.NODE_ENV === 'production' && forwardingLogged < FORWARDING_LOG_CAP) {
+    forwardingLogged += 1;
+    const seen = { req_ip: req.ip, socket: req.socket && req.socket.remoteAddress };
+    for (const h of FORWARDING_HEADERS) {
+      if (req.headers[h] !== undefined) seen[h] = String(req.headers[h]).slice(0, 200);
+    }
+    console.log(`[connector] forwarding headers ${JSON.stringify(seen)}`);
+  }
+  next();
+}
+
 function jsonRpcError(res, status, code, message) {
   res.status(status).json({ jsonrpc: '2.0', error: { code, message }, id: null });
 }
@@ -83,6 +102,7 @@ function createConnectorMcpRouter({ now } = {}) {
   // per-grant limiter, a 64kb body, then the SDK; logged after the response
   router.post(
     '/',
+    logForwardingHeaders,
     connectorAddressCeilingLimiter,
     async (req, res, next) => {
       if (addressAllowed(req)) return next();
