@@ -8,6 +8,14 @@
 
 This folder is the record: `README.md` (this file), `findings-register.md` (every finding, where it went, what happened to it, the commits), `reports/<domain>.md` (the five audit reports as written) and `fixes/<domain>-fixes.md` (the five fixer reports with their rounds, test evidence, reverts and residuals).
 
+## The e-signature lane on the dev box (2026-11-22 to 11-24)
+
+Replayed onto main `ef34971` by cherry-pick (conflicts only in `server/routes/agreement.js`, where main's dead-routes lane had deleted `GET /api/agreement/download` as callerless and this lane's ESIG-04 makes it the staff Documents download, so the route is back; and `server/db/schema.sql`, both blocks kept), then reviewed by money, concurrency, lifecycle, access-egress, seams, client, schema-data, outcomes-providers, verify and Gemini: one pass and two fix re-passes, about 25 findings fixed (`f4313be`, `2210dba`). The main ones: a terms-moving edit now reads the row's live intents from Stripe before it voids a signature (refused while a debit is landing, live intents cancelled first, fail closed), so no paid booking is left unsigned; a booking refunded in full is voided without a status move; the signed record names the agreement by its revised date and reads "Total as signed"; the staff Download opens inside the tap; the staff portal W-9 replace records its certification event; `agreement_signatures` is seeded once from every existing signature (23 on prod). All 507 reached suites pass; the money smoke passed at the ship gate.
+
+Split to a follow-up lane by the review bound (raised after the last re-pass): a void on a refunded booking clears `accepted_at` though the row stays accepted, so the Money Board drops it until the boot backfill re-dates it to the send date; the fix is to clear `accepted_at` only when the void moves the status to `sent`.
+
+Deferred (rare races and small gaps): the sign-time email skipped whenever a payment session is pending (pre-existing); no freshness check stopping an editor opened before a sign from saving over it; no terms fingerprint asserted at sign; an edit that rolls back after cancelling intents records no cancel; the signed record's total read from the client-sent `acknowledged_total`; two first staff signs racing the unique insert; overlapping re-sign key writes; the restore route's legal-hold guard; the 14-day backstop's SQL exercised only by stubs.
+
 ## Environment limits that shape what "verified" means here
 
 The audit ran in a cloud container with no database, no `.env`, no provider credentials and a client `node_modules` installed without touching the lockfile. So:
@@ -25,7 +33,7 @@ The audit ran in a cloud container with no database, no `.env`, no provider cred
 | `audit-payouts` | payouts | POUT-01..03, 05, 07..12, AUTH-10 | 20 | full pass, two re-passes, a confirmation read; the cross-period accrual rule narrowed after the first re-pass; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-payouts-rebased` (use that one); ready for dev-box review |
 | `audit-pricing` | pricing | PRC-02, 04, 05, 06 | 6 | the four fixes passed every pass; the comp fix split out | pushed, ready for dev-box review |
 | `audit-pricing-comp` | pricing (split) | PRC-01 (the extras-invoice comp), on top of the six commits above | 13 | two reachable money defects still open after the second re-pass | pushed for the owner's decision; do not merge as is |
-| `audit-esign` | e-signatures | ESIG-01, 02, 04..14, AUTH-08, AUTH-09 | 27 (three are reverts of round-3 changes the confirmation read refuted; one added 2026-11-11 on the owner's decision) | full pass, two re-passes, a confirmation read; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-esign-rebased` (use that one); ready for dev-box review |
+| `audit-esign` | e-signatures | ESIG-01, 02, 04..14, AUTH-08, AUTH-09 | 27 (three are reverts of round-3 changes the confirmation read refuted; one added 2026-11-11 on the owner's decision) | full pass, two re-passes, a confirmation read; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-esign-rebased`; replayed onto main `ef34971` and reviewed on the dev box 2026-11-22 to 11-24 (below); shipped `64e95ab` 2026-11-24 |
 | `audit-payments` | payments | PAY-01..09, PRC-03, ESIG-03, POUT-06 | 23 | full pass, two re-passes, a deciding read; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-payments-rebased` (use that one); ready for dev-box review |
 | `audit-docs` | this folder | docs only | docs only | none needed | pushed |
 
