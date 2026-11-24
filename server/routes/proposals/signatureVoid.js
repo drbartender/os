@@ -208,8 +208,13 @@ async function voidClientSignature(db, { proposalId, row, actorId, reason, reset
        client_signed_snapshot = NULL,
        -- The sign stamps accepted_at and client_signed_at in one statement, so
        -- an equal pair is the sign's own stamp and goes with the signature; an
-       -- admin's earlier acceptance stamp (PATCH /:id/status) stays.
-       accepted_at = CASE WHEN accepted_at = client_signed_at THEN NULL ELSE accepted_at END,
+       -- admin's earlier acceptance stamp (PATCH /:id/status) stays. It goes
+       -- only when the row ends up short of 'accepted' (this UPDATE sends it
+       -- to 'sent', or the restore set a pre-acceptance status first): a row
+       -- that stays 'accepted' (a booking refunded in full, voided with no
+       -- status move) keeps the date the Money Board counts it by.
+       accepted_at = CASE WHEN accepted_at = client_signed_at AND (status <> 'accepted' OR $2::boolean)
+                          THEN NULL ELSE accepted_at END,
        -- Every SET reads the row as it was, so accepted_at = client_signed_at
        -- here is the sign's own stamp: only that acceptance goes back to 'sent'.
        status = CASE WHEN $2::boolean AND (status IN ('viewed', 'modified')

@@ -55,6 +55,7 @@ after(async () => {
     await pool.query('DELETE FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = $1)', [pid]);
     await pool.query('DELETE FROM invoices WHERE proposal_id = $1', [pid]);
     await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [pid]);
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [pid]);
     await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [pid]);
     await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [pid]);
     await pool.query('DELETE FROM proposals WHERE id = $1', [pid]);
@@ -160,4 +161,25 @@ test('a paid row keeps its signature, and a row with a bank debit still settling
   assert.equal(Number(r.client_signed_total), 1600);
   assert.equal(r.status, 'accepted');
   assert.equal((await voidedRows(settling)).length, 0);
+});
+
+// A booking paid once and refunded in full (status accepted, amount_paid 0, a
+// succeeded payment on record) is voided without a status move, and keeps its
+// acceptance date: the Money Board counts accepted_at, and clearing it would
+// drop the booking until the boot backfill re-dated it to the send date.
+test('a refunded booking whose line comes off is voided, stays accepted and keeps its acceptance date', async () => {
+  const pid = await seedSigned();
+  await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status) VALUES ($1, 'deposit', 10000, 'succeeded')`,
+    [pid]
+  );
+  const before = await row(pid);
+  assert.ok(before.accepted_at, 'fixture: accepted by the sign');
+  const result = await cancelAddon(pid);
+  assert.equal(result.signatureVoided, true);
+  const r = await row(pid);
+  assert.equal(r.client_signed_at, null, 'the signature is cleared');
+  assert.equal(r.status, 'accepted', 'no status move');
+  assert.ok(r.accepted_at, 'the acceptance date stands');
+  assert.equal(new Date(r.accepted_at).getTime(), new Date(before.accepted_at).getTime());
 });

@@ -107,7 +107,9 @@ function answer(via, sql, params) {
     const resetStatus = params[1] === true;
     const signedByClient = row.accepted_at && row.client_signed_at && row.accepted_at.getTime() === row.client_signed_at.getTime();
     for (const c of SIGNATURE_COLUMNS) row[c] = null;
-    if (signedByClient) row.accepted_at = null;
+    // Mirrors the SQL (every SET reads the old row): the sign's own stamp goes only
+    // when the row ends up short of 'accepted'.
+    if (signedByClient && (row.status !== 'accepted' || params[1] === true)) row.accepted_at = null;
     if (resetStatus && (['viewed', 'modified'].includes(row.status) || (row.status === 'accepted' && signedByClient))) row.status = 'sent';
     return { rows: [{ ...row }], rowCount: 1 };
   }
@@ -336,6 +338,7 @@ test('a booking paid once and refunded in full is voided but stays accepted (out
   assert.equal(calls[voidUpdate()].params[1], false, 'no status reset');
   assert.equal(res.body.status, 'accepted');
   assert.equal(res.body.client_signed_at, null);
+  assert.equal(new Date(res.body.accepted_at).getTime(), SIGNED_AT.getTime(), 'it keeps its acceptance date');
   assert.equal(res.body.signature_voided, true);
   assert.equal(res.body.guest_count, 80, 'the edit itself landed');
 });

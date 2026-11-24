@@ -104,7 +104,9 @@ function scriptedClient(row, { inFlight = [] } = {}) {
         const resetStatus = params[1] === true;
         const signedByClient = row.accepted_at && row.accepted_at.getTime() === row.client_signed_at.getTime();
         for (const c of SIGNATURE_COLUMNS) row[c] = null;
-        if (signedByClient) row.accepted_at = null;
+        // Mirrors the SQL (every SET reads the old row): the sign's own stamp goes only
+        // when the row ends up short of 'accepted'.
+        if (signedByClient && (row.status !== 'accepted' || params[1] === true)) row.accepted_at = null;
         if (resetStatus && (['viewed', 'modified'].includes(row.status) || (row.status === 'accepted' && signedByClient))) row.status = 'sent';
         return answer({ rows: [{ ...row }], rowCount: 1 });
       }
