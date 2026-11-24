@@ -72,3 +72,23 @@ test('the bold runs that exist today are the two clause-6 lead-ins', () => {
   }
   assert.deepEqual([...new Set(found)].sort(), ['From Contractor.', 'Mutual.']);
 });
+
+// A SHIPPED version's text is what its signers agreed to, so it can never be
+// edited in place (a typo fix included): ship a new version instead (the
+// agreementVersions.test.js precedent for the client agreement; audit
+// ESIG-10). These hashes are the frozen objects as shipped, through the same
+// agreementVersionSha256 the sign route stores on the row. Add a line here
+// with every new version.
+const { agreementVersionSha256 } = require('./contractorAgreement');
+const SHIPPED_SHA256 = {
+  'contractor-agreement-v2': '9b27b6666b875a83764b5eb062e7002ca5924444496623547f854e59a5fa6d11',
+  'contractor-agreement-v3': '6c9dfb7b9e2e408b4b1da539577b114763e46cfa1f472522f25d5a83cc2b59bc',
+};
+
+test('every contractor agreement version is pinned byte for byte', () => {
+  assert.deepEqual(Object.keys(VERSIONS).sort(), Object.keys(SHIPPED_SHA256).sort(),
+    'a version was added or removed without pinning it here');
+  for (const [name, version] of Object.entries(VERSIONS)) {
+    assert.equal(agreementVersionSha256(version), SHIPPED_SHA256[name], `${name} text changed after it shipped`);
+  }
+});

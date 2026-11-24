@@ -70,16 +70,13 @@ function resolveFromRow(row) {
   // client at the proposal page, where the deposit is taken with the signature.
   // An archived proposal is not an unbooked one: its pay link refuses the money
   // as a cancelled event (EVENT_CANCELLED), and so does its proposal page.
-  // An offline acceptance (accepted, no signature) has no signing step left on
-  // its proposal page, so it pays through the admin Payment Link.
+  // An offline acceptance (accepted, no signature) is signable on its proposal
+  // page since audit ESIG-14, so it takes the same answer: the proposal link,
+  // where the client signs and pays (a Payment Link would book it unsigned).
   if (row.proposal_status === 'archived') {
     warnings.push(`This invoice belongs to an archived proposal. Its pay link refuses every payment because the event is cancelled, so the client cannot pay it online.`);
   } else if (CONTRACT_LABELS.includes(row.label) && !contractInvoicePayable(row.proposal_status)) {
-    if (row.proposal_status === 'accepted' && !row.client_signed_at) {
-      warnings.push(`This is the ${row.label} invoice of a proposal accepted without a signature. Its pay link refuses the payment and the proposal page cannot take it either. Send a Payment Link from the payment panel instead.`);
-    } else {
-      warnings.push(`This is the ${row.label} invoice of a proposal the client has not booked${row.client_signed_at ? '' : ' or signed'}. Its pay link refuses the payment and sends the client to the proposal page, where the payment is taken with the signature. Send the proposal link instead.`);
-    }
+    warnings.push(`This is the ${row.label} invoice of a proposal the client has not booked${row.client_signed_at ? '' : ' or signed'}. Its pay link refuses the payment and sends the client to the proposal page, where the payment is taken with the signature. Send the proposal link instead.`);
   }
 
   const emailReason = !email

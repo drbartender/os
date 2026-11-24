@@ -53,8 +53,9 @@ function totalAtOrBelowDeposit(totalCents, depositCents) {
 // on its own page (audit PAY-02): only once the booking exists. Before that the
 // proposal page is the rail (the deposit with the signature, the gratuity
 // election, the 14-day window and the at-or-below-deposit rule), and an
-// admin's offline acceptance (Mark accepted, no signature) pays through the
-// admin Payment Link, which applies the same two rules and books the row. The
+// admin's offline acceptance (Mark accepted, no signature) is signed and paid
+// there too since audit ESIG-14; the admin Payment Link, which applies the same
+// two rules and books the row, stays the operator's own route. The
 // SQL twin, where a query hands out an open invoice token or lists an unpaid
 // contract invoice: p.status = ANY(<BOOKED_STATUSES>).
 function contractInvoicePayable(status) {

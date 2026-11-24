@@ -212,3 +212,90 @@ test('adjustmentsColumn leaves the column alone (null) when the lines are the st
   assert.equal(G.adjustmentsColumn(changed, { adjustments: stored }), JSON.stringify(changed));
   assert.equal(G.adjustmentsColumn([], { adjustments: stored }), '[]', 'emptying the lines is a write');
 });
+
+// ─── signatureVoidReason (audit ESIG-02) ────────────────────────────────────
+const SNAP = (over = {}) => ({
+  inputs: { guestCount: 50, durationHours: 4, numBars: 0, numBartenders: 1 },
+  package: { id: 1, name: 'Test Flat', base_cost: 600 },
+  staffing: { actual: 1, total: 0 },
+  addons: [{ id: 3, name: 'Test Add-on', variant: null, quantity: 1, line_total: 40 }],
+  syrups: { selections: ['s-1'], total: 14 },
+  adjustments: [{ type: 'discount', label: 'Test A', amount: 10, visible: true }],
+  total_price_override: null,
+  total: 644,
+  ...over,
+});
+const SIGNED = (over = {}) => ({
+  status: 'accepted', amount_paid: '0.00', client_signed_at: '2026-10-01T15:00:00.000Z',
+  client_signed_total: '644.00', total_price: '644.00',
+  package_id: 1, guest_count: 50, event_duration_hours: '4.00', num_bars: 0, num_bartenders: 1,
+  adjustments: [{ type: 'discount', label: 'Test A', amount: '10', visible: true }], total_price_override: null,
+  pricing_snapshot: SNAP(),
+  venue_name: null, venue_street: '123 Test St', venue_city: 'Rockford', venue_state: 'Illinois', venue_zip: null,
+  event_location: '123 Test St, Rockford, IL',
+  ...over,
+});
+
+test('signatureVoidReason: an unsigned row, a paid row and a forced lifecycle status never void', () => {
+  const moved = SNAP({ inputs: { guestCount: 80, durationHours: 4, numBars: 0, numBartenders: 1 }, total: 700 });
+  assert.equal(G.signatureVoidReason({ old: SIGNED({ client_signed_at: null }), snapshot: moved, body: {} }), null);
+  assert.equal(G.signatureVoidReason({ old: SIGNED({ amount_paid: '100.00', status: 'deposit_paid' }), snapshot: moved, body: {} }), null);
+  assert.equal(G.signatureVoidReason({ old: SIGNED({ amount_paid: '0.01' }), snapshot: moved, body: {} }), null);
+  for (const status of ['confirmed', 'completed', 'archived', 'draft']) {
+    assert.equal(G.signatureVoidReason({ old: SIGNED({ status }), snapshot: moved, body: {} }), null, status);
+  }
+  assert.equal(G.signatureVoidReason({ old: null, snapshot: moved, body: {} }), null);
+});
+
+test('signatureVoidReason: the same terms in another spelling keep the signature', () => {
+  const same = SNAP({
+    addons: [{ id: 3, name: 'Test Add-on', variant: null, quantity: '1', line_total: '40.00' }],
+    adjustments: [{ visible: true, amount: 10, label: 'Test A', type: 'discount' }],
+    total: '644.00',
+  });
+  assert.equal(G.signatureVoidReason({ old: SIGNED(), snapshot: same, body: {} }), null);
+  // The venue re-sent as stored, state as a code, a blank zip for a null one.
+  const body = { venue_street: ' 123 Test St ', venue_city: 'rockford', venue_state: 'IL', venue_zip: '', event_location: 'anything' };
+  assert.equal(G.signatureVoidReason({ old: SIGNED(), snapshot: same, body }), null);
+  for (const status of G.VOIDABLE_STATUSES) {
+    assert.equal(G.signatureVoidReason({ old: SIGNED({ status }), snapshot: same, body: {} }), null, status);
+  }
+});
+
+test('signatureVoidReason names each moved term', () => {
+  const cases = [
+    ['guest_count', SNAP({ inputs: { guestCount: 80, durationHours: 4, numBars: 0, numBartenders: 1 } })],
+    ['hours', SNAP({ inputs: { guestCount: 50, durationHours: 5, numBars: 0, numBartenders: 1 } })],
+    ['bars', SNAP({ inputs: { guestCount: 50, durationHours: 4, numBars: 1, numBartenders: 1 } })],
+    ['bartenders', SNAP({ staffing: { actual: 2, total: 160 } })],
+    ['package_id', SNAP({ package: { id: 2, name: 'Other', base_cost: 900 } })],
+    ['addons', SNAP({ addons: [] })],
+    ['addons', SNAP({ addons: [{ id: 3, name: 'Test Add-on', variant: 'other', quantity: 1, line_total: 40 }] })],
+    ['addons', SNAP({ addons: [{ id: 3, name: 'Test Add-on', variant: null, quantity: 2, line_total: 80 }] })],
+    ['syrups', SNAP({ syrups: { selections: ['s-1', 's-2'], total: 28 } })],
+    ['adjustments', SNAP({ adjustments: [{ type: 'discount', label: 'Test A', amount: 20, visible: true }] })],
+    ['adjustments', SNAP({ adjustments: [] })],
+    ['override', SNAP({ total_price_override: 600 })],
+  ];
+  for (const [term, snapshot] of cases) {
+    const reason = G.signatureVoidReason({ old: SIGNED(), snapshot, body: {} });
+    assert.ok(Array.isArray(reason) && reason.includes(term), `${term}: ${JSON.stringify(reason)}`);
+  }
+  // The total alone (the signed figure is the anchor, never the current row total).
+  const totalOnly = G.signatureVoidReason({ old: SIGNED({ total_price: '700.00' }), snapshot: SNAP({ total: 700 }), body: {} });
+  assert.deepEqual(totalOnly, ['total']);
+  assert.equal(G.signatureVoidReason({ old: SIGNED({ client_signed_total: null, total_price: '644.00' }), snapshot: SNAP(), body: {} }), null,
+    'with no signed total the row total stands in');
+  // The venue the agreement names, and a free-text location when no venue key is sent.
+  assert.deepEqual(G.signatureVoidReason({ old: SIGNED(), snapshot: SNAP(), body: { venue_street: '456 Other Ave' } }), ['venue']);
+  assert.deepEqual(G.signatureVoidReason({ old: SIGNED(), snapshot: SNAP(), body: { venue_name: 'A Hall' } }), ['venue']);
+  assert.deepEqual(G.signatureVoidReason({ old: SIGNED(), snapshot: SNAP(), body: { event_location: 'Somewhere else' } }), ['venue']);
+  assert.equal(G.signatureVoidReason({ old: SIGNED(), snapshot: SNAP(), body: { venue_street: '123 Test St', event_location: 'ignored when a venue key is sent' } }), null);
+});
+
+test('signatureVoidReason: a legacy snapshot without inputs reads the row columns', () => {
+  const legacy = SIGNED({ pricing_snapshot: { package: { name: 'Test Flat', base_cost: 600 }, total: 644 } });
+  assert.equal(G.signatureVoidReason({ old: legacy, snapshot: SNAP({ addons: [], syrups: { selections: [] }, adjustments: legacy.adjustments }), body: {} }), null);
+  const reason = G.signatureVoidReason({ old: legacy, snapshot: SNAP({ inputs: { guestCount: 80, durationHours: 4, numBars: 0, numBartenders: 1 }, addons: [], syrups: { selections: [] }, adjustments: legacy.adjustments }), body: {} });
+  assert.deepEqual(reason, ['guest_count']);
+});

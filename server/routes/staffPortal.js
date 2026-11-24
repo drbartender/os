@@ -628,11 +628,19 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
          VALUES ($1, 'w9', $2, $3, $4)`,
         [req.user.id, cur.rows[0]?.w9_file_url || null, cur.rows[0]?.w9_filename || null, req.user.id]
       );
+      // The new file carries its own certification event (audit ESIG-07, the
+      // fields payment.js records): a replace is an uploaded scan, so method
+      // 'upload' and no form revision, with this request's proxy-validated IP
+      // and user agent. Never the TIN, which stays inside the file.
       await client.query(
         `UPDATE payment_profiles
-            SET w9_file_url = $2, w9_filename = $3, updated_at = NOW()
+            SET w9_file_url = $2, w9_filename = $3, updated_at = NOW(),
+                w9_submitted_at = NOW(), w9_submit_ip = $4, w9_submit_ua = $5,
+                w9_form_revision = NULL, w9_signature_method = 'upload'
           WHERE user_id = $1`,
-        [req.user.id, fileUrl, slug]
+        [req.user.id, fileUrl, slug,
+         (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null,
+         (req.headers['user-agent'] || '').slice(0, 500) || null]
       );
     } else {
       // alcohol_certification → contractor_profiles.

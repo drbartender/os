@@ -854,12 +854,19 @@ test('POST /api/me/documents/w9/replace > writes to payment_profiles + history',
   assert.strictEqual(res.body.filename, 'my-w9.pdf');
   assert.strictEqual(uploadFileCalls.length, 1);
 
-  // payment_profiles row updated.
+  // payment_profiles row updated, with the new file's own certification event
+  // (audit ESIG-07 on this second W-9 writer, review 2026-11-22): an upload,
+  // stamped now, never an earlier fill-mode event left beside a new file.
   const pp = await pool.query(
-    'SELECT w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1',
+    `SELECT w9_file_url, w9_filename, w9_signature_method, w9_form_revision,
+            w9_submitted_at > NOW() - INTERVAL '1 minute' AS submitted_now
+       FROM payment_profiles WHERE user_id = $1`,
     [staffUserId]
   );
   assert.strictEqual(pp.rows[0].w9_filename, 'my-w9.pdf');
+  assert.strictEqual(pp.rows[0].w9_signature_method, 'upload');
+  assert.strictEqual(pp.rows[0].w9_form_revision, null);
+  assert.strictEqual(pp.rows[0].submitted_now, true);
   assert.ok(pp.rows[0].w9_file_url.startsWith('/files/staff/w9/'), pp.rows[0].w9_file_url);
   assert.strictEqual(pp.rows[0].w9_file_url, res.body.file_url, 'the stored URL is the one the response carries');
   assert.strictEqual(`/files/${uploadFileCalls[0].key}`, pp.rows[0].w9_file_url,

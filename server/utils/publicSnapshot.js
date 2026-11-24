@@ -33,6 +33,7 @@
 
 const { adjVisible } = require('./adjustmentRules');
 const { buildClientPriceRows, snapshotServiceCents, moneyToCents } = require('./clientPriceLines');
+const { GRATUITY_LABEL, resolveGratuityDisplayLabel } = require('./gratuityLabels');
 
 /**
  * @param {object} snapshot  proposals.pricing_snapshot as read
@@ -98,4 +99,32 @@ function publicPriceView(snapshot, { packageName } = {}) {
   };
 }
 
-module.exports = { sanitizeSnapshotForPublic, publicPriceView };
+/**
+ * The record of a configuration as signed (audit ESIG-02, ESIG-05): what the
+ * sign stores in proposals.client_signed_snapshot and the confirmation email
+ * prints. Built from the public price view, so no hidden line, override or
+ * pre-fold subtotal ever enters the record: the folded service rows, the
+ * client gratuity line the page draws from snapshot.gratuity (amount and the
+ * display label frozen in the snapshot), the total the signature acknowledged
+ * (the row's total_price, law 2) and the document version. Pure.
+ *
+ * @param {object} snapshot  proposals.pricing_snapshot as read
+ * @param {{ packageName?: string|null, documentVersion?: string|null, total?: number|string }} opts
+ * @returns {object}  the record, JSON-ready
+ */
+function signedPriceRecord(snapshot, { packageName, documentVersion, total } = {}) {
+  const view = publicPriceView(snapshot, { packageName });
+  const g = snapshot && typeof snapshot === 'object' && snapshot.gratuity ? snapshot.gratuity.total : 0;
+  const gratuityCents = Math.max(0, moneyToCents(g));
+  return {
+    record_version: 1,
+    document_version: documentVersion || null,
+    rows: view.rows,
+    gratuity_amount: gratuityCents / 100,
+    gratuity_label: gratuityCents > 0 ? resolveGratuityDisplayLabel(GRATUITY_LABEL, snapshot) : null,
+    total: total === null || total === undefined || total === '' ? null : Number(total),
+    snapshot: view.snapshot,
+  };
+}
+
+module.exports = { sanitizeSnapshotForPublic, publicPriceView, signedPriceRecord };

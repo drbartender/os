@@ -186,6 +186,7 @@ function register(router) {
          pp.w9_file_url,
          pp.w9_filename,
          ag.pdf_storage_key,
+         ag.signed_at AS agreement_signed_at,
          cp.alcohol_certification_file_url,
          cp.alcohol_certification_filename,
          cp.alcohol_certification_expires_on
@@ -202,8 +203,12 @@ function register(router) {
         present: !!row.w9_file_url,
         filename: row.w9_filename || null,
       },
+      // present: the PDF copy exists (what Download opens); signed: the
+      // agreement is signed, which a failed post-commit render leaves true
+      // with no PDF yet.
       agreement: {
         present: !!row.pdf_storage_key,
+        signed: !!row.agreement_signed_at,
       },
       alcohol_certification: {
         present: !!row.alcohol_certification_file_url,

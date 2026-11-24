@@ -639,8 +639,8 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
   // online signature on purpose: an admin-recorded deposit or a Payment Link
   // deposit books a proposal with client_signed_at NULL, and the Balance
   // invoice is the only online rail for its balance; an admin's offline
-  // acceptance (accepted, no signature) pays through the admin Payment Link
-  // (stripeRouteHelpers.contractInvoicePayable). 409, not 404: signing on the proposal page books the row and the same link
+  // acceptance (accepted, no signature) is signed and paid on the proposal
+  // page since audit ESIG-14 (stripeRouteHelpers.contractInvoicePayable). 409, not 404: signing on the proposal page books the row and the same link
   // then works. The message names no URL: this route is gated by the invoice
   // token alone, and the proposal token is a higher tier than whoever holds an
   // invoice link.

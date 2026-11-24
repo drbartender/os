@@ -2,6 +2,7 @@
 // (EventDetailPhone) or, with variant 'proposal', a proposal (ProposalDetailPhone).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { signatureVoidNotice } from '../../utils/signatureVoidNotice';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from '../../pages/admin/proposalEditor/formState';
@@ -253,6 +254,8 @@ export default function useEditSheet({ proposalId, onSaved, onMoved, previewDela
       return;
     }
     toast.success(copy.saved);
+    const voidNotice = signatureVoidNotice(res.data);
+    if (voidNotice) toast.info(voidNotice);
     noticeOutcomes(res.data && res.data.notifications).forEach((o) => toast[o.kind](o.text));
     if (handlers.current.onSaved) handlers.current.onSaved();
   }, [base, toast, lockOf, copy, moved]);

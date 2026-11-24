@@ -246,8 +246,17 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
                 previewRow('Client now owes', fmt$2dp(preview.new_balance_due))
               )}
 
-              {preview.status_will_change && (
+              {/* A void moves the row back to Sent, which is not a payment
+                  status; that move is told by the signature line below. */}
+              {preview.status_will_change && !preview.signature_voided && (
                 <div className="tiny muted">Payment status changes to {preview.new_status.replace(/_/g, ' ')}.</div>
+              )}
+              {preview.signature_voided && (
+                <div className="client-alert client-alert-warning" role="status">
+                  Removing this line voids the client's signature. {preview.new_status === 'sent'
+                    ? 'The proposal goes back to Sent, and they sign again before paying.'
+                    : 'The proposal stays Accepted, and they sign again before paying.'}
+                </div>
               )}
               {preview.gratuity?.staff_notice && (
                 <div className="tiny muted">Staff will be emailed that they can set out a tip jar.</div>

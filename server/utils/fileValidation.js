@@ -148,4 +148,8 @@ module.exports = {
   isValidImageUpload,
   isValidOnboardingDocument,
   safeUploadExtension,
+  // The image magic bytes, for a check on bytes that did not arrive as an
+  // upload (signaturePayload.js decodes a signature data URL).
+  PNG_MAGIC: PNG,
+  JPEG_MAGIC: JPEG,
 };

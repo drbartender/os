@@ -57,7 +57,9 @@ export default function Agreement() {
           ...prev,
           full_name: row.full_name || '',
           email: row.email || user?.email || '',
-          phone: row.phone || '',
+          // Stripped on load as on input, so a legacy stored phone with a
+          // leading 1 reads as the 10 digits the server keeps.
+          phone: stripPhone(row.phone || ''),
           sms_consent: !!row.sms_consent,
         }));
       }
@@ -88,6 +90,9 @@ export default function Agreement() {
       { field: 'full_name', label: 'Full Name' },
       { field: 'email', label: 'Email' },
       { field: 'signature_data', label: 'Digital Signature', test: (val) => !!val },
+      // Optional, but when given it is the 10 digits the server's sign requires
+      // (agreement.js validatePhone), so the refusal never comes back unmarked.
+      { field: 'phone', label: 'Phone (10 digits)', test: (val) => !val || String(val).replace(/\D/g, '').length === 10 },
     ];
     return base;
   }, []);
@@ -127,7 +132,10 @@ export default function Agreement() {
 
     setLoading(true);
     try {
-      const payload = { ...form, ...acks };
+      // The version this page rendered rides with the signature: the server
+      // records exactly that and refuses (409, "please refresh") when the
+      // agreement was bumped under an open page.
+      const payload = { ...form, ...acks, version: legalText.version };
       await api.post('/agreement', payload);
       // POST /agreement already marks agreement_completed in onboarding_progress
       // atomically in the same transaction — just mirror it optimistically here.
@@ -260,7 +268,7 @@ export default function Agreement() {
             </div>
           </div>
 
-          <div className="form-group">
+          <div className={"form-group" + fieldClass('phone')}>
             <label htmlFor="agreement-phone" className="form-label">Phone</label>
             <input
               id="agreement-phone" name="phone" type="tel"
@@ -268,7 +276,9 @@ export default function Agreement() {
               value={formatPhoneInput(form.phone)}
               onChange={e => { clearField('phone'); setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); }}
               placeholder="(555) 000-0000"
+              aria-invalid={!!fieldErrors?.phone}
             />
+            <FieldError error={fieldErrors?.phone} />
             <p className="form-helper">
               By providing your phone number you grant us permission to contact you via SMS or voice.
             </p>
@@ -317,6 +327,12 @@ export default function Agreement() {
                 setForm(f => ({ ...f, signature_data: data, signature_method: method }));
               }}
             />
+            {/* The electronic-signature statement under the pad in both modes
+                (audit ESIG-12). A recorded acknowledgment needs a new frozen
+                agreement version (contractorAgreement.js), the owner's call. */}
+            <p className="form-helper" style={{ marginTop: '0.4rem' }}>
+              By signing, you agree to sign this agreement electronically and to receive your signed copy by email.
+            </p>
             <FieldError error={fieldErrors?.signature} />
           </div>
 

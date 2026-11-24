@@ -6,6 +6,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from './proposalEditor/formState';
 import { buildProposalPatchBody } from './proposalEditor/patchBody';
+import { signatureVoidNotice } from '../../utils/signatureVoidNotice';
 
 // Same overlay the other admin dialogs use (CancelLineDialog).
 const OVERLAY = {
@@ -136,11 +137,13 @@ export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
         if (storedBartenders !== required) numBartendersOverride = storedBartenders;
       }
 
-      await api.patch(`/proposals/${proposalId}`, buildProposalPatchBody(form, {
+      const saved = await api.patch(`/proposals/${proposalId}`, buildProposalPatchBody(form, {
         isClassPackage: originalPkg ? originalPkg.bar_type === 'class' : proposal.class_options != null,
         numBartendersOverride,
       }));
       toast.success(`Remote Staffing Fee added: $${amount.toFixed(2)}.`);
+      const voidNotice = signatureVoidNotice(saved.data);
+      if (voidNotice) toast.info(voidNotice);
       await answerAndProceed();
     } catch (e) {
       setMode('ask');

@@ -119,6 +119,8 @@ export default function SignAndPaySection({
   proposalVenue,
   // payOnly: when the client signed (ISO timestamp) — for the reference line.
   clientSignedAt,
+  // payOnly: the total the signature acknowledged (the row's client_signed_total).
+  clientSignedTotal = null,
 }) {
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
@@ -184,7 +186,13 @@ export default function SignAndPaySection({
             value={sigName}
             onChange={(e) => setSigName(e.target.value)}
             placeholder="Your full name"
+            aria-invalid={!!fieldErrors?.client_signed_name}
           />
+          {fieldErrors?.client_signed_name && (
+            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }} role="alert">
+              {fieldErrors.client_signed_name}
+            </p>
+          )}
         </div>
 
         {/* Optional contact number (real-number capture for Thumbtack leads) */}
@@ -228,6 +236,14 @@ export default function SignAndPaySection({
             />
           </div>
           <p className="sign-pay-sig-caption">x · sign above</p>
+          {/* The server's signature bounds (a typed name of 2 to 120
+              characters, an image under 200 KB) answer here, not as a bare
+              "fix the errors below" with nothing marked. */}
+          {fieldErrors?.signature && (
+            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }} role="alert">
+              {fieldErrors.signature}
+            </p>
+          )}
           <p className="sign-pay-accept-note">
             By signing, you agree to the Service Agreement above and confirm your event details are accurate.
           </p>
@@ -458,7 +474,13 @@ export default function SignAndPaySection({
 
       {clientSignedAt && (
         <p className="sign-pay-accept-note">
-          You accepted the Service Agreement when you signed on {formatDateShort(clientSignedAt)}.
+          You accepted the Service Agreement when you signed on {formatDateShort(clientSignedAt)}
+          {/* This card has no gratuity chooser and charges the row total,
+              which is the signed total here (any edit after the signature
+              voids it on a money-free row), so no qualifier is needed. */}
+          {clientSignedTotal != null && Number.isFinite(Number(clientSignedTotal))
+            ? ` for a total of ${fmt(Number(clientSignedTotal))}`
+            : ''}.
         </p>
       )}
 

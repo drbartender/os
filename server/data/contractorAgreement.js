@@ -138,9 +138,19 @@ function getAgreementVersion(version) {
   return VERSIONS[version] || null;
 }
 
+// The content pin of a version (audit ESIG-10): sha256 of the frozen object
+// as JSON (version, effective date, at-a-glance, clauses, acknowledgments, in
+// their frozen order). contractorAgreement.test.js pins every version's hash
+// so a text edit under an existing version string refuses, and the sign route
+// stores it on the row as signature_document_sha256.
+function agreementVersionSha256(versionData) {
+  return require('node:crypto').createHash('sha256').update(JSON.stringify(versionData)).digest('hex');
+}
+
 module.exports = {
   CURRENT_VERSION,
   VERSIONS,
   getCurrentAgreement,
   getAgreementVersion,
+  agreementVersionSha256,
 };

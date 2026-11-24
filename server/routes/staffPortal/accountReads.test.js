@@ -348,7 +348,7 @@ test('GET /api/me/documents > new hire: all three docs return present:false with
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body, {
     w9: { present: false, filename: null },
-    agreement: { present: false },
+    agreement: { present: false, signed: false },
     alcohol_certification: {
       present: false,
       filename: null,

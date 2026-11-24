@@ -69,3 +69,15 @@ test('a 409 latch whose reload found the processing row lands the pending phase 
   expect(v.paidCardPhase).toBe('pending');
   expect(v.showPayOnly).toBe(false);
 });
+
+// An admin can mark a sent proposal 'accepted' by hand (a phone acceptance);
+// the client must still be able to sign it (audit ESIG-14). A signed accepted
+// row keeps the pay-only card.
+test('an unsigned accepted row shows sign and pay, not pay-only', () => {
+  const unsignedAccepted = { status: 'accepted', client_signed_at: null };
+  const v = checkoutVisibility({ proposal: unsignedAccepted, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: null });
+  expect(v.showSignAndPay).toBe(true);
+  expect(v.showPayOnly).toBe(false);
+  expect(v.isPayableStatus).toBe(true);
+  expect(v.showPaidCard).toBe(false);
+});

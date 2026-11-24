@@ -2,6 +2,7 @@
 // migrate-headers on 2026-10-27; replace with what it does.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { signatureVoidNotice } from '../../../utils/signatureVoidNotice';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
@@ -358,6 +359,10 @@ export default function ProposalEditorForm({
       }
       const res = await api.patch(`/proposals/${proposal.id}`, { ...patchBody, notify });
       toast.success(showStaffNotifyToggles ? 'Event updated.' : 'Proposal updated.');
+      // The save moved terms the client signed on a booking with no money on
+      // it, so the server cleared their signature (signatureVoid.js): say so.
+      const voidNotice = signatureVoidNotice(res.data);
+      if (voidNotice) toast.info(voidNotice);
       // Per-channel truth (notify-client contract): notifyDrafts.js.
       noticeOutcomes(res.data.notifications).forEach((o) => toast[o.kind](o.text));
       onSaved?.(res.data);

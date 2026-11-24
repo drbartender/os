@@ -299,13 +299,13 @@ test('invoiceSend: a contract invoice on an archived proposal warns that it is a
   }
 });
 
-test('invoiceSend: an accepted proposal with no signature (an offline acceptance) is told to use the Payment Link; a signed one is told to send the proposal link', async () => {
+test('invoiceSend: an accepted proposal with no signature (an offline acceptance) is told to send the proposal link, where it is signed and paid (ESIG-14); so is a signed one', async () => {
   const before = (await pool.query('SELECT status, client_signed_at FROM proposals WHERE id = $1', [proposalId])).rows[0];
   try {
     await pool.query("UPDATE proposals SET status = 'accepted', client_signed_at = NULL WHERE id = $1", [proposalId]);
     let r = await getAction('invoice_send').resolveRecipient(invoiceId);
-    assert.ok(r.warnings.some((w) => /Payment Link/.test(w)), 'an offline acceptance pays through the admin Payment Link');
-    assert.ok(!r.warnings.some((w) => /Send the proposal link/.test(w)), 'its proposal page cannot take the money');
+    assert.ok(r.warnings.some((w) => /not booked or signed/.test(w) && /Send the proposal link/.test(w)), 'an offline acceptance signs and pays on its proposal page');
+    assert.ok(!r.warnings.some((w) => /Payment Link/.test(w)), 'never steered to a Payment Link, which would book it unsigned');
     await pool.query("UPDATE proposals SET client_signed_at = NOW() WHERE id = $1", [proposalId]);
     r = await getAction('invoice_send').resolveRecipient(invoiceId);
     assert.ok(r.warnings.some((w) => /has not booked/.test(w) && /Send the proposal link/.test(w)), 'a signed, unpaid row pays on its proposal page');

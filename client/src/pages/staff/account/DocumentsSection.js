@@ -19,14 +19,15 @@ import ReplaceConfirmModal from './ReplaceConfirmModal';
  * Data source: GET /api/me/documents →
  *   {
  *     w9: { present, filename },
- *     agreement: { present },
+ *     agreement: { present, signed },
  *     alcohol_certification: { present, filename, expires_on }
  *   }
  *
  * The server NEVER projects raw R2 keys (see accountReads.js for the
  * rationale); presence + filename + (cert) expiry is all the UI needs.
- * "View" / "Download" actions are out of scope for this surface — that'd
- * be a future signed-URL flow per spec §6.14.
+ * The agreement row's Download asks GET /api/agreement/download for a
+ * 15-minute signed URL to the signer's own PDF (scoped by the JWT; audit
+ * ESIG-04); the W-9 and certification rows stay presence-only.
  *
  * `expires_on` shape: the server SELECTs `cp.alcohol_certification_expires_on`
  * (Postgres DATE) and JSON-serializes it. node-postgres surfaces DATE as
@@ -128,6 +129,34 @@ export default function DocumentsSection() {
   // a "Replaced" tag through the next render. Cleared by the user navigating
   // away and back (i.e. component remount).
   const [replacedIds, setReplacedIds] = useState({});
+  const [downloading, setDownloading] = useState(false);
+
+  // The signed agreement PDF, through the signed-URL route; the URL is
+  // short-lived, so it is fetched on each tap and never kept in state. The
+  // tab opens inside the tap, before the await, so mobile Safari and strict
+  // popup blockers keep it (the paystub download's pattern, PayoutDetail.js);
+  // its opener is severed before it is pointed at the URL.
+  async function downloadAgreement() {
+    if (downloading) return;
+    setDownloading(true);
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    try {
+      const res = await api.get('/agreement/download');
+      if (res.data && res.data.url) {
+        if (tab) tab.location = res.data.url;
+        else window.location.href = res.data.url; // popup blocked: same tab
+      } else {
+        if (tab) tab.close();
+        toast.error('Could not open your agreement.');
+      }
+    } catch (err) {
+      if (tab) tab.close();
+      toast.error(err?.message || 'Could not open your agreement.');
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   const fetchDocs = useCallback(async () => {
     setLoading(true);
@@ -214,7 +243,7 @@ export default function DocumentsSection() {
   }
 
   const w9 = docs?.w9 || { present: false, filename: null };
-  const agreement = docs?.agreement || { present: false };
+  const agreement = docs?.agreement || { present: false, signed: false };
   const cert = docs?.alcohol_certification || { present: false, filename: null, expires_on: null };
 
   return (
@@ -290,15 +319,27 @@ export default function DocumentsSection() {
           )}
         />
 
-        {/* IC Agreement row — NO replace, signed legal doc. */}
+        {/* IC Agreement row — NO replace, signed legal doc; Download only. */}
         <DocRow
           icon={<BookIcon size={14} />}
           title="Independent Contractor Agreement"
-          tags={agreement.present ? [{ key: 'signed', label: 'signed' }] : []}
+          tags={(agreement.present || agreement.signed) ? [{ key: 'signed', label: 'signed' }] : []}
           sub={agreement.present
-            ? 'Countersigned.'
-            : 'Not signed yet. Finish onboarding to upload.'}
-          actions={null}
+            ? 'Signed. Your copy is the PDF you signed.'
+            : (agreement.signed
+              ? 'Signed. A PDF copy is not on file yet; ask the office for one.'
+              : 'Not signed yet. Finish onboarding to sign.')}
+          actions={agreement.present ? (
+            <button
+              type="button"
+              className="sp-btn sp-btn-sm"
+              onClick={downloadAgreement}
+              disabled={downloading}
+            >
+              <ExternalIcon size={11} />
+              {downloading ? 'Opening…' : 'Download'}
+            </button>
+          ) : null}
         />
 
         {/* Alcohol certification row */}

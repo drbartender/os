@@ -4,18 +4,26 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
-const { auth } = require('../middleware/auth');
+const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
-const { ValidationError } = require('../utils/errors');
-const { getCurrentAgreement, CURRENT_VERSION } = require('../data/contractorAgreement');
+const { publicReadLimiter, signLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
+const { ValidationError, NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
+const { getCurrentAgreement, getAgreementVersion, CURRENT_VERSION, agreementVersionSha256 } = require('../data/contractorAgreement');
 const { renderAgreementPdf } = require('../utils/agreementPdf');
-const { uploadFile, getSignedUrl } = require('../utils/storage');
+const { uploadFile, getSignedUrl, readFile } = require('../utils/storage');
+const { assertKeyUnder } = require('../utils/r2Proxy');
 const { sendEmail } = require('../utils/email');
+const { logAdminAction } = require('../utils/adminAuditLog');
 const { STAFF_URL } = require('../utils/urls');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { validatePhone } = require('../utils/phone');
+const { validateSignaturePayload } = require('../utils/signaturePayload');
 
 const router = express.Router();
+
+// The email shape every signup route checks (routes/auth.js): one @, a dot
+// after it, no whitespace. Shape only; the inbox is proven by the copy arriving.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Minimal HTML escape for inline interpolation in the signer confirmation email.
 function escapeHtml(s) {
@@ -48,46 +56,202 @@ router.get('/', auth, asyncHandler(async (req, res) => {
   res.json(result.rows[0] || {});
 }));
 
+// ── GET /api/agreement/download — signed R2 URL to the PDF ───────────
+router.get('/download', auth, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT pdf_storage_key FROM agreements WHERE user_id = $1',
+    [req.user.id]
+  );
+  const key = result.rows[0]?.pdf_storage_key;
+  if (!key) throw new NotFoundError('Signed agreement PDF not available.');
+  const url = await getSignedUrl(key);
+  res.json({ url });
+}));
+
+// Every PDF this file hands out sits under the signer's own prefix; the admin
+// routes assert it before presigning or reading (r2Proxy.js), so a row whose
+// key was ever pointed elsewhere serves nothing.
+const agreementKeyPrefix = (userId) => `agreements/${userId}/`;
+
+// A path id as a positive integer, else 400 (the editor PATCH's
+// parseProposalId reading: Postgres would read '1_23' as 123).
+function parseUserId(raw) {
+  const n = typeof raw === 'string' && /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(n) || n < 1) throw new ValidationError({ user_id: 'Invalid user id.' });
+  return n;
+}
+
+// The signer's copy (audit ESIG-04): the archived PDF attached to one email,
+// the sent stamp written only once the provider accepted it. The sign tail
+// fires it without waiting; the admin resend route awaits it. A provider
+// failure is an ExternalServiceError (502 for the admin, Sentry either way).
+// sendEmail answers these ids instead of throwing when it sends nothing (email.js): a copy it
+// skipped is not a copy sent, so nothing is stamped and the resend says so.
+const SKIPPED_SEND_IDS = new Set(['dev-skipped', 'skipped-invalid']);
+
+async function sendSignedCopyEmail({ userId, email, fullName, pdfBuf }) {
+  const safeName = escapeHtml(fullName) || 'there';
+  // The Documents page holds the Download (client/src/pages/staff/account/DocumentsSection.js).
+  const portalUrl = escapeHtml(`${STAFF_URL}/account/documents`);
+  let sent;
+  try {
+    sent = await sendEmail({
+      to: email,
+      subject: 'Your signed Dr. Bartender Contractor Agreement',
+      html: `
+        <p>Hi ${safeName},</p>
+        <p>Thanks for signing. Your Dr. Bartender Independent Contractor Agreement is attached as a PDF for your records.</p>
+        <p>You can also download it anytime from your <a href="${portalUrl}">staff portal</a>.</p>
+        <p>Dr. Bartender</p>
+      `,
+      text: 'Thanks for signing. Your Dr. Bartender Independent Contractor Agreement is attached.',
+      attachments: [
+        { filename: 'dr-bartender-contractor-agreement.pdf', content: pdfBuf },
+      ],
+    });
+  } catch (err) {
+    throw new ExternalServiceError('resend', err, 'The copy could not be emailed. Please try again in a moment.');
+  }
+  if (sent && SKIPPED_SEND_IDS.has(sent.id)) {
+    throw new ExternalServiceError('resend', null, sent.id === 'skipped-invalid'
+      ? 'The copy was not sent: the email on the agreement cannot receive mail.'
+      : 'The copy was not sent: email sending is turned off on this server.');
+  }
+  await pool.query(
+    `UPDATE agreements SET pdf_email_sent_at=NOW() WHERE user_id=$1`,
+    [userId]
+  );
+}
+
+// ── GET /api/agreement/admin/:userId/pdf — admin only: signed R2 URL to a contractor's PDF ──
+// Admin-only (owner's decision, 2026-11-11): the PDF shows the signature, the
+// IP and the user agent, which the staff record read (GET /api/admin/users/:id)
+// withholds from a manager. The resend below stays open to a manager: it mails
+// the signer's own copy to the signer and hands the caller nothing.
+router.get('/admin/:userId/pdf', auth, adminOnly, asyncHandler(async (req, res) => {
+  const userId = parseUserId(req.params.userId);
+  const result = await pool.query(
+    'SELECT pdf_storage_key FROM agreements WHERE user_id = $1',
+    [userId]
+  );
+  const key = result.rows[0]?.pdf_storage_key;
+  if (!key) throw new NotFoundError('Signed agreement PDF not available.');
+  assertKeyUnder(key, agreementKeyPrefix(userId));
+  res.json({ url: await getSignedUrl(key) });
+}));
+
+// ── POST /api/agreement/admin/:userId/resend-copy — admin/manager: re-send the signer's copy ──
+router.post('/admin/:userId/resend-copy', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
+  const userId = parseUserId(req.params.userId);
+  const result = await pool.query(
+    'SELECT email, full_name, pdf_storage_key FROM agreements WHERE user_id = $1',
+    [userId]
+  );
+  const row = result.rows[0];
+  if (!row || !row.pdf_storage_key) throw new NotFoundError('Signed agreement PDF not available.');
+  assertKeyUnder(row.pdf_storage_key, agreementKeyPrefix(userId));
+  if (!row.email) throw new ValidationError({ email: 'This contractor has no email on the agreement.' });
+  const { buffer } = await readFile(row.pdf_storage_key);
+  await sendSignedCopyEmail({ userId, email: row.email, fullName: row.full_name, pdfBuf: buffer });
+  // Who ordered the send (best-effort, never throws): the email log records the send only.
+  await logAdminAction({
+    actorUserId: req.user.id, targetUserId: userId,
+    action: 'agreement_copy_resent', metadata: { source: 'agreement/resend-copy' },
+  });
+  res.json({ sent: true, pdf_email_sent_at: new Date() });
+}));
+
 // ── POST /api/agreement — sign ───────────────────────────────────────
 router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   const {
     full_name, email, phone, sms_consent,
     ack_ic_status, ack_commitment, ack_non_solicit,
     ack_damage_recoupment, ack_legal_protections, ack_field_guide,
-    signature_data, signature_method,
+    signature_data, signature_method, version,
   } = req.body;
 
+  // Version binding (audit ESIG-11; the proposal sign's document_version
+  // precedent): the page sends the version it rendered from /legal-text, so a
+  // deploy that bumps CURRENT_VERSION under an open page refuses instead of
+  // recording a version the signer never read. A missing or malformed value
+  // is a stale bundle: one refresh 400. A known-but-not-current one is a 409,
+  // and nothing is written either way.
+  if (typeof version !== 'string' || version === '') {
+    throw new ValidationError(
+      { version: 'Please refresh the page and try again.' },
+      'Your page is out of date. Please refresh and sign again.'
+    );
+  }
+  if (version !== CURRENT_VERSION) {
+    throw new ConflictError(
+      'The agreement was updated since you opened this page. Please refresh and sign again.',
+      'AGREEMENT_VERSION_STALE'
+    );
+  }
+
   const fieldErrors = {};
-  if (!full_name) fieldErrors.full_name = 'Full name is required';
-  if (!email) fieldErrors.email = 'Email is required';
-  if (!ack_ic_status)         fieldErrors.ack_ic_status         = 'This acknowledgment is required';
-  if (!ack_commitment)        fieldErrors.ack_commitment        = 'This acknowledgment is required';
-  if (!ack_non_solicit)       fieldErrors.ack_non_solicit       = 'This acknowledgment is required';
-  if (!ack_damage_recoupment) fieldErrors.ack_damage_recoupment = 'This acknowledgment is required';
-  if (!ack_legal_protections) fieldErrors.ack_legal_protections = 'This acknowledgment is required';
-  if (!ack_field_guide)       fieldErrors.ack_field_guide       = 'This acknowledgment is required';
+  // Bounds are the column widths (schema.sql: full_name and email VARCHAR(255),
+  // phone VARCHAR(50)); an overflow used to reach Postgres as a 22001 500, and
+  // the email is where the only copy of the signed contract is sent.
+  const fullName = typeof full_name === 'string' ? full_name.trim() : '';
+  if (!fullName) fieldErrors.full_name = 'Full name is required';
+  else if (fullName.length < 2 || fullName.length > 255) fieldErrors.full_name = 'Full name must be 2 to 255 characters';
+  const emailValue = typeof email === 'string' ? email.trim() : '';
+  if (!emailValue) fieldErrors.email = 'Email is required';
+  else if (emailValue.length < 3 || emailValue.length > 255 || !EMAIL_RE.test(emailValue)) {
+    fieldErrors.email = 'Enter a valid email address';
+  }
+  // The save-time phone helper the proposal sign uses (10-digit storage);
+  // empty stays optional and stores NULL.
+  const phoneCheck = validatePhone(phone);
+  if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
+  // An acknowledgment is the boolean true and nothing else: the old `!!`
+  // coercion recorded the string "false" as acknowledged.
+  const acks = { ack_ic_status, ack_commitment, ack_non_solicit, ack_damage_recoupment, ack_legal_protections, ack_field_guide };
+  for (const key of Object.keys(acks)) {
+    if (acks[key] !== true) fieldErrors[key] = 'This acknowledgment is required';
+  }
   if (!signature_data) fieldErrors.signature = 'Please sign the agreement before submitting';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
-  if (typeof signature_data !== 'string' || signature_data.length > 200000) {
-    throw new ValidationError({ signature: 'Signature payload is too large.' });
-  }
+  // The signature itself: a PNG or JPEG data URL of bounded size under 'draw',
+  // a 2 to 120 character name under 'type' (utils/signaturePayload.js, shared
+  // with the proposal sign). A row that says signed must hold a signature.
+  const sig = validateSignaturePayload({ data: signature_data, method: signature_method });
+  if (sig.error) throw new ValidationError({ signature: sig.error });
+  const signatureValue = sig.value;
 
-  if (signature_method !== 'draw' && signature_method !== 'type') {
-    throw new ValidationError({ signature: 'Invalid signature method.' });
-  }
-
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  // req.ip is the proxy-validated client address (trust proxy is set in
+  // index.js) and is bounded to the VARCHAR(45) column; the leftmost
+  // X-Forwarded-For entry is signer-forgeable and could overflow it into a
+  // 22001 500. A signature IP is dispute evidence (it prints on the archived
+  // PDF), so it must be the one the proxy saw. Matches publicAccept.js and
+  // the proposal sign route.
+  const ip = (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null;
   const userAgent = req.headers['user-agent'] || null;
 
+  // The content pin of the text being signed (audit ESIG-10): the row carries
+  // the hash of what its version string pointed to on the day, beside the
+  // version itself.
+  const documentSha256 = agreementVersionSha256(getCurrentAgreement());
+
   // ── Transaction: upsert agreement row + mark onboarding step ──────
+  // The agreements row is the CURRENT view; every sign also appends an
+  // agreement_signatures row (audit ESIG-08), so a re-sign never erases the
+  // prior signature, consent, name or PDF key: the history row keeps the key
+  // it superseded, and first_signed_at never moves.
   let saved;
+  let historyId = null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
+    // FOR UPDATE: two overlapping signs serialize here, so the second reads
+    // the first's row and never records the same superseded PDF key (the key
+    // itself is still written post-commit, so a sign that lands between the
+    // first's COMMIT and its upload reads the key before that one).
     const existing = await client.query(
-      'SELECT id FROM agreements WHERE user_id = $1',
+      'SELECT id, pdf_storage_key FROM agreements WHERE user_id = $1 FOR UPDATE',
       [req.user.id]
     );
 
@@ -96,7 +260,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       'ack_ic_status','ack_commitment','ack_non_solicit',
       'ack_damage_recoupment','ack_legal_protections','ack_field_guide',
       'signature_data','signature_method','signature_ip','signature_user_agent',
-      'signature_document_version','signed_at',
+      'signature_document_version','signature_document_sha256','signed_at','first_signed_at',
     ];
 
     if (existing.rows[0]) {
@@ -111,15 +275,15 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
            ack_ic_status=$5, ack_commitment=$6, ack_non_solicit=$7,
            ack_damage_recoupment=$8, ack_legal_protections=$9, ack_field_guide=$10,
            signature_data=$11, signature_method=$12, signature_ip=$13, signature_user_agent=$14,
-           signature_document_version=$15, signed_at=NOW()
+           signature_document_version=$15, signature_document_sha256=$17, signed_at=NOW(),
+           first_signed_at = COALESCE(first_signed_at, signed_at, NOW())
          WHERE user_id=$16
          RETURNING *`,
         [
-          full_name, email, phone, !!sms_consent,
-          !!ack_ic_status, !!ack_commitment, !!ack_non_solicit,
-          !!ack_damage_recoupment, !!ack_legal_protections, !!ack_field_guide,
-          signature_data, signature_method, ip, userAgent,
-          CURRENT_VERSION, req.user.id,
+          fullName, emailValue, phoneCheck.value, sms_consent === true,
+          true, true, true, true, true, true, // every ack was asserted === true above
+          signatureValue, signature_method, ip, userAgent,
+          CURRENT_VERSION, req.user.id, documentSha256,
         ]
       );
       saved = upd.rows[0];
@@ -128,19 +292,36 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         `INSERT INTO agreements
            (user_id, ${cols.join(', ')})
          VALUES
-           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
          RETURNING *`,
         [
           req.user.id,
-          full_name, email, phone, !!sms_consent,
-          !!ack_ic_status, !!ack_commitment, !!ack_non_solicit,
-          !!ack_damage_recoupment, !!ack_legal_protections, !!ack_field_guide,
-          signature_data, signature_method, ip, userAgent,
-          CURRENT_VERSION,
+          fullName, emailValue, phoneCheck.value, sms_consent === true,
+          true, true, true, true, true, true, // every ack was asserted === true above
+          signatureValue, signature_method, ip, userAgent,
+          CURRENT_VERSION, documentSha256,
         ]
       );
       saved = ins.rows[0];
     }
+
+    // The append-only record of this signature, in the same transaction as
+    // the current view. signed_at is the same NOW() as the row's. The PDF key
+    // is written onto it post-commit, once the upload succeeds.
+    const history = await client.query(
+      `INSERT INTO agreement_signatures
+         (user_id, signature_document_version, signature_document_sha256, signature_method,
+          signature_ip, signature_user_agent, signed_at, full_name, email, phone, sms_consent,
+          signature_data, superseded_pdf_storage_key)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        req.user.id, CURRENT_VERSION, documentSha256, signature_method, ip, userAgent,
+        fullName, emailValue, phoneCheck.value, sms_consent === true, signatureValue,
+        existing.rows[0] ? (existing.rows[0].pdf_storage_key || null) : null,
+      ]
+    );
+    historyId = history.rows[0] ? history.rows[0].id : null;
 
     await ensureOnboardingProgress(req.user.id, client);
     await client.query(
@@ -176,7 +357,9 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
 
   // ── Post-commit: render PDF, upload, respond, then background email ──
   try {
-    const versionData = getCurrentAgreement();
+    // The text the committed row says was signed, never "whatever is current
+    // now" (audit ESIG-11); the fallback only covers a row with no version.
+    const versionData = getAgreementVersion(saved.signature_document_version) || getCurrentAgreement();
     const pdfBuf = await renderAgreementPdf(versionData, {
       full_name: saved.full_name,
       email: saved.email,
@@ -199,12 +382,21 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     const storageKey = `agreements/${req.user.id}/${CURRENT_VERSION}-${Date.now()}.pdf`;
     await uploadFile(pdfBuf, storageKey);
 
+    // The new copy has not been emailed yet: clearing the stamp here means a
+    // re-sign whose send fails shows "Copy not emailed" with its Resend, not
+    // the first sign's stamp (dev-box review 2026-11-22).
     await pool.query(
       `UPDATE agreements
-          SET pdf_storage_key=$1, pdf_generated_at=NOW()
+          SET pdf_storage_key=$1, pdf_generated_at=NOW(), pdf_email_sent_at=NULL
         WHERE user_id=$2`,
       [storageKey, req.user.id]
     );
+    if (historyId) {
+      await pool.query(
+        'UPDATE agreement_signatures SET pdf_storage_key = $1 WHERE id = $2',
+        [storageKey, historyId]
+      );
+    }
 
     const pdfUrl = await getSignedUrl(storageKey);
 
@@ -216,30 +408,13 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     };
     res.json({ agreement, pdf_url: pdfUrl });
 
-    // Background the email send — fire-and-forget with error capture.
-    const safeName = escapeHtml(saved.full_name) || 'there';
-    const portalUrl = escapeHtml(`${STAFF_URL}/dashboard`);
-    sendEmail({
-      to: saved.email,
-      subject: 'Your signed Dr. Bartender Contractor Agreement',
-      html: `
-        <p>Hi ${safeName},</p>
-        <p>Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached as a PDF for your records.</p>
-        <p>You can also download it anytime from your <a href="${portalUrl}">staff portal</a>.</p>
-        <p>— Dr. Bartender</p>
-      `,
-      text: 'Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached.',
-      attachments: [
-        { filename: 'dr-bartender-contractor-agreement.pdf', content: pdfBuf },
-      ],
-    })
-      .then(() => pool.query(
-        `UPDATE agreements SET pdf_email_sent_at=NOW() WHERE user_id=$1`,
-        [req.user.id]
-      ))
+    // Background the email send — fire-and-forget with error capture. A copy
+    // that never went out leaves pdf_email_sent_at NULL, which the admin's
+    // Documents tab shows as "Copy not emailed" with a resend (the route above).
+    sendSignedCopyEmail({ userId: req.user.id, email: saved.email, fullName: saved.full_name, pdfBuf })
       .catch((emailErr) => {
-        console.error('[agreement] PDF email send failed:', emailErr.message);
-        Sentry.captureException(emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
+        console.error('[agreement] PDF email send failed:', (emailErr.originalError || emailErr).message);
+        Sentry.captureException(emailErr.originalError || emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
       });
   } catch (pdfErr) {
     console.error('[agreement] PDF render/upload failed:', pdfErr.message);

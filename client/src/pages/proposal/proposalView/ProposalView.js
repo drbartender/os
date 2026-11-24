@@ -842,6 +842,7 @@ export default function ProposalView() {
                 stripePromise={stripePromise}
                 payOnlyLabel={payOnlyLabel}
                 clientSignedAt={proposal.client_signed_at}
+                clientSignedTotal={proposal.client_signed_total}
               />
             )}
 

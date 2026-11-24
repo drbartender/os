@@ -30,6 +30,7 @@ const { logAdminAction } = require('../../utils/adminAuditLog');
 const { parseProposalId, assertNotLegalHold, assertLinesFresh, assertOverrideUnchanged, overrideToWrite,
   normalizeAdjustmentsOrThrow, assertRefundMarkersBound, linesToWrite, adjustmentsColumn,
   adjustmentsAudit } = require('./patchGuards');
+const { voidSignatureIfTermsMoved } = require('./signatureVoid');
 
 const router = express.Router();
 
@@ -392,6 +393,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     let shouldSendRescheduleEmail = false;
     // Hoisted for the post-COMMIT gratuity staffing-change email (§7).
     let notifyStaffingGratuity = false;
+    let signatureVoided = false; // the save cleared the client's signature (signatureVoid.js)
 
     const venueProvided = [venue_name, venue_street, venue_city, venue_state, venue_zip]
       .some(v => v !== undefined);
@@ -571,6 +573,13 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       oldSnapshot: old.pricing_snapshot, newSnapshot: snapshot,
     });
     if (staffingNotify) notifyStaffingGratuity = true;
+
+    // A signature never stands against terms admin changed afterward
+    // (signatureVoid.js: the rule, its money guard and the audit row).
+    // The response says so (signature_voided), so the editor warns the admin
+    // that the client signs the new terms again (dev-box review 2026-11-22).
+    const sigVoid = await voidSignatureIfTermsMoved(dbClient, { proposalId: id, old, snapshot, body: req.body, actorId: req.user.id });
+    signatureVoided = sigVoid.voided === true;
 
     const updatedRow = await dbClient.query(`
       UPDATE proposals SET
@@ -939,7 +948,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Return updated proposal (from the UPDATE ... RETURNING * above)
     // Spread keeps every existing top-level key (tests and callers read the
     // row fields directly); notifications carries per-channel send truth.
-    res.json({ ...updatedRow.rows[0], notifications });
+    res.json({ ...updatedRow.rows[0], notifications, signature_voided: signatureVoided });
   } catch (err) {
     if (!dbReleased) { try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); } }
     throw err;

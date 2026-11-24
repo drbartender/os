@@ -16,12 +16,14 @@ const { shouldSendImmediate } = require('./messageSuppression');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('./urls');
 const { eventLabelFor } = require('./stripeRouteHelpers');
 const { formatEventDateForSms } = require('./smsEventDate');
+const { signedRecordFromRow } = require('./signedRecordEmail');
 
 async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
   try {
     const payInfo = await pool.query(`
       SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
              p.autopay_enrolled, p.status, p.client_id, p.event_date, p.event_timezone,
+             p.client_signed_name, p.client_signature_document_version, p.client_signed_snapshot,
              c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
              c.communication_preferences, c.email_status, c.phone_status
       FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
@@ -126,6 +128,7 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
               receiptBlock,
               potionPlannerUrl: payload.potionPlannerUrl,
               timelineLines,
+              signedRecord: signedRecordFromRow(pi),
             });
             await sendEmail({
               to: pi.client_email,
@@ -143,6 +146,7 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
           // Fall back to the old short-form path so the client at least hears back.
           const tpl = emailTemplates.signedAndPaidClient({
             clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute,
+            signedRecord: signedRecordFromRow(pi),
           });
           await sendEmail({ to: pi.client_email, ...tpl, meta: { proposalId, messageType: 'signed_and_paid' } });
         }

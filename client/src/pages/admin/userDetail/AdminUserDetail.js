@@ -632,7 +632,11 @@ function UserDetailBody() {
       )}
 
       {tab === 'documents' && (
-        <DocumentsTab showTax={isAdmin} agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
+        <DocumentsTab
+          showTax={isAdmin} canOpenAgreement={isAdmin} agreement={agreement} payment={payment} profile={profile}
+          application={application} previewFile={previewFile} previewLoading={previewLoading}
+          onAgreementChange={(patch) => setData((d) => (d && d.agreement ? { ...d, agreement: { ...d.agreement, ...patch } } : d))}
+        />
       )}
 
       {tab === 'messages' && (

@@ -12,6 +12,7 @@ const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { accrualFailureReason } = require('../../utils/payrollAccrualFailures');
 const { SWEEP_EXEMPT_ACTION } = require('../../utils/staleProposalSweep');
+const { voidClientSignature, moneyOnRow, cancelLiveIntents, markSessionsCanceled, PRE_PAYMENT_STATUSES } = require('./signatureVoid');
 
 const router = express.Router();
 
@@ -66,8 +67,14 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
   try {
     await dbClient.query('BEGIN');
 
+    // The signature columns ride along so a restore can record the prior
+    // signature before clearing it (below), with the money columns its guard reads.
     const current = await dbClient.query(
-      'SELECT status, group_id FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]
+      `SELECT status, group_id, amount_paid, external_paid,
+              client_signed_name, client_signed_at, client_signature_method, client_signature_ip,
+              client_signature_user_agent, client_signature_document_version, client_signed_total,
+              client_signed_snapshot
+         FROM proposals WHERE id = $1 FOR UPDATE`, [req.params.id]
     );
     if (!current.rows[0]) throw new NotFoundError('Proposal not found');
     currentStatus = current.rows[0].status;
@@ -114,6 +121,32 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
       [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
     );
+
+    // A restored quote is re-signed (audit ESIG-14): a restore out of archived
+    // onto any pre-payment status (draft by the table, sent or viewed by
+    // force) used to keep a signature the public page could neither sign over
+    // nor pay against. Cleared the way the cancel fields are, in this
+    // transaction, with the prior signature kept on a signature_voided row
+    // (signatureVoid.js); the status set above stands. A row that holds money
+    // keeps its signature (amount_paid, external_paid, or a debit still
+    // settling: moneyOnRow): a cancelled booking that kept its retainer
+    // (money law 1) rests on the signature it was forfeited under. A booking
+    // refunded in full holds no money and is voided like the rest; this
+    // restore writes its own sweep exemption below. A restore never refuses:
+    // any hold, a Stripe read it cannot make included, keeps the signature;
+    // otherwise the live intents an open page could still confirm are
+    // cancelled first, and a cancel that fails keeps the signature too.
+    if (currentStatus === 'archived' && PRE_PAYMENT_STATUSES.includes(status) && current.rows[0].client_signed_at) {
+      const money = await moneyOnRow(dbClient, current.rows[0], req.params.id);
+      if (money.hold === null && await cancelLiveIntents(money.cancelable)) {
+        await markSessionsCanceled(dbClient, req.params.id, money.cancelable);
+        const voided = await voidClientSignature(dbClient, {
+          proposalId: req.params.id, row: current.rows[0], actorId: req.user.id,
+          reason: `archived -> ${status}`, resetStatus: false, cancelledIntents: money.cancelable,
+        });
+        if (voided.voided) result.rows[0] = voided.row;
+      }
+    }
 
     // Restoring OUT of 'archived' exempts the row from the stale-proposal sweep.
     // Without this the restore is undone within the hour: 'draft' is in

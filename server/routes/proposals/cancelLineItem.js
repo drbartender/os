@@ -41,7 +41,7 @@ router.get('/:id/cancel-line/targets', auth, requireAdminOrManager, asyncHandler
 // success the CALLER owns the held client: preview ROLLBACKs + releases,
 // execute COMMITs + releases BEFORE the refund/notice tail (one-pooled-
 // connection rule). On error this rolls back, releases, and rethrows.
-async function runCore(req, { expectFingerprint = null } = {}) {
+async function runCore(req, { expectFingerprint = null, preview = false } = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -58,6 +58,7 @@ async function runCore(req, { expectFingerprint = null } = {}) {
       newRate: req.body.new_rate ?? null,
       actorId: req.user.id,
       expectFingerprint,
+      preview,
     });
     const payments = await loadPaymentsWithRemaining(req.params.id, client, { rails: CANCEL_LINE_REFUND_RAILS });
     const plan = planOverpaymentSplits({
@@ -92,6 +93,9 @@ function previewBody(req, result, plan) {
     },
     status_will_change: result.statusChanged,
     new_status: result.newStatus,
+    // The client's signature is voided by this removal (signatureVoid.js):
+    // they sign the new terms again before paying.
+    signature_voided: result.signatureVoided === true,
     locked_invoices: result.lockedInvoices.map((i) => ({
       id: i.id, label: i.label, amount_due_cents: i.amount_due,
     })),
@@ -112,7 +116,7 @@ function previewBody(req, result, plan) {
 }
 
 router.post('/:id/cancel-line/preview', auth, adminOnly, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const { client, result, plan } = await runCore(req);
+  const { client, result, plan } = await runCore(req, { preview: true });
   try {
     await client.query('ROLLBACK');
   } finally {

@@ -171,6 +171,57 @@ ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_field_guide BOOLEAN;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_storage_key VARCHAR(500);
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_generated_at TIMESTAMPTZ;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_email_sent_at TIMESTAMPTZ;
+-- The content pin of the text signed (audit ESIG-10): sha256 of the frozen
+-- version object (server/data/contractorAgreement.js agreementVersionSha256),
+-- written by the sign route beside signature_document_version.
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_document_sha256 VARCHAR(64);
+-- The first signing date (audit ESIG-08): stamped on the first sign and
+-- COALESCEd on every re-sign, so the current view keeps the date the
+-- contractor first signed while signed_at moves with the latest signature.
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS first_signed_at TIMESTAMPTZ;
+
+-- Append-only history of every staff agreement signature (audit ESIG-08): the
+-- agreements row above is the CURRENT view that a re-sign rewrites; this table
+-- keeps each signature as made (version, content hash, method, IP, UA, time,
+-- the legal name, email, phone and SMS consent given, the image) plus the PDF
+-- key it superseded and, once uploaded, its own. Written by routes/agreement.js
+-- in the sign transaction; nothing updates a row but its pdf_storage_key.
+CREATE TABLE IF NOT EXISTS agreement_signatures (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  signature_document_version VARCHAR(50),
+  signature_document_sha256 VARCHAR(64),
+  signature_method VARCHAR(10),
+  signature_ip VARCHAR(45),
+  signature_user_agent TEXT,
+  signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  full_name VARCHAR(255),
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  sms_consent BOOLEAN,
+  signature_data TEXT,
+  superseded_pdf_storage_key VARCHAR(500),
+  pdf_storage_key VARCHAR(500),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agreement_signatures_user_signed_at
+  ON agreement_signatures(user_id, signed_at DESC);
+-- Seeds the history with each signature made before it existed (dev-box
+-- review 2026-11-22): those signers have no row here, so a first re-sign would
+-- overwrite the only record of the original signing. One row per such signer,
+-- copied from the current view; idempotent (a user with any history row is
+-- skipped), and an insert only, so no trigger fires. 23 rows on prod at
+-- 2026-11-22.
+INSERT INTO agreement_signatures
+  (user_id, signature_document_version, signature_document_sha256, signature_method,
+   signature_ip, signature_user_agent, signed_at, full_name, email, phone, sms_consent,
+   signature_data, pdf_storage_key)
+SELECT a.user_id, a.signature_document_version, a.signature_document_sha256, a.signature_method,
+       a.signature_ip, a.signature_user_agent, a.signed_at, a.full_name, a.email, a.phone, a.sms_consent,
+       a.signature_data, a.pdf_storage_key
+  FROM agreements a
+ WHERE a.signed_at IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM agreement_signatures s WHERE s.user_id = a.user_id);
 
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
@@ -191,6 +242,18 @@ CREATE TABLE IF NOT EXISTS payment_profiles (
 -- Idempotent: a prefixed value no longer matches.
 UPDATE payment_profiles SET w9_file_url = '/files/' || w9_file_url
   WHERE w9_file_url LIKE 'staff/%';
+-- The electronic W-9's certification event (audit ESIG-07), recorded by
+-- routes/payment.js when a NEW W-9 file arrives, from the request: the
+-- proxy-validated address, the user agent, the form revision the fill-mode
+-- page drew (client/src/utils/w9Pdf.js W9_FORM_REVISION) and the signature
+-- method ('draw' or 'type' in fill mode, 'upload' for a scanned form). A reuse
+-- of the stored file keeps the stored event. Never the TIN: the SSN stays
+-- inside the PDF and out of every column and log.
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submitted_at TIMESTAMPTZ;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submit_ip VARCHAR(45);
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submit_ua TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_form_revision VARCHAR(20);
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_signature_method VARCHAR(10);
 
 -- Applications table (replaces Google Form)
 CREATE TABLE IF NOT EXISTS applications (
@@ -965,6 +1028,15 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_method VARCHAR(1
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_ip VARCHAR(45);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_user_agent TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_document_version VARCHAR(50);
+-- The configuration the client signed (audit ESIG-02): the row's total_price at
+-- sign time and the public price view the page rendered (document version,
+-- folded rows, gratuity, total, sanitized snapshot; utils/publicSnapshot.js
+-- signedPriceRecord). Written only by the sign UPDATE (routes/proposals/
+-- publicToken.js); cleared with the signature when it is voided
+-- (routes/proposals/signatureVoid.js), the prior record going to the
+-- signature_voided activity row.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_total NUMERIC(10,2);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_snapshot JSONB;
 
 -- ─── Proposal origin (intake source) ───────────────────────────────
 -- NULL means manual / direct (the contract, permanently — never "unknown").
