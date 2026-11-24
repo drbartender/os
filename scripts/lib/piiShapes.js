@@ -29,7 +29,7 @@
 //                       (sk_live_, rk_live_, whsec_, every sk- key, AIza,
 //                       gh*_, github_pat_, napi_, a Stripe client secret, a
 //                       Telegram pair), which is never exempt anywhere.
-//             lockfile  the three tracked package-lock.json files: a TOKEN
+//             lockfile  the four tracked package-lock.json files: a TOKEN
 //                       that is not a live key (npm's integrity hashes);
 //                       every other shape judged as on a code path.
 //             code      every other path, and no path: the business lines, the
@@ -205,7 +205,9 @@ const REGISTRY_PATHS = Object.freeze(['server/utils/smsLines.js', 'server/utils/
 // npm's lockfiles: every added dependency carries an "integrity" hash (base64
 // sha512), which reads as a TOKEN. A lockfile exempts a TOKEN that is not a
 // live key and nothing else; every other shape is judged as on a code path.
-const LOCKFILE_PATHS = Object.freeze(['package-lock.json', 'client/package-lock.json', 'thumbtack-agent/package-lock.json']);
+const LOCKFILE_PATHS = Object.freeze([
+  'package-lock.json', 'client/package-lock.json', 'thumbtack-agent/package-lock.json', 'gv-agent/package-lock.json',
+]);
 
 // Every registry that failed to load, as one line each (file and error code), so
 // the CLI can print why a business line masked instead of swallowing the cause. Declared
