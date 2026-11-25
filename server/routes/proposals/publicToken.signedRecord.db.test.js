@@ -143,3 +143,46 @@ test('a sign stores the acknowledged row total and the rendered price view', asy
   assert.equal(row.client_signed_snapshot.snapshot.total, 500);
   assert.ok(!('breakdown' in row.client_signed_snapshot.snapshot), 'the stored snapshot is the sanitized public copy');
 });
+
+// A proposal's own drink swaps (packageSwaps.js): the page gets the checked
+// list for the package the row is on, never the raw column, and the sign
+// freezes that list into the record; swaps written for another package are
+// neither shown nor signed.
+async function insertSwapProposal(swapSlug) {
+  const p = await insertSignableProposal();
+  const pkg = (await pool.query('SELECT id, slug FROM service_packages ORDER BY id LIMIT 1')).rows[0];
+  const raw = { package_slug: swapSlug || pkg.slug, swaps: [{ from: 'Test Bourbon', to: 'Other Bourbon – Soft.' }] };
+  await pool.query('UPDATE proposals SET package_id = $2, package_swaps = $3::jsonb WHERE id = $1', [p.id, pkg.id, JSON.stringify(raw)]);
+  return p;
+}
+
+const SIGN_BODY = {
+  client_signed_name: 'Test Signer',
+  client_signature_data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  client_signature_method: 'draw',
+  document_version: CURRENT_AGREEMENT_VERSION,
+  acknowledged_total: 500,
+};
+
+test('the page gets the checked swaps and the sign freezes them', async () => {
+  const p = await insertSwapProposal();
+  const page = await request('GET', `/api/proposals/t/${p.token}`);
+  assert.equal(page.status, 200, page.raw);
+  assert.deepEqual(page.body.current_package_swaps, [{ from: 'Test Bourbon', to: 'Other Bourbon – Soft.' }]);
+  assert.ok(!('package_swaps' in page.body), 'the raw column never leaves');
+  const res = await request('POST', `/api/proposals/t/${p.token}/sign`, { body: SIGN_BODY });
+  assert.equal(res.status, 200, res.raw);
+  const row = (await pool.query('SELECT client_signed_snapshot FROM proposals WHERE id = $1', [p.id])).rows[0];
+  assert.deepEqual(row.client_signed_snapshot.package_swaps, [{ from: 'Test Bourbon', to: 'Other Bourbon – Soft.' }]);
+});
+
+test('swaps written for another package are neither shown nor signed', async () => {
+  const p = await insertSwapProposal('no-such-package');
+  const page = await request('GET', `/api/proposals/t/${p.token}`);
+  assert.equal(page.status, 200, page.raw);
+  assert.deepEqual(page.body.current_package_swaps, []);
+  const res = await request('POST', `/api/proposals/t/${p.token}/sign`, { body: SIGN_BODY });
+  assert.equal(res.status, 200, res.raw);
+  const row = (await pool.query('SELECT client_signed_snapshot FROM proposals WHERE id = $1', [p.id])).rows[0];
+  assert.ok(!('package_swaps' in row.client_signed_snapshot));
+});

@@ -166,7 +166,7 @@ function EventDetailPageDesktop() {
     const bartenders = snapshot?.staffing?.actual;
     const durationHours = snapshot?.inputs?.durationHours;
     const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
-    const packageStructured = getPackageItems(proposal.package_slug);
+    const packageStructured = getPackageItems(proposal.package_slug, proposal.current_package_swaps);
     const timeRange = fmtTimeRange24(proposal.event_start_time, null, proposal.event_duration_hours, { durStyle: 'paren' });
     const contactBits = [
       proposal.client_phone && formatPhone(proposal.client_phone),

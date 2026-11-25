@@ -109,14 +109,18 @@ function publicPriceView(snapshot, { packageName } = {}) {
  * (the row's total_price, law 2) and the document version. Pure.
  *
  * @param {object} snapshot  proposals.pricing_snapshot as read
- * @param {{ packageName?: string|null, documentVersion?: string|null, total?: number|string }} opts
+ * The proposal's own drink swaps (packageSwaps.js, already checked by the
+ * caller) ride as package_swaps when there are any, so the bottles the client
+ * agreed to are in the record itself; a row with none keeps the record's shape.
+ *
+ * @param {{ packageName?: string|null, documentVersion?: string|null, total?: number|string, packageSwaps?: {from: string, to: string}[] }} opts
  * @returns {object}  the record, JSON-ready
  */
-function signedPriceRecord(snapshot, { packageName, documentVersion, total } = {}) {
+function signedPriceRecord(snapshot, { packageName, documentVersion, total, packageSwaps } = {}) {
   const view = publicPriceView(snapshot, { packageName });
   const g = snapshot && typeof snapshot === 'object' && snapshot.gratuity ? snapshot.gratuity.total : 0;
   const gratuityCents = Math.max(0, moneyToCents(g));
-  return {
+  const record = {
     record_version: 1,
     document_version: documentVersion || null,
     rows: view.rows,
@@ -125,6 +129,10 @@ function signedPriceRecord(snapshot, { packageName, documentVersion, total } = {
     total: total === null || total === undefined || total === '' ? null : Number(total),
     snapshot: view.snapshot,
   };
+  if (Array.isArray(packageSwaps) && packageSwaps.length > 0) {
+    record.package_swaps = packageSwaps.map((w) => ({ from: w.from, to: w.to }));
+  }
+  return record;
 }
 
 module.exports = { sanitizeSnapshotForPublic, publicPriceView, signedPriceRecord };

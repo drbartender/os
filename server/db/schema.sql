@@ -6192,3 +6192,9 @@ CREATE INDEX IF NOT EXISTS idx_connector_calls_time ON connector_calls (called_a
 CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_calls_withheld_ref
   ON connector_calls (withheld_ref) WHERE outcome = 'withheld';
 -- ─── end Claude connector ───
+
+-- A proposal's own drink swaps (server/utils/packageSwaps.js holds the shape):
+-- the bottles one client's package lists in place of the package defaults,
+-- shown on that proposal's page and frozen into the signed record. NULL for
+-- nearly every row; set by hand, there is no editor.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS package_swaps JSONB;

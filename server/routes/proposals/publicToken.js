@@ -25,6 +25,7 @@ const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFro
 const { publicPriceView, signedPriceRecord } = require('../../utils/publicSnapshot');
 const { signedRecordFromRow } = require('../../utils/signedRecordEmail');
 const { isLegalHold } = require('../../utils/legalHold');
+const { swapsForPackage } = require('../../utils/packageSwaps');
 const { BOOKED_STATUSES } = require('../../utils/proposalStatus');
 const { depositCentsFor, totalAtOrBelowDeposit } = require('../../utils/stripeRouteHelpers');
 
@@ -155,7 +156,7 @@ async function buildPublicProposalPayload(token, db = pool) {
       p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
       p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
       p.pricing_snapshot, p.total_price, p.status,
-      p.total_price_override, p.group_id,
+      p.total_price_override, p.group_id, p.package_swaps,
       p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
       p.balance_due_date,
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
@@ -332,6 +333,11 @@ async function buildPublicProposalPayload(token, db = pool) {
   for (const key of Object.keys(publicProposal)) {
     if (key.startsWith('pkg_')) delete publicProposal[key];
   }
+  // The proposal's own drink swaps, checked and only for the package it is on
+  // now (packageSwaps.js); the page applies them to the package list.
+  // The raw column never leaves; only the checked list does.
+  publicProposal.current_package_swaps = swapsForPackage(proposal.package_swaps, proposal.package_slug);
+  delete publicProposal.package_swaps;
 
   // The rows the page draws, folded on the server, and the public copy of the
   // snapshot (spec 2026-10-16 sections 4.2 and 4.3). No hidden line's label,
@@ -557,7 +563,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     // signature the 409 below is told apart by, all under the lock.
     const lookup = await client.query(
       `SELECT p.id, p.status, p.client_signed_at, p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
-              p.pricing_snapshot, sp.name AS package_name
+              p.pricing_snapshot, p.package_swaps, sp.name AS package_name, sp.slug AS package_slug
          FROM proposals p
          LEFT JOIN service_packages sp ON sp.id = p.package_id
         WHERE p.token = $1
@@ -594,6 +600,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     // WHERE below asserts equals the acknowledged figure (law 2).
     const signedRecord = signedPriceRecord(storedVenue.pricing_snapshot, {
       packageName: storedVenue.package_name, documentVersion, total: ackTotal,
+      packageSwaps: swapsForPackage(storedVenue.package_swaps, storedVenue.package_slug),
     });
 
     // Make the UPDATE itself the gate: WHERE clause re-asserts both that no

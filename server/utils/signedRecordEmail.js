@@ -62,7 +62,18 @@ function signedRecordFromRow(row) {
     gratuityAmount: Number.isFinite(gratuity) && gratuity > 0 ? gratuity : 0,
     gratuityLabel: snap.gratuity_label || 'Gratuity',
     total: snap.total === null || snap.total === undefined || snap.total === '' ? null : Number(snap.total),
+    // The proposal's own drink swaps as signed (packageSwaps.js); absent on
+    // nearly every record.
+    swaps: Array.isArray(snap.package_swaps)
+      ? snap.package_swaps.filter((w) => w && typeof w.from === 'string' && typeof w.to === 'string')
+      : [],
   };
+}
+
+// "Basil Hayden Bourbon in place of Maker's Mark Bourbon": the replacement's
+// name only, without the description the package list prints after " – ".
+function swapLine(w) {
+  return `${String(w.to).split(' – ')[0].trim()} in place of ${String(w.from).trim()}`;
 }
 
 /** The block as { html, text }; both empty for a null record. */
@@ -94,10 +105,17 @@ function signedRecordBlock(record) {
   const totalHtml = hasTotal
     ? `<tr><td style="padding:6px 12px;font-weight:bold;color:${BRAND.primary};">${esc(totalLabel)}</td><td style="padding:6px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">${esc(dollarsLabel(record.total))}</td></tr>`
     : '';
+  const swaps = (Array.isArray(record.swaps) ? record.swaps : []).map(swapLine);
+  const swapsHeading = 'Bar changes in your package';
+  const swapsHtml = swaps.length > 0
+    ? `<p style="font-size:14px;color:${BRAND.primary};margin:0.75rem 0 0.25rem;font-weight:bold;">${esc(swapsHeading)}</p>
+      <ul style="font-size:14px;color:${BRAND.secondary};margin:0 0 0.75rem;padding-left:20px;">${swaps.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`
+    : '';
   const html = `
       <h3 style="color:${BRAND.primary};margin-top:1.5rem;">What you signed</h3>
       <p style="font-size:14px;color:${BRAND.secondary};">${esc(versionLine)}; ${esc(signerLine)}.</p>
       <table style="width:100%;border-collapse:collapse;margin:0.75rem 0;">${rowsHtml}${totalHtml}</table>
+      ${swapsHtml}
       ${hasTotal ? `<p style="font-size:13px;color:${BRAND.secondary};">${esc(checkoutNote)}</p>` : ''}
       <p style="font-size:13px;color:${BRAND.secondary};">Keep this email as your copy of the terms as signed. The full agreement text is on your proposal page.</p>`;
   const text = [
@@ -106,6 +124,7 @@ function signedRecordBlock(record) {
     ...lines.map((l) => `${l.label}: ${dollarsLabel(l.amount)}`),
     hasTotal ? `${totalLabel}: ${dollarsLabel(record.total)}` : null,
     hasTotal ? checkoutNote : null,
+    ...(swaps.length > 0 ? [`${swapsHeading}:`, ...swaps.map((l) => `- ${l}`)] : []),
     'Keep this email as your copy of the terms as signed.',
   ].filter((x) => x !== null).join('\n');
   return { html, text };

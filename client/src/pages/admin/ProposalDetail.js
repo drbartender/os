@@ -390,7 +390,7 @@ function ProposalDetailBody() {
   const bartenders = snapshot?.staffing?.actual;
   const durationHours = snapshot?.inputs?.durationHours;
   const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
-  const packageStructured = getPackageItems(proposal.package_slug);
+  const packageStructured = getPackageItems(proposal.package_slug, proposal.current_package_swaps);
   const recentActivity = (proposal.activity || []).slice(0, 5);
   const canSend = ['draft', 'modified'].includes(proposal.status);
   const canMarkAccepted = ['sent', 'viewed', 'modified'].includes(proposal.status);

@@ -10,14 +10,55 @@ const SERVICE_INCLUDES = 'Up to four hours of bar service, one professional bart
 // Look up a package's detailed sections by its DB slug
 export const getPackageBySlug = (slug) => PACKAGES.find(p => p.id === slug) || null;
 
-// Get just the item names from a package's sections (no witty descriptions)
-export const getPackageItems = (slug) => {
+// A proposal's own drink swaps, as the server sends them: an array of
+// { from, to } already checked and already limited to the proposal's current
+// package (server/utils/packageSwaps.js). "from" is an item's name before its
+// " – " description; "to" is the whole replacement item. Anything else is no swaps.
+const cleanSwaps = (swaps) => (Array.isArray(swaps)
+  ? swaps.filter((w) => w && typeof w.from === 'string' && typeof w.to === 'string')
+  : []);
+const itemName = (item) => item.split(' – ')[0];
+const applySwaps = (sections, swaps) => {
+  const list = cleanSwaps(swaps);
+  if (list.length === 0) return sections;
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      const hit = list.find((w) => w.from === itemName(item));
+      return hit ? hit.to : item;
+    }),
+  }));
+};
+
+// A package's detail with one proposal's swaps applied (null when uncatalogued).
+export const getPackageForProposal = (slug, swaps) => {
   const pkg = getPackageBySlug(slug);
   if (!pkg) return null;
-  return pkg.sections.map(section => ({
+  return { ...pkg, sections: applySwaps(pkg.sections, swaps) };
+};
+
+// SWAP_UNMATCHED_HEADING heads the admin-only section naming any swap whose
+// "from" matches no item in the package (a typo or a curly apostrophe): the
+// client page keeps the default bottle for it, but the signed record and the
+// sign-time email still list it, so the admin must see it and fix the row.
+export const SWAP_UNMATCHED_HEADING = 'Swaps not applied (no item by that name)';
+
+// Get just the item names from a package's sections (no witty descriptions),
+// with a proposal's swaps applied when given. Admin only: a swap that matched
+// nothing is listed in a closing SWAP_UNMATCHED_HEADING section.
+export const getPackageItems = (slug, swaps) => {
+  const pkg = getPackageBySlug(slug);
+  if (!pkg) return null;
+  const out = applySwaps(pkg.sections, swaps).map(section => ({
     heading: section.heading,
-    items: section.items.map(item => item.split(' – ')[0]),
+    items: section.items.map(itemName),
   }));
+  const names = new Set(pkg.sections.flatMap((section) => section.items.map(itemName)));
+  const unmatched = cleanSwaps(swaps).filter((w) => !names.has(w.from));
+  if (unmatched.length > 0) {
+    out.push({ heading: SWAP_UNMATCHED_HEADING, items: unmatched.map((w) => `${w.from} (meant to become ${itemName(w.to)})`) });
+  }
+  return out;
 };
 
 export const PACKAGES = [

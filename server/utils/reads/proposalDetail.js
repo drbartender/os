@@ -29,6 +29,7 @@ const {
 const { latestConsultCallForProposal } = require('../consultCallLookups');
 const { isLegalHold } = require('../legalHold');
 const { readExclusion, readLookupId } = require('./exclusion');
+const { swapsForPackage } = require('../packageSwaps');
 
 const PROPOSAL_SELECT = `
     SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
@@ -142,6 +143,10 @@ async function getProposalDetail(proposalId, { exclude } = {}) {
   return {
     ...row,
     setup_time_display: setupTimeDisplay(row),
+    // The proposal's own drink swaps, checked, for the package it is on now
+    // (packageSwaps.js): the package details disclosure shows them.
+    // The raw column rides as stored with the rest of p.*.
+    current_package_swaps: swapsForPackage(row.package_swaps, row.package_slug),
     // Legal hold (spec 2026-10-16 section 5.3): the editor and the phone sheet
     // open read-only. Bound on the loaded row's id, never the raw param.
     legal_hold: isLegalHold(row.id),

@@ -3,7 +3,7 @@
 
 import React, { useState } from 'react';
 import { resolveGratuityDisplayLabel } from '../../../utils/gratuityLabels';
-import { getPackageBySlug } from '../../../data/packages';
+import { getPackageForProposal } from '../../../data/packages';
 import { fmt } from './helpers';
 import styles from './styles';
 import AgreementText from './AgreementText';
@@ -61,7 +61,7 @@ export default function ProposalPricingBreakdown({
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>{proposal.package_name}</h2>
         {(() => {
-          const detail = getPackageBySlug(proposal.package_slug);
+          const detail = getPackageForProposal(proposal.package_slug, proposal.current_package_swaps);
           if (detail) {
             return (
               <>
