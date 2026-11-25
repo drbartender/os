@@ -131,8 +131,9 @@ Booking 599 is untouched: its invoice still reads unfolded by the line rule, its
 
 **Daily job.** A daily job (its own scheduler with a `RUN_*` switch, or a pass in an existing daily one; the builder's choice) does two things:
 
-1. Retries the open alert for any dispute still waiting on evidence whose alert stamp is empty.
-2. For each dispute still waiting on evidence by its stored status, with a deadline within the next three Chicago days and no reminder sent: reads the dispute live from Stripe (`stripeClient.js`); if it still waits on evidence, sends a second email; if not, updates the row and sends nothing; if the read fails, sends anyway (my call: a spurious reminder costs one email, a missed one cost $100 on booking 843). Every branch that sends stamps the reminder, so it never repeats. A dispute with no deadline gets no reminder.
+1. Re-reads each dispute that is not closed from Stripe and applies its status by the ordering rule (my call: disputes are few, and a missed `updated` event would otherwise leave an item waiting that no longer waits).
+2. Retries the open alert for any dispute still waiting on evidence whose alert stamp is empty.
+3. For each dispute still waiting on evidence by its stored status, with a deadline within the next three Chicago days and no reminder sent: reads the dispute live from Stripe (`stripeClient.js`); if it still waits on evidence, sends a second email; if not, updates the row and sends nothing; if the read fails, sends anyway (my call: a spurious reminder costs one email, a missed one cost $100 on booking 843). Every branch that sends stamps the reminder, so it never repeats. A dispute with no deadline gets no reminder.
 
 **Legal hold.** The handler and the job write only the dispute table and email only the admins; neither is a write to the booking, a chase of the client or an AI read, so neither skips the legal-hold booking (money law 15 holds: its database state is untouched). The Inbox item follows the Inbox's existing hold handling, as menu tasks do.
 
